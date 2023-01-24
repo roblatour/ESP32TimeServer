@@ -11,7 +11,7 @@ Rob Latour, 2023
 
 ## Project outline
 
-Please visit https://hackaday.io/project/189309-esp32-ntp-time-server-sratum-1
+Please visit https://hackaday.io/project/189309-esp32-ntp-time-server-stratum-1
 
 ## License
 
