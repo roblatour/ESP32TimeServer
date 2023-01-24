@@ -5,9 +5,9 @@ Rob Latour, 2023
 
 ## Includes
 
-- Open source code for an ESP32 Stratum 1 Time Server 
-- source code included for both the Arduino and Platformio develeopment platforms
-- 3D printable enclosure; .stl and source .fd3 (Fusion 360) 
+- open source code for an ESP32 Stratum 1 Time Server 
+  source code included for both the Arduino and Platformio develeopment platforms
+- a 3D printable enclosure ( .stl and Fusion 360 source .fd3  files ) 
 
 ## Project outline
 
