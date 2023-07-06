@@ -10,6 +10,8 @@
 
 // board: Olimex ESP32 POE ISO
 
+// last updated July 6, 2023
+
 #include <ETH.h>
 #include <Timezone.h> // https://github.com/khoih-prog/Timezone_Generic
 #include <ESP32Time.h>
@@ -28,8 +30,8 @@ String ip = "";
 
 // GPS
 SFE_UBLOX_GNSS_SERIAL gps;
-SoftwareSerial GPSDevice(RXPin, TXPin); 
-volatile bool ppsFlag;  // GPS one-pulse-per-second flag
+SoftwareSerial GPSDevice(RXPin, TXPin);
+volatile bool ppsFlag; // GPS one-pulse-per-second flag
 
 // LCD Display
 LiquidCrystal_I2C lcd(lcdI2CAddress, lcdColumns, lcdRows);
@@ -56,13 +58,13 @@ const time_t safeguardThresholdInSeconds = 1;                                   
 volatile bool SafeGuardTripped = false;                                           // used to ensure the time isn't changed beyond that which would reasonably be expected within the periodicTimeRefreshPeriod
                                                                                   //
 volatile bool theTimeSettingProcessIsUnderway;                                    // signifies when the time is being set / refreshed
-                                                                                  //
-SemaphoreHandle_t mutex;                                                          // used to ensure an NTP request results are not impacted by the process that refreshes the time
-                                                                                  //
-TaskHandle_t taskHandle0 = NULL;                                                  // task handle for updating the display
-TaskHandle_t taskHandle1 = NULL;                                                  // task handle for setting/refreshing the time 
 
-                                               
+//
+SemaphoreHandle_t mutex;         // used to ensure an NTP request results are not impacted by the process that refreshes the time
+                                 //
+TaskHandle_t taskHandle0 = NULL; // task handle for updating the display
+TaskHandle_t taskHandle1 = NULL; // task handle for setting/refreshing the time
+
 //**************************************************************************************************************************
 
 void setupSerial()
@@ -236,10 +238,11 @@ void updateTheDisplay(void *parameter)
   const int upTimeResultsRow = 2; // the LCD row on which the up time will be displayed
   const int upTimeExplainRow = 3; // the LCD row on which a blank line will appear when displaying the up time
 
-  int previouseTopLineMessage = -1;
+  int previousTopLineMessage = -1;
   int previousSecond = -1;
 
-  bool uptimeRequestBeingMade = false;
+  static int displayUpTimeSecondsCounter = 0; // used to keep the Up Time display active
+
   bool anUptimeRequestHadBeenMade = false;
 
   while (true)
@@ -248,7 +251,10 @@ void updateTheDisplay(void *parameter)
     if (second() != previousSecond)
     {
 
-      uptimeRequestBeingMade = checkUpTimeRequest();
+      previousSecond = second();
+
+      if (checkUpTimeRequest())
+        displayUpTimeSecondsCounter = displayUpTimeSecondsToStayActive;
 
       // Display the top line message (when it changes)
       //
@@ -266,7 +272,7 @@ void updateTheDisplay(void *parameter)
 
       int RequiredTopLineMessage;
 
-      if (uptimeRequestBeingMade)
+      if (displayUpTimeSecondsCounter > 0)
         RequiredTopLineMessage = 4;
       else if (SafeGuardTripped)
         RequiredTopLineMessage = 3;
@@ -275,7 +281,7 @@ void updateTheDisplay(void *parameter)
       else
         RequiredTopLineMessage = 1;
 
-      if (RequiredTopLineMessage != previouseTopLineMessage)
+      if (RequiredTopLineMessage != previousTopLineMessage)
       {
 
         String TopLineMessage;
@@ -290,7 +296,7 @@ void updateTheDisplay(void *parameter)
 
         display(programNameRow, TopLineMessage, false);
 
-        previouseTopLineMessage = RequiredTopLineMessage;
+        previousTopLineMessage = RequiredTopLineMessage;
       };
 
       // If an NTP request is underway
@@ -298,7 +304,7 @@ void updateTheDisplay(void *parameter)
       // Display the IP address of the request
       // also show system uptime
 
-      if (uptimeRequestBeingMade)
+      if (displayUpTimeSecondsCounter > 0)
       {
         display(upTimeRequestRow, "up time is", false);
 
@@ -311,11 +317,14 @@ void updateTheDisplay(void *parameter)
 
         display(upTimeExplainRow, " days hrs:mins:secs", false);
         anUptimeRequestHadBeenMade = true;
+
+        Serial.println(displayUpTimeSecondsCounter);
+        displayUpTimeSecondsCounter--;
       }
       else
       {
 
-        // Dislay the date and time
+        // Display the date and time
 
         static int lastSecond = -1;
         static int lastDay = -1;
@@ -356,12 +365,8 @@ void updateTheDisplay(void *parameter)
           // if an uptime request had been made restore the ip address line
           if (anUptimeRequestHadBeenMade)
             display(ipAddressRow, ip);
-
-          // clear the uptimeRequestBeingMade flag
-          uptimeRequestBeingMade = false;
         };
 
-        previousSecond = second();
         vTaskDelay(975 / portTICK_PERIOD_MS);
       };
     };
@@ -434,10 +439,10 @@ bool setTheGPSBaudRate(int gpsBaud, int maxAattemptsToChangeTheBaudRate)
     };
   };
 
-  //   gps.saveConfiguration();   // Optionally: if when you are testing this sketch the buad rate is constantly being 
+  //   gps.saveConfiguration();   // Optionally: if when you are testing this sketch the buad rate is constantly being
   //                              // successfully set at the desired rate (38400) then you can uncomment this line of code
-  //                              // so that the GPS's configuration will default to starting at 34800 rather than 9600.  
-  //                              // However, as this will only need to be done once this line of code should then be 
+  //                              // so that the GPS's configuration will default to starting at 34800 rather than 9600.
+  //                              // However, as this will only need to be done once this line of code should then be
   //                              // commented back out for subsequent runs.  This procedure is entirely optional.
 
   if (debugIsOn)
@@ -953,7 +958,7 @@ void setup()
   display(3, " ", false);
 
   // create a mutex to be used to ensure an NTP request results are not impacted by the process that refreshes the time
-   mutex = xSemaphoreCreateMutex();
+  mutex = xSemaphoreCreateMutex();
 
   // setup for the use of the pulse-per-second pin
   pinMode(PPSPin, INPUT_PULLUP);
