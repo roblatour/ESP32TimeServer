@@ -26,6 +26,6 @@ bool debugIsOn = false;                           // set to true to see progress
 
 // Time zone                                      // Time is displayed on the LCD display in keeping with your local time zone                                             
                                                   // please see https://github.com/khoih-prog/Timezone_Generic#timechangerules-struct for more information
-TimeChangeRule usEDT = {"EDT", Second, Sun, Mar, 2, -240};  
-TimeChangeRule usEST = {"EST", First, Sun, Nov, 2, -300};   
-Timezone usEastern(usEDT, usEST);  
+TimeChangeRule myDST = {"EDT", Second, Sun, Mar, 2, -240};  
+TimeChangeRule mySTD = {"EST", First, Sun, Nov, 2, -300};   
+Timezone myTZ(myDST, mySTD);  

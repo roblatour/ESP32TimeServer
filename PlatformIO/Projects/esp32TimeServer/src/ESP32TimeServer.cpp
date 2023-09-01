@@ -128,7 +128,7 @@ void GetAdjustedDateAndTimeStrings(time_t UTC_Time, String &dateString, String &
 {
 
   // adjust utc time to local time
-  time_t now_Local_Time = usEastern.toLocal(UTC_Time, &tcr);
+  time_t now_Local_Time = myTZ.toLocal(UTC_Time, &tcr);
 
   // format dateLine
 
