@@ -171,7 +171,7 @@ void GetAdjustedDateAndTimeStrings(time_t UTC_Time, String &dateString, String &
   else
     timeString.concat(" PM ");
   
-  if (displayTimeZone == true)
+  if (displayTimeZone)
     timeString.concat(tcr -> abbrev);
 };
 
