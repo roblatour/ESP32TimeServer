@@ -167,9 +167,12 @@ void GetAdjustedDateAndTimeStrings(time_t UTC_Time, String &dateString, String &
   timeString.concat(String(second(now_Local_Time)));
 
   if (isAM(now_Local_Time))
-    timeString.concat(" AM");
+    timeString.concat(" AM ");
   else
-    timeString.concat(" PM");
+    timeString.concat(" PM ");
+  
+  if (displayTimeZone)
+    timeString.concat(tcr -> abbrev);
 };
 
 String GetUpTime()

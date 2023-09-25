@@ -15,6 +15,7 @@ const uint32_t GPSBaud = 38400;                   // desired GPS baud
 const int lcdI2CAddress = 0x27;                   // lcd I2C address; if you don't know your display address, run an I2C scanner sketch
 const int lcdColumns = 20;                        // number of columns on your LCD display (typically 16 or 20)
 const int lcdRows = 4;                            // number of rows on your LCD display (typically 2 or 4)
+const bool displayTimeZone = false;               // set to true to display the time zone, set to false to not display the time zone
 
 // Button                                         // the button is used to show up time
 const int UpTimePin = 34;                         // pin on the ESP32 board which the uptime button is connected
