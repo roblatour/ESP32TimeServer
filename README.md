@@ -7,7 +7,9 @@ Rob Latour, 2023
 
 - open source code for an ESP32 Stratum 1 Time Server;  
   source code included for both the Arduino and Platformio develeopment platforms
-- a 3D printable enclosure ( .stl and Fusion 360 source .fd3  files ) 
+- a 3D printable enclosure ( .stl and Fusion 360 source .fd3  files )
+  Note: this print were designed for use with the Olimex ESP32-PoE-ISO Rev. B
+        more current versions do not have the same footprint and will not fit inside the case       
 
 ## Project outline
 
