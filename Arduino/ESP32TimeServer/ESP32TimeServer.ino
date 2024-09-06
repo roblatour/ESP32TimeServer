@@ -1,4 +1,6 @@
-// Rob Latour, 2023
+// Rob Latour, 2024
+// last updated Spet 6th, 2024
+
 // License: MIT
 // https://github.com/roblatour
 //
@@ -8,12 +10,21 @@
 // https://time.is may be used a reference point to confirm your computer's date/time accuracy
 //
 
-// board: Olimex ESP32 POE ISO
+// Board Manager: esp32 by Espressif Systems board library v2.0.13
+// Board: "OLIMEX ESP32-PoE-ISO"
 
-// last updated July 6, 2023
+// Core Debug Level: "None"
+// Erase All Flash Before Sketch Upload: "Disabled"
+// Flash Frequency: 80MHz"
+// Partition Scheme: "Default"
+// Upload Speed: "115200"\\
+
+// Under the Arduino menu - File - Preferences - Additional Board Managers URLs links:
+// https://dl.espressif.com/dl/package_esp32_index.json
+// https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
 
 #include <ETH.h>
-#include <Timezone.h> // https://github.com/khoih-prog/Timezone_Generic
+#include <Timezone.h>                // https://github.com/khoih-prog/Timezone_Generic
 #include <ESP32Time.h>
 #include <SoftwareSerial.h>
 #include <SparkFun_u-blox_GNSS_v3.h> // https://github.com/sparkfun/SparkFun_u-blox_GNSS_v3
