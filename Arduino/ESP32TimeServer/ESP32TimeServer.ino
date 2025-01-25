@@ -1,5 +1,5 @@
 // Rob Latour, 2024
-// last updated Spet 6th, 2024
+// last updated Sept 6th, 2024
 
 // License: MIT
 // https://github.com/roblatour
