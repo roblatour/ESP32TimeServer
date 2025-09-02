@@ -18,7 +18,7 @@ const int lcdRows = 4;                            // number of rows on your LCD 
 const bool displayTimeZone = false;               // set to true to display the time zone, set to false to not display the time zone
 
 // Button                                         // the button is used to show up time
-const int UpTimePin = 34;                         // pin on the ESP32 board which the uptime button is connected
+const int UpTimePin = 32;                         // pin on the ESP32 board which the uptime button is connected
 const int displayUpTimeSecondsToStayActive = 10;  // number of seconds the Up Time display will stay active
 
 // Serial monitor  
