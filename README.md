@@ -1,7 +1,7 @@
 # ESP32TimeServer
  ESP32 NTP Stratum 1 Time Server
 
-Rob Latour, 2023
+Copyright Rob Latour, 2026
 
 ## Includes
 
@@ -19,6 +19,12 @@ Please visit https://hackaday.io/project/189309-esp32-ntp-time-server-stratum-1
 
 MIT
 
-## Support
+* * *
+ ## Supporting ESP32 Time Server
 
+ To help support this project, or to just say thanks, you're welcome to 'buy me a coffee'<br><br>
 [<img alt="buy me  a coffee" width="200px" src="https://cdn.buymeacoffee.com/buttons/v2/default-blue.png" />](https://www.buymeacoffee.com/roblatour)
+* * *
+Copyright © 2026 Rob Latour
+* * *   
+

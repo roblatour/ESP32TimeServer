@@ -23,7 +23,7 @@ const int displayUpTimeSecondsToStayActive = 10;  // number of seconds the Up Ti
 
 // Serial monitor  
 int SerialMonitorSpeed = 115200;                  // Serial monitor bps
-bool debugIsOn = false;                           // set to true to see progress results in the serial monitor, set to false to suppress these
+bool debugIsOn = true;                            // set to true to see progress results in the serial monitor, set to false to suppress these
 
 // Time zone                                      // Time is displayed on the LCD display in keeping with your local time zone                                             
                                                   // please see https://github.com/khoih-prog/Timezone_Generic#timechangerules-struct for more information

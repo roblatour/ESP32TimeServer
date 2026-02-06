@@ -1,4 +1,6 @@
-// Rob Latour, 2023
+// Rob Latour, 2026
+// last updated February 6, 2026
+
 // License: MIT
 // https://github.com/roblatour
 //
@@ -7,13 +9,34 @@
 //
 // https://time.is may be used a reference point to confirm your computer's date/time accuracy
 //
+// Compile and Upload using the Arduino IDE 1.8.19 (new versions may not work)
 
-// board: Olimex ESP32 POE ISO
+// Board Manager: esp32 by Espressif Systems board library v3.3.0 
+// Note: other Board Manager library versions may cause issues be sure to use v3.3.0
 
-// last updated July 6, 2023
+// Board: "OLIMEX ESP32-POE-ISO"
+
+// Upload Speed: "921600"
+// Flash Frequency: "80MHz"
+// Flash Mode: "QI0"
+// Flash Size: "4MB (32Mb)"
+// Partition Scheme: "Default 4MB with ffat (1.2MB APP/1.5MB FATFS)"
+// Core Debug Level: "None"
+// PSRAM: "Disabled (WROOM)"
+// Erase All Flash Before Sketch Upload: "Disabled"
+
+// Under the Arduino menu - File - Preferences - Additional Board Managers URLs links:
+// https://dl.espressif.com/dl/package_esp32_index.json
+// https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+
+// If board was previously used may need to clear its flash memory first
+// using the esptool:
+// python -m esptool --chip esp32 --port COM5 erase-flash
 
 #include <ETH.h>
-#include <Timezone.h> // https://github.com/khoih-prog/Timezone_Generic
+#include <WiFi.h>
+#include <WiFiUdp.h>
+#include <Timezone_Generic.h> // https://github.com/khoih-prog/Timezone_Generic
 #include <ESP32Time.h>
 #include <SoftwareSerial.h>
 #include <SparkFun_u-blox_GNSS_v3.h> // https://github.com/sparkfun/SparkFun_u-blox_GNSS_v3
@@ -35,7 +58,6 @@ volatile bool ppsFlag; // GPS one-pulse-per-second flag
 
 // LCD Display
 LiquidCrystal_I2C lcd(lcdI2CAddress, lcdColumns, lcdRows);
-String fullyBlankLine = "";
 
 // TimeZone
 TimeChangeRule *tcr;
@@ -94,11 +116,23 @@ void setupButton()
   pinMode(UpTimePin, INPUT_PULLUP);
 };
 
-void display(uint8_t row, String msg, bool writeToSerialMonitor = true)
+void display(uint8_t row, const char *msg, bool writeToSerialMonitor = true)
 {
 
-  String displayLine = msg + fullyBlankLine; // adding the fully blank line here clears the remnants of previously displayed information
-  displayLine = displayLine.substring(0, 20);
+  char displayLine[21];
+  int columns = lcdColumns;
+  if (columns > 20)
+    columns = 20;
+
+  for (int i = 0; i < columns; i++)
+    displayLine[i] = ' ';
+  displayLine[columns] = '\0';
+
+  if (msg != nullptr)
+  {
+    for (int i = 0; i < columns && msg[i] != '\0'; i++)
+      displayLine[i] = msg[i];
+  }
 
   lcd.setCursor(0, row);
   lcd.print(displayLine);
@@ -118,110 +152,95 @@ void setupDisplay()
   lcd.clear();
   lcd.home();
 
-  for (int i = 0; i < lcdColumns; i++)
-    fullyBlankLine.concat(" ");
-
   display(0, "ESP32 Time Server", false);
 }
 
-void GetAdjustedDateAndTimeStrings(time_t UTC_Time, String &dateString, String &timeString)
+void GetAdjustedDateAndTimeStrings(time_t UTC_Time, char *dateString, size_t dateSize, char *timeString, size_t timeSize)
 {
 
-  // adjust utc time to local time
   time_t now_Local_Time = myTZ.toLocal(UTC_Time, &tcr);
 
-  // format dateLine
+  int yearValue = year(now_Local_Time);
+  int monthValue = month(now_Local_Time);
+  int dayValue = day(now_Local_Time);
 
-  dateString = String(year(now_Local_Time));
+  snprintf(dateString, dateSize, "%04d-%02d-%02d", yearValue, monthValue, dayValue);
 
-  dateString.concat("-");
+  int hourValue = hourFormat12(now_Local_Time);
+  int minuteValue = minute(now_Local_Time);
+  int secondValue = second(now_Local_Time);
+  const char *ampm = isAM(now_Local_Time) ? "AM" : "PM";
+  const char *tz = (displayTimeZone && tcr) ? tcr->abbrev : "";
 
-  if (month(now_Local_Time) < 10)
-    dateString.concat("0");
-
-  dateString.concat(String(month(now_Local_Time)));
-
-  dateString.concat("-");
-
-  if (day(now_Local_Time) < 10)
-    dateString.concat("0");
-
-  dateString.concat(String(day(now_Local_Time)));
-
-  // format timeLine
-
-  timeString = String(hourFormat12(now_Local_Time));
-
-  timeString.concat(":");
-
-  if (minute(now_Local_Time) < 10)
-    timeString.concat("0");
-
-  timeString.concat(String(minute(now_Local_Time)));
-
-  timeString.concat(":");
-
-  if (second(now_Local_Time) < 10)
-    timeString.concat("0");
-
-  timeString.concat(String(second(now_Local_Time)));
-
-  if (isAM(now_Local_Time))
-    timeString.concat(" AM ");
+  if (displayTimeZone && tcr)
+    snprintf(timeString, timeSize, "%d:%02d:%02d %s %s", hourValue, minuteValue, secondValue, ampm, tz);
   else
-    timeString.concat(" PM ");
-  
-  if (displayTimeZone)
-    timeString.concat(tcr -> abbrev);
+    snprintf(timeString, timeSize, "%d:%02d:%02d %s", hourValue, minuteValue, secondValue, ampm);
 };
 
-String GetUpTime()
+void GetUpTime(char *buffer, size_t bufferSize)
 {
 
   unsigned long ms = millis();
 
-  const int oneSecond = 1000;
-  const int oneMinute = oneSecond * 60;
-  const int oneHour = oneMinute * 60;
-  const int oneDay = oneHour * 24;
+  const unsigned long oneSecond = 1000;
+  const unsigned long oneMinute = oneSecond * 60;
+  const unsigned long oneHour = oneMinute * 60;
+  const unsigned long oneDay = oneHour * 24;
 
-  int numberOfDays = ms / oneDay;
+  unsigned long numberOfDays = ms / oneDay;
   ms = ms - numberOfDays * oneDay;
 
-  int numberOfHours = ms / oneHour;
+  unsigned long numberOfHours = ms / oneHour;
   ms = ms - numberOfHours * oneHour;
 
-  int numberOfMinutes = ms / oneMinute;
+  unsigned long numberOfMinutes = ms / oneMinute;
   ms = ms - numberOfMinutes * oneMinute;
 
-  int numberOfSeconds = ms / oneSecond;
+  unsigned long numberOfSeconds = ms / oneSecond;
 
-  String returnValue = "";
-
-  char buffer[21];
-
-  sprintf(buffer, "%d %02d:%02d:%02d", numberOfDays, numberOfHours, numberOfMinutes, numberOfSeconds);
-
-  returnValue = String(buffer);
-  return returnValue;
+  snprintf(buffer, bufferSize, "%lu %02lu:%02lu:%02lu", numberOfDays, numberOfHours, numberOfMinutes, numberOfSeconds);
 }
 
 bool checkUpTimeRequest()
 {
 
+  static bool buttonWasPressed = false;
+  static unsigned long buttonPressStartMs = 0;
+
   bool returnValue = false;
+  bool buttonPressed = false;
 
   if (digitalRead(UpTimePin) == 0)
   {
 
-    delay(10); // weed out false positives caused by debounce
+    delay(10);
 
     if (digitalRead(UpTimePin) == 0)
+      buttonPressed = true;
+  };
+
+  if (buttonPressed)
+  {
+
+    if (!buttonWasPressed)
     {
 
-      returnValue = true;
-    };
-  };
+      buttonWasPressed = true;
+      buttonPressStartMs = millis();
+    }
+    else if (millis() - buttonPressStartMs >= 10000)
+      // if the users holds the button down for 10 seconds reboot the device
+      ESP.restart();
+
+    returnValue = true;
+  }
+  else
+  {
+
+    buttonWasPressed = false;
+    buttonPressStartMs = 0;
+  }
 
   return returnValue;
 }
@@ -287,7 +306,7 @@ void updateTheDisplay(void *parameter)
       if (RequiredTopLineMessage != previousTopLineMessage)
       {
 
-        String TopLineMessage;
+        const char *TopLineMessage = "";
         if (RequiredTopLineMessage == 1)
           TopLineMessage = "ESP32 Time Server";
         else if (RequiredTopLineMessage == 2)
@@ -311,17 +330,30 @@ void updateTheDisplay(void *parameter)
       {
         display(upTimeRequestRow, "up time is", false);
 
-        // centre up time results on the display
-        String ws = GetUpTime();
-        int padLeftSpacesNeeded = (lcdColumns - ws.length()) / 2;
-        String padLeft = fullyBlankLine.substring(0, padLeftSpacesNeeded);
-        ws = padLeft + ws;
-        display(upTimeResultsRow, ws, false);
+        char uptimeBuffer[21];
+        GetUpTime(uptimeBuffer, sizeof(uptimeBuffer));
+        int padLeftSpacesNeeded = (lcdColumns - (int)strlen(uptimeBuffer)) / 2;
+        if (padLeftSpacesNeeded < 0)
+          padLeftSpacesNeeded = 0;
+
+        char uptimeLine[21];
+        int columns = lcdColumns;
+        if (columns > 20)
+          columns = 20;
+        for (int i = 0; i < columns; i++)
+          uptimeLine[i] = ' ';
+        uptimeLine[columns] = '\0';
+
+        for (int i = 0; i < columns - padLeftSpacesNeeded && uptimeBuffer[i] != '\0'; i++)
+          uptimeLine[padLeftSpacesNeeded + i] = uptimeBuffer[i];
+
+        display(upTimeResultsRow, uptimeLine, false);
 
         display(upTimeExplainRow, " days hrs:mins:secs", false);
         anUptimeRequestHadBeenMade = true;
 
-        Serial.println(displayUpTimeSecondsCounter);
+        if (debugIsOn)
+          Serial.println(displayUpTimeSecondsCounter);
         displayUpTimeSecondsCounter--;
       }
       else
@@ -345,11 +377,11 @@ void updateTheDisplay(void *parameter)
 
           lastSecond = thisSecond;
 
-          // get the formated date and time as seperate strings
+          // get the formatted date and time as separate strings
 
-          String dateLine = "";
-          String timeLine = "";
-          GetAdjustedDateAndTimeStrings(now_UTC_Time, dateLine, timeLine);
+          char dateLine[11];
+          char timeLine[24];
+          GetAdjustedDateAndTimeStrings(now_UTC_Time, dateLine, sizeof(dateLine), timeLine, sizeof(timeLine));
 
           // update the time line on the display
           display(timeRow, timeLine, false);
@@ -367,7 +399,7 @@ void updateTheDisplay(void *parameter)
 
           // if an uptime request had been made restore the ip address line
           if (anUptimeRequestHadBeenMade)
-            display(ipAddressRow, ip);
+            display(ipAddressRow, ip.c_str());
         };
 
         vTaskDelay(975 / portTICK_PERIOD_MS);
@@ -382,7 +414,7 @@ void startAnOngoingTaskToUpdateTheDisplayEverySecond()
   xTaskCreatePinnedToCore(
       updateTheDisplay,     // Function that should be called
       "Update the display", // Name of the task (for debugging)
-      3000,                 // Stack size (bytes)
+      4096,                 // Stack size (bytes)
       NULL,                 // Parameter to pass
       10,                   // Task priority
       &taskHandle0,         // Task handle
@@ -524,7 +556,7 @@ void setupGPS()
           break;
         };
         display(1, "GPS fix obtained");
-        display(2, msg);
+        display(2, msg.c_str());
         delay(5000);
 
         continueWaitingForAFix = false;
@@ -583,7 +615,7 @@ void setDateAndTimeFromGPS(void *parameter)
             Serial.println("Candidate date and time " + String(wt.tm_year) + " " + String(wt.tm_mon) + " " + String(wt.tm_mday) + " " + String(wt.tm_hour) + " " + String(wt.tm_min) + " " + String(wt.tm_sec));
 
           time_t wt = candidateDateAndTime;
-          time_t candiateDateAndTime_t = time(&wt);
+          time_t candidateDateAndTime_t = time(&wt);
 
           // give some time to ensure the PPS pin is reset
           vTaskDelay(200 / portTICK_PERIOD_MS);
@@ -611,8 +643,8 @@ void setDateAndTimeFromGPS(void *parameter)
           {
             time_t currentRTC_t = rtc.getEpoch();
             time_t currentRTCDateAndTime_t = time(&currentRTC_t);
-            updateDelta = currentRTCDateAndTime_t - candiateDateAndTime_t;
-            bool SanityCheckPassed = (((updateDelta >= safeguardThresholdLow) && (updateDelta <= safeguardThresholdHigh)));
+            updateDelta = currentRTCDateAndTime_t - candidateDateAndTime_t;
+            SanityCheckPassed = (((updateDelta >= safeguardThresholdLow) && (updateDelta <= safeguardThresholdHigh)));
           };
 
           if (SanityCheckPassed)
@@ -684,7 +716,7 @@ void startAnOngoingTaskToRefreshTheDateAndTimeFromTheGPS()
   xTaskCreatePinnedToCore(
       setDateAndTimeFromGPS,
       "Set Date and Time from GPS",
-      3000,
+      4096,
       NULL,
       20, // task priority must be reasonably high or the queues from which the gps data is drawn will not be adequately replenished
       &taskHandle1,
@@ -710,7 +742,7 @@ void EthEvent(WiFiEvent_t event)
     break;
   case ARDUINO_EVENT_ETH_GOT_IP:
     ip = ETH.localIP().toString();
-    display(rowOfDisplayToShowIP, ip);
+    display(rowOfDisplayToShowIP, ip.c_str());
     eth_got_IP = true;
     eth_connected = true;
     break;
@@ -916,10 +948,10 @@ void processNTPRequests()
     if (debugIsOn)
     {
 
-      String dateLine = "";
-      String timeLine = "";
-      GetAdjustedDateAndTimeStrings(rtc.getEpoch(), dateLine, timeLine);
-      String updatemessage = "Query from " + remoteIP.toString() + " on " + dateLine + " at " + timeLine;
+      char dateLine[11];
+      char timeLine[24];
+      GetAdjustedDateAndTimeStrings(rtc.getEpoch(), dateLine, sizeof(dateLine), timeLine, sizeof(timeLine));
+      String updatemessage = "Query from " + remoteIP.toString() + " on " + String(dateLine) + " at " + String(timeLine);
       Serial.println(updatemessage);
     };
   }
@@ -961,7 +993,7 @@ void setup()
   display(3, " ", false);
 
   // create a mutex to be used to ensure an NTP request results are not impacted by the process that refreshes the time
-   mutex = xSemaphoreCreateMutex();
+  mutex = xSemaphoreCreateMutex();
 
   // setup for the use of the pulse-per-second pin
   pinMode(PPSPin, INPUT_PULLUP);
