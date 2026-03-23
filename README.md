@@ -5,7 +5,7 @@ Copyright Rob Latour, 2026
 
 ## Heads up - Coming Soon ...
 
-This repository currently host releases 1 of the ESP32 NTP Stratrum 1 Time Server.  However, version 2 is coming soon!
+This repository currently hosts releases 1 of the ESP32 NTP Stratrum 1 Time Server.  However, version 2 is coming soon!
 
 Version 2 will:
 - be designed around WaveShare's ESP32-P4-ETH development board rather than the Olimex ESP32 Ethernet development board.  While both boards support Ethernet connections with and without POE, the ESP32-P4 cpu is 1.7x to 2.5x than the ESP32-WROOM-32 or 32E found inthe Olimex boards.
