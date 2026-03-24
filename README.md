@@ -9,9 +9,9 @@ This repository currently hosts releases 1 of the ESP32 NTP Stratrum 1 Time Serv
 
 Version 2 will:
 - be designed around WaveShare's ESP32-P4-ETH development board rather than the Olimex ESP32 Ethernet development board.  While both boards support Ethernet connections with and without POE, the ESP32-P4 cpu is 1.7x to 2.5x than the ESP32-WROOM-32 or 32E found in the Olimex boards,
-- provide for more accurate NTP responses (due to hardware and coding changes),
+- work with the same SparkFun GNSS Receiver Breakout board (ublox MAX-M10S) as did version 1, but will also now work with some lower capability (cheaper) gps boards as well,
+- provide for more accurate NTP responses especially if the gps board includes a PPS pin (as does the Sparkfun board), 
 - include support Over the Ethernet updates,
-- work with the same SparkFun GNSS Receiver Breakout board (ublox MAX-M10S) as did version 1, but will also now work with some lower capability (cheaper) gps modules as well,
 - still support an LCD 2004 screen as did version 1. However, having a LCD 2004 screen attached will not be required as is in version 1, and
 - still support the use of an optional up time / reset button.
 
