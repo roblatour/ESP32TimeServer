@@ -1,0 +1,49 @@
+
+Below, in more detail are Windows Command Prompt commands that will allow you to:
+- provide for Over The Ethernet updates,
+- test NTP responses,
+- reset the Meinberg drift file (to recreate a new baseline for the use of a different time server)
+
+Notes: In the examples below:
+
+   the device name, ESP32TimeServer, is set as DeviceName in ESP32TimeServerSettings.h
+   xx.xx.xx.xx is the ip address of the esp32-p4 running the esp32 time server software
+
+1. Here is a command which may be used, following a build, to provide for an Over The Ethernet (OTE) update:
+      
+   python tools\espota.py -i ESP32TimeServer.local -p 3232 -P 3232 -a ESP32TimeServerpw -f build\sample_project.bin -r -d
+   or
+   python tools\espota.py -i xx.xx.xx.xx -p 3232 -P 3232 -a ESP32TimeServerpw -f build\sample_project.bin -r -d
+
+
+2. Here is a command which may be used for sending a NTP test request:
+   
+   w32tm /stripchart /computer:ESP32TimeServer.local /samples:5 /dataonly
+   or
+   w32tm /stripchart /computer:xx.xx.xx.xx /samples:5 /dataonly  
+
+   With the output showing, for example:
+
+   Tracking esp32timeserver.local [192.168.1.24:123].
+   Collecting 5 samples.
+   The current time is 2026-03-16 3:54:09 PM.
+   15:54:09, +00.0004071s
+   15:54:11, +00.0002725s
+   15:54:13, +00.0004652s
+   15:54:15, +00.0004417s
+   15:54:17, +00.0004249s
+
+   The first number above is the current time.
+   The second number above is the clock offset between the machine issuing the command and the esp32timeserver.local devices ESP32TimeServer
+   (in the case above approximately 4/10000's of a second).
+
+3. If you are using the Meinberg NTP Time Server https://www.meinbergglobal.com/english/sw/ntp.htm
+   and you want to create a new baseline as you are now using a new time server, 
+   then from the Windows Command Prompt with Administrative Privileges you can use these commands:
+   
+   net stop ntp
+   del "C:\Program Files (x86)\NTP\etc\ntp.drift"
+   net start ntp 
+   
+   (between 15 minutes to a hour later a new ntp.drift file will be created by the service)
+   

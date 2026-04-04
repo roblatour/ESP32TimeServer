@@ -1,0 +1,32 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ESP-IDF: OTA Upload over Ethernet",
+      "type": "shell",
+      "command": "cmd",
+      "args": [
+        "/d",
+        "/c",
+        "call C:\\esp\\v5.5.3\\esp-idf\\export.bat && idf.py build && python C:\\.platformio\\packages\\framework-arduinoespressif32\\tools\\espota.py -i ${input:otaDeviceIp} -p 3232 -P 3232 -a ESP32_Time_Server_pw -f build\\sample_project.bin -r"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "otaDeviceIp",
+      "type": "promptString",
+      "description": "ESP32 OTA target IP address",
+      "default": "192.168.7.25"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+dependencies:
+  esp-idf-lib/hd44780: "^1.3.0"
+  esp-idf-lib/pcf8574: "^1.0.10"
+  espressif/arduino-esp32: "^3.3.7"

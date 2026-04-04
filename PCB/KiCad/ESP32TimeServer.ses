@@ -1,0 +1,158 @@
+(session ESP32TimeServer.ses
+  (base_design ESP32TimeServer.dsn)
+  (placement
+    (resolution um 10)
+    (component MountingHole:MountingHole_3.2mm_M3
+      (place REF1 546100 -1263650 front 0)
+      (place REF2 298450 -1263650 front 0)
+    )
+    (component "Connector_JST:JST_PH_B4B-PH-K_1x04_P2.00mm_Vertical"
+      (place LCD1 756510 -596900 front 180)
+    )
+    (component Connector_PinSocket_2.54mm:PinSocket_1x08_P2.54mm_Vertical
+      (place GPS1 330963 -931959 front 90)
+    )
+    (component Connector_PinSocket_2.54mm:PinSocket_1x20_P2.54mm_Vertical
+      (place Left1 985567 -588689 front 0)
+      (place Right1 1163367 -588689 front 0)
+    )
+    (component "Connector_JST:JST_PH_B2B-PH-K_1x02_P2.00mm_Vertical"
+      (place Button1 419100 -749300 front 180)
+    )
+  )
+  (was_is
+  )
+  (routes 
+    (resolution um 10)
+    (parser
+      (host_cad "KiCad's Pcbnew")
+      (host_version 9.0.8)
+    )
+    (library_out 
+      (padstack "Via[0-1]_600:300_um"
+        (shape
+          (circle F.Cu 6000 0 0)
+        )
+        (shape
+          (circle B.Cu 6000 0 0)
+        )
+        (attach off)
+      )
+      (padstack "Via[0-1]_600:300_um"
+        (shape
+          (circle F.Cu 6000 0 0)
+        )
+        (shape
+          (circle B.Cu 6000 0 0)
+        )
+        (attach off)
+      )
+      (padstack "Via[0-1]_600:300_um"
+        (shape
+          (circle F.Cu 6000 0 0)
+        )
+        (shape
+          (circle B.Cu 6000 0 0)
+        )
+        (attach off)
+      )
+    )
+    (network_out 
+      (net "Net-(Button1-Pin_1)"
+        (wire
+          (path F.Cu 2000
+            419100 -749300
+            369978 -798422
+            369978 -936800
+            381024 -947846
+            956610 -947846
+            985567 -918889
+          )
+        )
+      )
+      (net "Net-(GPS1-Pin_4)"
+        (wire
+          (path F.Cu 2000
+            985567 -715689
+            657946 -715689
+            445264 -928371
+            445264 -936101
+            437536 -943829
+            419033 -943829
+            407163 -931959
+          )
+        )
+      )
+      (net "Net-(GPS1-Pin_3)"
+        (wire
+          (path F.Cu 2000
+            381763 -931959
+            648833 -664889
+            985567 -664889
+          )
+        )
+      )
+      (net "Net-(GPS1-Pin_5)"
+        (wire
+          (path F.Cu 2000
+            432563 -931959
+            674233 -690289
+            985567 -690289
+          )
+        )
+      )
+      (net +3.3V
+        (wire
+          (path F.Cu 2000
+            716510 -596900
+            725527 -596900
+          )
+        )
+        (wire
+          (path F.Cu 2000
+            1163367 -690289
+            1125267 -652189
+            775951 -652189
+            725527 -601765
+            725527 -596900
+          )
+        )
+        (wire
+          (path B.Cu 2000
+            483363 -931959
+            716510 -698812
+            716510 -596900
+          )
+        )
+      )
+      (net "Net-(LCD1-Pin_1)"
+        (wire
+          (path B.Cu 2000
+            756510 -596900
+            756510 -766032
+            985567 -995089
+          )
+        )
+      )
+      (net "Net-(LCD1-Pin_2)"
+        (wire
+          (path B.Cu 2000
+            736510 -596900
+            745527 -596900
+          )
+        )
+        (wire
+          (path B.Cu 2000
+            985567 -969689
+            765645 -749767
+            765645 -587782
+            762422 -584559
+            751085 -584559
+            745527 -590117
+            745527 -596900
+          )
+        )
+      )
+    )
+  )
+)

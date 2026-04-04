@@ -1,0 +1,5 @@
+﻿Designator,Footprint,Quantity,Value,LCSC Part #
+BUTTON1,JST_PH_B2B-PH-K_1x02_P2.00mm_Vertical,1,Conn_01x02,
+GPS1,PinSocket_1x08_P2.54mm_Vertical,1,Conn_01x08_Socket,
+LCD1,JST_PH_B4B-PH-K_1x04_P2.00mm_Vertical,1,Conn_01x04,
+"LEFT1, RIGHT1",PinSocket_1x20_P2.54mm_Vertical,2,Conn_01x20_Socket,

@@ -1,0 +1,99 @@
+
+(rules PCB ESP32TimeServer.dsn
+  (snap_angle 
+    fortyfive_degree
+  )
+  (autoroute_settings
+    (fanout off)
+    (autoroute on)
+    (postroute off)
+    (vias off)
+    (via_costs 50)
+    (plane_via_costs 5)
+    (start_ripup_costs 100)
+    (start_pass_no 1)
+    (layer_rule F.Cu
+      (active on)
+      (preferred_direction horizontal)
+      (preferred_direction_trace_costs 1.0)
+      (against_preferred_direction_trace_costs 3.8)
+    )
+    (layer_rule B.Cu
+      (active on)
+      (preferred_direction vertical)
+      (preferred_direction_trace_costs 1.0)
+      (against_preferred_direction_trace_costs 3.3)
+    )
+  )
+  (rule
+    (width 200.0)
+    (clearance 200.0)
+    (clearance 100.0 (type smd_to_turn_gap))
+    (clearance 50.0 (type smd))
+    (clearance 200.0 (type "kicad_default"))
+    (clearance 200.0 (type "GND_IGNORE,Default"))
+  )
+  (padstack "Via[0-1]_600:300_um"
+    (shape
+      (circle F.Cu 600.0 0.0 0.0)
+    )
+    (shape
+      (circle B.Cu 600.0 0.0 0.0)
+    )
+    (attach off)
+  )
+  (via 
+    "Via[0-1]_600:300_um" "Via[0-1]_600:300_um" default
+  )
+  (via 
+    "Via[0-1]_600:300_um-kicad_default" "Via[0-1]_600:300_um" "kicad_default"
+  )
+  (via 
+    "Via[0-1]_600:300_um-GND_IGNORE,Default" "Via[0-1]_600:300_um" "GND_IGNORE,Default"
+  )
+  (via_rule
+    default "Via[0-1]_600:300_um"
+  )
+  (via_rule
+    "kicad_default" "Via[0-1]_600:300_um-kicad_default"
+  )
+  (via_rule
+    "GND_IGNORE,Default" "Via[0-1]_600:300_um-GND_IGNORE,Default"
+  )
+  (class default
+    (clearance_class default)
+    (via_rule default)
+    (rule
+      (width 200.0)
+    )
+    (circuit 
+      (use_layer F.Cu B.Cu)
+    )
+  )
+  (class "kicad_default"
+    "Net-(Button1-Pin_1)" "Net-(GPS1-Pin_4)" "Net-(GPS1-Pin_3)" "unconnected-(GPS1-Pin_6-Pad6)" "Net-(GPS1-Pin_5)" +3.3V "unconnected-(GPS1-Pin_1-Pad1)" "unconnected-(GPS1-Pin_2-Pad2)"
+    "Net-(LCD1-Pin_1)" "Net-(LCD1-Pin_2)" "unconnected-(Left1-Pin_9-Pad9)" "unconnected-(Left1-Pin_11-Pad11)" "unconnected-(Left1-Pin_19-Pad19)" "unconnected-(Left1-Pin_20-Pad20)" "unconnected-(Left1-Pin_1-Pad1)" "unconnected-(Left1-Pin_2-Pad2)"
+    "unconnected-(Left1-Pin_15-Pad15)" "unconnected-(Left1-Pin_12-Pad12)" "unconnected-(Left1-Pin_7-Pad7)" "unconnected-(Left1-Pin_10-Pad10)" "unconnected-(Right1-Pin_9-Pad9)" "unconnected-(Right1-Pin_10-Pad10)" "unconnected-(Right1-Pin_6-Pad6)" "unconnected-(Right1-Pin_11-Pad11)"
+    "unconnected-(Right1-Pin_1-Pad1)" "unconnected-(Right1-Pin_7-Pad7)" "unconnected-(Right1-Pin_15-Pad15)" "unconnected-(Right1-Pin_17-Pad17)" "unconnected-(Right1-Pin_2-Pad2)" "unconnected-(Right1-Pin_14-Pad14)" "unconnected-(Right1-Pin_4-Pad4)" "unconnected-(Right1-Pin_19-Pad19)"
+    "unconnected-(Right1-Pin_16-Pad16)" "unconnected-(Right1-Pin_12-Pad12)" "unconnected-(Right1-Pin_20-Pad20)"
+    (clearance_class "kicad_default")
+    (via_rule "kicad_default")
+    (rule
+      (width 200.0)
+    )
+    (circuit 
+      (use_layer F.Cu B.Cu)
+    )
+  )
+  (class "GND_IGNORE,Default"
+    GND
+    (clearance_class "GND_IGNORE,Default")
+    (via_rule "GND_IGNORE,Default")
+    (rule
+      (width 200.0)
+    )
+    (circuit 
+      (use_layer F.Cu B.Cu)
+    )
+  )
+)
