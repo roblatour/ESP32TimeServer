@@ -24,7 +24,7 @@ Version 2 is a significant upgrade over [Version 1](https://github.com/roblatour
 
 - **New microcontroller board** — now built around the [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm) instead of the Olimex ESP32-PoE-ISO. The ESP32-P4 CPU is **1.7× to 2.5× faster** than the ESP32-WROOM-32/32E used in v1.
 - **More accurate NTP responses** — PPS (Pulse Per Second) pin support is now fully exploited to discipline the time reference, delivering sub-millisecond accuracy when using a PPS-capable GPS module.
-- **Over-the-Ethernet OTA updates** — firmware can now be updated wirelessly over the Ethernet connection directly from VS Code, with on-screen progress shown on the LCD.
+- **Over-the-Ethernet OTA updates** — firmware can now be updated over the Ethernet connection directly from VS Code, with on-screen progress shown on the LCD.
 - **LCD is now optional** — in v1 an LCD 2004 screen was required; in v2 it is entirely optional.
 - **Optional up time / reset button** — carry-over from v1, still supported.
 - **Updated 3D printed case** — the enclosure files have been updated for the new WaveShare ESP32-P4-ETH board.
