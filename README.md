@@ -22,7 +22,7 @@ A full write-up of the original (version 1) project is available on [Hackaday.io
 
 Version 2 is a significant upgrade over [Version 1](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0):
 
-- **New microcontroller board** — now built around the [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm) instead of the Olimex ESP32-PoE-ISO. The ESP32-P4 is more modern is faster than the ESP32-WROOM-32/32E used in v1.
+- **New microcontroller board** — now built around the [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm) instead of the Olimex ESP32-PoE-ISO. The ESP32-P4 is more modern and faster than the ESP32-WROOM-32/32E used in v1.
 - **More accurate NTP responses** — PPS (Pulse Per Second) pin support is now fully exploited to discipline the time reference, delivering sub-millisecond accuracy when using a PPS-capable GPS module.
 - **Over-the-Ethernet OTA updates** — firmware can now be updated over the Ethernet connection directly from VS Code, with on-screen progress shown on the LCD.
 - **LCD is now optional** — in v1 an LCD 2004 screen was required; in v2 it is entirely optional.
