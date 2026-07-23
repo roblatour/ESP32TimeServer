@@ -1,0 +1,13 @@
+{
+  "config": {
+    "default": true,
+    "MD013": true,
+    "MD033": { "allowed_elements": ["sup", "img"] }
+  },
+  "ignores": [
+    "build/**",
+    "managed_components/**",
+    "components/**",
+    "3rdparty/**"
+  ]
+}

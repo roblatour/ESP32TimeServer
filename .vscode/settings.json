@@ -1,3 +1,6 @@
 {
-    "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf"
+  "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf",
+  "files.associations": {
+    "sdkconfig.defaults*": "kconfig"
+  }
 }

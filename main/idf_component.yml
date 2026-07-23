@@ -1,4 +1,5 @@
 dependencies:
+  # Static dependencies required across all compilation target profiles
   esp-idf-lib/hd44780: "^1.3.0"
   esp-idf-lib/pcf8574: "^1.0.10"
-  espressif/arduino-esp32: "^3.3.7"
+  espressif/arduino-esp32: "^3.3.10"
