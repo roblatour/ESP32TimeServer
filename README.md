@@ -157,6 +157,10 @@ Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
 - `esp-idf-lib/pcf8574` — I²C LCD backpack driver
 - `espressif/arduino-esp32` — Arduino compatibility layer (used for OTA and serial)
 
+> **Note:** the ESP-IDF Component Manager resolves these dependencies
+> dynamically at build time. A `dependencies.lock` file is generated locally
+> on first build but is intentionally not committed (it is git-ignored).
+
 ### Configuration
 
 All user-configurable settings — GPIO pins, GPS options, LCD options, button
