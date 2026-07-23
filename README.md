@@ -14,7 +14,10 @@ set it up and let it do its job.
 
 ![ESP32 Time Server](./PCB/photo01.jpg)
 
-It uses a **GNSS (North America & Europe) receiver** as its time source, making it a true Stratum 1 server — meaning it gets its time directly from satellites rather than from another NTP server. Every device on your home network can then synchronize to it for highly accurate local time.
+It uses a **GNSS (North America & Europe) receiver** as its time source, making
+it a true Stratum 1 server — meaning it gets its time directly from satellites
+rather than from another NTP server. Every device on your home network can
+then synchronize to it for highly accurate local time.
 
 A full write-up of the original (version 1) project is available on [Hackaday.io](https://hackaday.io/project/189309-esp32-ntp-time-server-stratum-1).
 
@@ -57,16 +60,16 @@ default ESP32-P4's MAC address or for a custom MAC address to be set.
 ## Hardware
 
 <!-- markdownlint-disable line-length table-column-style -->
-| Qty | Item |
-| --- | ---- |
-| 1   | [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm) development board (with or without optional PoE Hat) <sup>1</sup> |
+| Qty | Item                                                                                                                                                                                                                                                                                                                                                                        |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm) development board (with or without optional PoE Hat) <sup>1</sup>                                                                                                                                                                                                                                      |
 | 1   | GPS/GNSS module [Recommeded: SparkFun GNSS Receiver Breakout - MAX-M10S (Qwiic)](https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html) <sup>1</sup>. Note: while some lower-cost generic modules ([AliExpress - NEO8M](https://www.aliexpress.com/item/1005003721844881.html)) are also supported, those including a PPS pin are strongly preferred |
-| 1   | GPS/GNSS antenna with SMA connector ([SparkFun GPS/GNSS Magnetic Mount Antenna - 3m (SMA)](https://www.sparkfun.com/products/14986)) <sup>1</sup> |
-| 1   | *(Optional)* 4×20 I²C LCD display with HD44780 controller with PCF8574 I²C backpack ([AliExpress](https://www.aliexpress.com/item/1005006829045609)) <sup>1</sup> |
-| 1   | *(Optional)* Momentary push button for displaying up time and triggering a reset ([AliExpress](https://www.aliexpress.com/item/1005004066257419.html)) <sup>1</sup> |
-| 1   | *(Optional)* USB C extension cable (with right angle end) ([AliExpress](https://www.aliexpress.com/item/1005006584965187.html)) <sup>1</sup> + two M3*8 |
-| —   | Miscellaneous: Ethernet cable, female dupont connection wires, small 4" .1" zip ties, solder <sup>2</sup> |
-| —   | A PoE-capable switch, PoE injector, **or** USB-C power supply and USB-C cable |
+| 1   | GPS/GNSS antenna with SMA connector ([SparkFun GPS/GNSS Magnetic Mount Antenna - 3m (SMA)](https://www.sparkfun.com/products/14986)) <sup>1</sup>                                                                                                                                                                                                                           |
+| 1   | *(Optional)* 4×20 I²C LCD display with HD44780 controller with PCF8574 I²C backpack ([AliExpress](https://www.aliexpress.com/item/1005006829045609)) <sup>1</sup>                                                                                                                                                                                                           |
+| 1   | *(Optional)* Momentary push button for displaying up time and triggering a reset ([AliExpress](https://www.aliexpress.com/item/1005004066257419.html)) <sup>1</sup>                                                                                                                                                                                                         |
+| 1   | *(Optional)* USB C extension cable (with right angle end) ([AliExpress](https://www.aliexpress.com/item/1005006584965187.html)) <sup>1</sup> + two M3*8                                                                                                                                                                                                                     |
+| —   | Miscellaneous: Ethernet cable, female dupont connection wires, small 4" .1" zip ties, solder <sup>2</sup>                                                                                                                                                                                                                                                                   |
+| —   | A PoE-capable switch, PoE injector, **or** USB-C power supply and USB-C cable                                                                                                                                                                                                                                                                                               |
 <!-- markdownlint-enable line-length table-column-style -->
 
 > ⚠️ **WARNING — Do NOT power the ESP32-P4-ETH via both its USB-C connector and
