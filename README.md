@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 2.2.1)
+# ESP32 NTP Stratum 1 Time Server (version 2.2.2)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -14,14 +14,7 @@ set it up and let it do its job.
 
 ![ESP32 Time Server](./PCB/photo01.jpg)
 
-<<<<<<< Updated upstream
-It uses a **GNSS North America & Europe) receiver** as its time source, making
-it a true Stratum 1 server — meaning it gets its time directly from satellites
-rather than from another NTP server. Every device on your home network can then
-synchronize to it for highly accurate local time.
-=======
 It uses a **GNSS (North America & Europe) receiver** as its time source, making it a true Stratum 1 server — meaning it gets its time directly from satellites rather than from another NTP server. Every device on your home network can then synchronize to it for highly accurate local time.
->>>>>>> Stashed changes
 
 A full write-up of the original (version 1) project is available on [Hackaday.io](https://hackaday.io/project/189309-esp32-ntp-time-server-stratum-1).
 

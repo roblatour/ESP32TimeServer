@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.2.1
+// ESP32 Time Server v2.2.2
 // Copyright Rob Latour, 2026
 
 //
@@ -604,7 +604,6 @@ static bool parse_mac_id_string(const char *text, uint8_t mac[6])
 
     return true;
 }
-
 
 static uint32_t get_highest_candidate_gps_baud()
 {
@@ -1887,7 +1886,7 @@ void write_opening_messages_to_the_console()
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Sever v2.2.1");
+    ESP_LOGI(TAG, "ESP32 Time Sever v2.2.2");
 
     if (!debugIsOn)
     {
@@ -1972,7 +1971,7 @@ static void configure_mac_address()
 
     uint8_t mac[6] = {};
     if (!parse_mac_id_string(MACAddress, mac))
-    {      
+    {
         ESP_LOGE(TAG, "Configured MAC address is invalid: %s", MACAddress);
         return;
     }
@@ -2959,7 +2958,7 @@ extern "C" void app_main()
     initArduino();
 
     write_opening_messages_to_the_console();
-    
+
     setup_NVM_storage();
 
     create_mutexes_and_semaphores();
