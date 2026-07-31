@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 2.2.2)
+# ESP32 NTP Stratum 1 Time Server (version 2.3)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -51,6 +51,8 @@ across reboots so following the initial setup startup speed is quick.
 those (although not recommended) that do not expose a PPS pin.
 - **Ability to set a custom MAC Address** — (version 2.2) allows the use of the
 default ESP32-P4's MAC address or for a custom MAC address to be set.
+- **Ability to set a Static IP Address** — (version 2.3) allows the use of a
+DHCP assigned or static IP address.
 
 > The source code for **Version 1** (Arduino / PlatformIO) remains available at:
 > [https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0)

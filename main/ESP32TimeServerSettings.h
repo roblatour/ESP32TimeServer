@@ -32,6 +32,17 @@ static constexpr uint16_t OTA_Port = 3232;
 // set the value below to a desired MAC address, such as "80:f1:b2:d1:d9:18"
 static constexpr char MACAddress[] = "";
 
+// support for the (optional) setting of a static IP address on the ESP32-P4's Ethernet interface.
+// set StaticIPAddress to "" to use DHCP (the default behaviour), which allows the router to
+// auto-assign an IP address, or set it to a desired static IP address such as "192.168.1.100".
+// when a static IP address is set, Gateway and SubnetMask must also be provided.
+// PrimaryDNS and SecondaryDNS are optional; leave them as "" to omit them.
+static constexpr char StaticIPAddress[] = ""; // optional - leave as "" to omit, or for example: 192.168.1.100
+static constexpr char Gateway[] = "";         // optional - leave as "" to omit, or for example: : 192.168.1.1
+static constexpr char SubnetMask[] = "";      // optional - leave as "" to omit, or for example: 255.255.255.0
+static constexpr char PrimaryDNS[] = "";      // optional - leave as "" to omit, or for example: 8.8.8.8
+static constexpr char SecondaryDNS[] = "";    // optional - leave as "" to omit, or for example: 1.1.1.1
+
 // GPS support (required)
 static constexpr int TXPin = 16;
 static constexpr int RXPin = 17;

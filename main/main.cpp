@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.2.2
+// ESP32 Time Server v2.3
 // Copyright Rob Latour, 2026
 
 //
@@ -1841,6 +1841,64 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
     }
 }
 
+// Apply the optional static IP address configuration from ESP32TimeServerSettings.h.
+// When StaticIPAddress is empty this is a no-op and the Ethernet interface falls back
+// to DHCP (the default behaviour). Returns true when a static IP was applied, false otherwise.
+static bool configure_static_ip()
+{
+    // An empty StaticIPAddress means DHCP should be used - nothing to do here
+    if (StaticIPAddress[0] == '\0')
+        return false;
+
+    IPAddress local_ip, gateway, subnet;
+    if (!local_ip.fromString(StaticIPAddress))
+    {
+        ESP_LOGE(TAG, "Configured StaticIPAddress is invalid: %s", StaticIPAddress);
+        return false;
+    }
+    if (!gateway.fromString(Gateway))
+    {
+        ESP_LOGE(TAG, "Configured Gateway is invalid: %s", Gateway);
+        return false;
+    }
+    if (!subnet.fromString(SubnetMask))
+    {
+        ESP_LOGE(TAG, "Configured SubnetMask is invalid: %s", SubnetMask);
+        return false;
+    }
+
+    // DNS servers are optional; default to 0.0.0.0 (unset) when left blank
+    IPAddress dns1, dns2;
+    if (PrimaryDNS[0] != '\0')
+    {
+        if (!dns1.fromString(PrimaryDNS))
+        {
+            ESP_LOGE(TAG, "Configured PrimaryDNS is invalid: %s", PrimaryDNS);
+            return false;
+        }
+    }
+    if (SecondaryDNS[0] != '\0')
+    {
+        if (!dns2.fromString(SecondaryDNS))
+        {
+            ESP_LOGE(TAG, "Configured SecondaryDNS is invalid: %s", SecondaryDNS);
+            return false;
+        }
+    }
+
+    if (!ETH.config(local_ip, gateway, subnet, dns1, dns2))
+    {
+        ESP_LOGE(TAG, "ETH.config() failed to apply the static IP configuration");
+        return false;
+    }
+
+    if (debugIsOn)
+        ESP_LOGI(TAG,
+                 "Static IP configuration applied: ip=%s, mask=%s, gw=%s",
+                 StaticIPAddress, SubnetMask, Gateway);
+    return true;
+}
+
 static void setup_ethernet()
 {
     if (s_net_event_group == nullptr)
@@ -1871,8 +1929,14 @@ static void setup_ethernet()
         return;
     }
 
+    // Apply the optional static IP address (if configured). When StaticIPAddress is
+    // left empty this is a no-op and DHCP is used as usual.
+    bool static_ip_applied = configure_static_ip();
+
     if (debugIsOn)
-        ESP_LOGI(TAG, "Waiting for Ethernet DHCP address...");
+        ESP_LOGI(TAG,
+                 "Waiting for Ethernet %s address...",
+                 static_ip_applied ? "static" : "DHCP");
     xEventGroupWaitBits(s_net_event_group, ETH_GOT_IP_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
     if (debugIsOn)
         ESP_LOGI(TAG, "Ethernet setup complete, current IP: %s", s_ip_address[0] == '\0' ? "<none>" : s_ip_address);
@@ -1886,7 +1950,7 @@ void write_opening_messages_to_the_console()
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Sever v2.2.2");
+    ESP_LOGI(TAG, "ESP32 Time Sever v2.3");
 
     if (!debugIsOn)
     {
