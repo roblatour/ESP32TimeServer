@@ -174,6 +174,9 @@ main/ESP32TimeServerSettings.h
 
 Edit this file before building to match your hardware setup.
 
+> [!IMPORTANT]
+> Make sure the values in the file matches your actual hardware, otherwise the server may crash.
+
 ### Build & Flash
 
 Pull the git repository with submodule:
