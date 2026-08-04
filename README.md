@@ -181,7 +181,7 @@ git submodule update --init --recursive
 ### Setup Step 2 - Configuration
 
 All user-configurable settings — GPIO pins, GPS options, LCD options, button
-support, time zone, and safeguard threshold — are centralized in:
+support, time zone, etc. are centralized in the file:
 
 ```plaintext
 main/ESP32TimeServerSettings.h
