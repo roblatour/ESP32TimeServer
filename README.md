@@ -150,9 +150,8 @@ This release is built using:
 The [`SparkFun u-blox GNSS Arduino Library v3`](https://github.com/sparkfun/SparkFun_u-blox_GNSS_v3)
 (v3.1.14) is included as a **git submodule** in the [`3rdparty/SparkFun_u-blox_GNSS_v3`](./3rdparty/SparkFun_u-blox_GNSS_v3)
 directory. Since it is an Arduino library and is not published to the ESP-IDF
-Component Registry, it should be downloaded using:
+Component Registry it will be downloaded as part of the 'Build and Flash' steps outlined below.
 
- `git submodule update --init --recursive`
 
 The remaining dependencies are managed automatically via the ESP-IDF Component
 Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
@@ -164,6 +163,19 @@ Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
 > **Note:** the ESP-IDF Component Manager resolves these dependencies
 > dynamically at build time. A `dependencies.lock` file is generated locally
 > on first build but is intentionally not committed (it is git-ignored).
+
+### Download
+
+Create a folder, clone this repository into it, and updated the SparkFun library within it,<br>
+For example:<br>
+```
+c:
+mkdir c:\temp\ESP32TimeServerProject
+cd \temp\ESP32TimeserverProject
+git clone --recursive https://github.com/roblatour/ESP32TimeServer
+cd ESP32TimeServer
+git submodule update --init --recursive
+```
 
 ### Configuration
 
@@ -185,10 +197,10 @@ This file should be edited to match your desired hardware setup before building.
 
 #### ESP32-P4 Revision Profiles
 
-ESP32-P4 revisions earlier than v3.0 and v3.x use binary-incompatible hardware
-families. Select the build profile that matches the board:
+ESP32-P4 revisions earlier than v3.0 and v3.x use binary-incompatible hardware families. 
+Select the build profile that matches the board:
 
-- **ESP32-P4 v1.x / engineering samples**: use the pre-v3 overlay at
+- **For ESP32-P4 v1.x / engineering samples**: use the pre-v3 overlay at
   `config/esp32p4_rev_pre_v3.defaults`. After loading the ESP-IDF environment,
   delete the generated `sdkconfig` when switching profiles, then run:
 
@@ -200,23 +212,10 @@ families. Select the build profile that matches the board:
   The same isolated profile is available through
   `tools\build_esp32p4_pre_v3.bat`.
 
-- **ESP32-P4 v3.x**: use the normal defaults and build command below. Do not
-  apply the pre-v3 overlay.
+- **For (in most cases) ESP32-P4 v3.x**: no additional steps are required to use the normal defaults and build command below. 
 
 > **Important:** Do not use `--force` to flash a v3.1+ image to an ESP32-P4
 > v1.3 board. Rebuild the firmware with the pre-v3 profile instead.
-
-Pull the git repository with submodule:
-
-```cmd
-git clone --recursive https://github.com/roblatour/ESP32TimeServer
-```
-
-Or, pull the submodule if you've already cloned the repository:
-
-```cmd
-git submodule update --init --recursive
-```
 
 Load the ESP-IDF environment, then build and flash:
 
