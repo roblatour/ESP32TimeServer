@@ -150,7 +150,7 @@ This release is built using:
 The [`SparkFun u-blox GNSS Arduino Library v3`](https://github.com/sparkfun/SparkFun_u-blox_GNSS_v3)
 (v3.1.14) is included as a **git submodule** in the [`3rdparty/SparkFun_u-blox_GNSS_v3`](./3rdparty/SparkFun_u-blox_GNSS_v3)
 directory. Since it is an Arduino library and is not published to the ESP-IDF
-Component Registry it will be manually created as part of the 'Download' steps outlined below.
+Component Registry it will be manually created as part of the 'Setup Step 1 - Download' steps outlined below.
 
 
 The remaining dependencies are managed automatically via the ESP-IDF Component
@@ -164,7 +164,8 @@ Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
 > dynamically at build time. A `dependencies.lock` file is generated locally
 > on first build but is intentionally not committed (it is git-ignored).
 
-### Download
+## Setup
+### Setup Step 1 - Download
 
 Create a folder for this project, clone this repository into it, and updated the SparkFun library within it.<br>
 For example:<br>
@@ -177,7 +178,7 @@ cd ESP32TimeServer
 git submodule update --init --recursive
 ```
 
-### Configuration
+### Setup Step 2 - Configuration
 
 All user-configurable settings — GPIO pins, GPS options, LCD options, button
 support, time zone, and safeguard threshold — are centralized in:
@@ -193,7 +194,7 @@ This file should be edited to match your desired hardware setup before building.
 > Please ensure the correct values (true or false) are set appropriately for your desired usage.<br>
 > If a Liquid Crystal Display is **not** connected the value for supportForLiquidCrystalDisplay
 > **must** be set to false or a critical run time error will occur.
-### Build & Flash
+### Setup Step 3 - Build
 
 #### ESP32-P4 Revision Profiles:
 
@@ -223,6 +224,10 @@ The ESP32-P4 has different revision.
 ```cmd
 call C:\esp\v5.5.3\esp-idf\export.bat
 idf.py build
+```
+### Setup Step 4 - Flash
+
+```cmd
 idf.py -p COMx flash monitor
 ```
 
