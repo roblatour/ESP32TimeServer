@@ -30,8 +30,6 @@ build/
 *.map
 flasher_args.json # Generated in build directory
 sdkconfig.old
-sdkconfig
-sdkconfig.esp32p4-pre-v3
 sdkconfig.esp32p4-pre-v3.old
 build-esp32p4-pre-v3/
 

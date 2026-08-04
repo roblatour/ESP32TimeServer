@@ -96,9 +96,10 @@ in that folder for more information.
 | ------- | ---------------- |
 | GND     | GND              |
 | VCC     | 3V3              |
+| PPS     | GPIO 18          |
 | TXD     | GPIO 17 (RX)     |
 | RXD     | GPIO 16 (TX)     |
-| PPS     | GPIO 18          |
+
 
 **LCD 2004 (HD44780 + PCF8574 I²C backpack) → ESP32-P4-ETH** *(optional)*
 
@@ -149,7 +150,9 @@ This release is built using:
 The [`SparkFun u-blox GNSS Arduino Library v3`](https://github.com/sparkfun/SparkFun_u-blox_GNSS_v3)
 (v3.1.14) is included as a **git submodule** in the [`3rdparty/SparkFun_u-blox_GNSS_v3`](./3rdparty/SparkFun_u-blox_GNSS_v3)
 directory. Since it is an Arduino library and is not published to the ESP-IDF
-Component Registry, it can be downloaded using `git submodule update --init --recursive`.
+Component Registry, it should be downloaded using:
+
+ `git submodule update --init --recursive`
 
 The remaining dependencies are managed automatically via the ESP-IDF Component
 Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
@@ -171,15 +174,13 @@ support, time zone, and safeguard threshold — are centralized in:
 main/ESP32TimeServerSettings.h
 ```
 
-Edit this file before building to match your hardware setup.
-
-**Note:** settings in this file indicates if you are using certain features or not,
-including: supportForAnUpTimeRestartButton, supportForLiquidCrystalDisplay, and 
-supportForOTEUpdates. Please ensure you set these to the correct values (true or false) for 
-your desired usage.  If you are not connecting a Liquid Crystal Display the 
-value for supportForLiquidCrystalDisplay must be set to false or you will have
-critical run time error.
-
+This file should be edited to match your desired hardware setup before building.<br>
+>> **Note:** the settings file is used to indicate if you are using certain features or not.<br>
+>> These include: supportForAnUpTimeRestartButton, supportForLiquidCrystalDisplay, and 
+>> supportForOTEUpdates.<br>
+>> Please ensure the correct values (true or false) are set appropriately for your desired usage.<br>
+>> If a Liquid Crystal Display is **not** connected the value for supportForLiquidCrystalDisplay
+>> **must** be set to false or a critical run time error will occur.
 ### Build & Flash
 
 #### ESP32-P4 Revision Profiles
