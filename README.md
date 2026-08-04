@@ -235,8 +235,8 @@ idf.py -p COMx flash monitor
 
 ### OTA Updates (Over Ethernet)
 
-OTA updates may be performed following the initial flash of this project assuming the option
-'supportForOTEUpdates' was set to 'true' for the initial build and flash of this project.
+Following the initial flash of this project OTA updates may be performed assuming the option
+'supportForOTEUpdates' was set to 'true' for the initial build and flash.
 
 A VS Code task **"ESP-IDF: OTA Upload over Ethernet"** is included in
 `.vscode/tasks.json`. It builds the firmware and deploys it to the device over
@@ -246,16 +246,16 @@ Alternatively, there is a terminal command that can be used, it is found in the
 
 ---
 
+### Setting up your Network / Systems to make use of the ESP32 Time Server
+
+Please see [`Setup.md`](Setup.md)
+
+---
+
 ## Validating Your Time Server
 
 Once running, and with your Network and System changes setup, you can validate
 accuracy at [https://time.is](https://time.is).
-
----
-
-### Setting up your Network / Systems to make use of the ESP32 Time Server
-
-Please see [`Setup.md`](Setup.md)
 
 ---
 
