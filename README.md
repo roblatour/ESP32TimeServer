@@ -189,11 +189,11 @@ main/ESP32TimeServerSettings.h
 
 This file should be edited to match your desired hardware setup before building.<br>
 > **Note:** the settings file is used to indicate if you are using certain features or not.<br>
-> These include: supportForAnUpTimeRestartButton, supportForLiquidCrystalDisplay, and 
-> supportForOTEUpdates.<br>
-> Please ensure the correct values (true or false) are set appropriately for your desired usage.<br>
-> If a Liquid Crystal Display is **not** connected the value for supportForLiquidCrystalDisplay
-> **must** be set to false or a critical run time error will occur.
+> These include: 'supportForAnUpTimeRestartButton', 'supportForLiquidCrystalDisplay', and 
+> 'supportForOTEUpdates'.<br>
+> Please ensure the correct values ('true' or 'false') are set appropriately for your desired usage.<br>
+> If a Liquid Crystal Display is **not** connected the value for 'supportForLiquidCrystalDisplay'
+> **must** be set as 'false' or a critical run time error will occur.
 ### Setup Step 3 - Build
 
 #### Setup Step 3a - Pre-work for early ESP32-P4 modules:
@@ -235,8 +235,8 @@ idf.py -p COMx flash monitor
 
 ### OTA Updates (Over Ethernet)
 
-OTA updates can be performed following the initial flash of this project assuming the configuration option<br>
-supportForOTEUpdates is set to true in the file ESP32TimeServerSettings.h
+OTA updates may be performed following the initial flash of this project assuming the option
+'supportForOTEUpdates' was set to 'true' for the initial build and flash of this project.
 
 A VS Code task **"ESP-IDF: OTA Upload over Ethernet"** is included in
 `.vscode/tasks.json`. It builds the firmware and deploys it to the device over
