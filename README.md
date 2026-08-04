@@ -196,11 +196,11 @@ This file should be edited to match your desired hardware setup before building.
 > **must** be set to false or a critical run time error will occur.
 ### Setup Step 3 - Build
 
-#### ESP32-P4 Revision Profiles:
+#### Setup Step 3a - Pre-work for early ESP32-P4 modules:
 
-The ESP32-P4 has different revision.  
+The ESP32-P4 has different revisions.  
 
-- For current ESP32-P4 modules (at revision 3.1 or above): no additional steps are required.<br>
+- For current ESP32-P4 modules (at revision 3.1 or above) no pre-work is required and you can skip to Setup Step 3b below.<br>
 
 - For older ESP32-P4 modules (prior to version 3.1 - for example v1.x engineering samples): use the pre-v3 overlay at
   `config/esp32p4_rev_pre_v3.defaults`. After loading the ESP-IDF environment,
@@ -219,7 +219,7 @@ The ESP32-P4 has different revision.
 
 <br>
 
-#### Load the ESP-IDF environment, then build and flash:
+#### Setup Step 3 b - Load the ESP-IDF environment and build:
 
 ```cmd
 call C:\esp\v5.5.3\esp-idf\export.bat
@@ -234,6 +234,9 @@ idf.py -p COMx flash monitor
 *(Replace `COMx` with your actual serial port.)*
 
 ### OTA Updates (Over Ethernet)
+
+OTA updates can be performed following the initial flash of this project assuming the configuration option<br>
+supportForOTEUpdates is set to true in the file ESP32TimeServerSettings.h
 
 A VS Code task **"ESP-IDF: OTA Upload over Ethernet"** is included in
 `.vscode/tasks.json`. It builds the firmware and deploys it to the device over
