@@ -166,7 +166,7 @@ Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
 
 ### Download
 
-Create a folder, clone this repository into it, and updated the SparkFun library within it,<br>
+Create a folder, clone this repository into it, and updated the SparkFun library within it.<br>
 For example:<br>
 ```
 c:
@@ -195,14 +195,13 @@ This file should be edited to match your desired hardware setup before building.
 > **must** be set to false or a critical run time error will occur.
 ### Build & Flash
 
-#### ESP32-P4 Revision Profiles
+#### ESP32-P4 Revision Profiles:
 
-ESP32-P4 revisions earlier than v3.0 and v3.x use binary-incompatible hardware families. 
-Select the build profile that matches the board:
+The ESP32-P4 has different revision.  
 
-- **For (in most cases) ESP32-P4 v3.x**: no additional steps are required to use the normal defaults and build command below. 
+- For current ESP32-P4 modules (at revision 3.1 or above): no additional steps are required.<br>
 
-- **For ESP32-P4 v1.x / engineering samples**: use the pre-v3 overlay at
+- For older ESP32-P4 modules (prior to version 3.1 - for example v1.x engineering samples): use the pre-v3 overlay at
   `config/esp32p4_rev_pre_v3.defaults`. After loading the ESP-IDF environment,
   delete the generated `sdkconfig` when switching profiles, then run:
 
@@ -217,7 +216,9 @@ Select the build profile that matches the board:
 > **Important:** Do not use `--force` to flash a v3.1+ image to an ESP32-P4
 > v1.3 board. Rebuild the firmware with the pre-v3 profile instead.
 
-Load the ESP-IDF environment, then build and flash:
+<br>
+
+#### Load the ESP-IDF environment, then build and flash:
 
 ```cmd
 call C:\esp\v5.5.3\esp-idf\export.bat
