@@ -172,7 +172,8 @@ main/ESP32TimeServerSettings.h
 ```
 
 Edit this file before building to match your hardware setup.
-**Note:** settings in this file indicate if you are using certain features or not,
+
+**Note:** settings in this file indicates if you are using certain features or not,
 including: supportForAnUpTimeRestartButton, supportForLiquidCrystalDisplay, and 
 supportForOTEUpdates. Please ensure you set these to the correct values (true or false) for 
 your desired usage.  If you are not connecting a Liquid Crystal Display the 
