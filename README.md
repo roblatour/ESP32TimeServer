@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 2.3)
+# ESP32 NTP Stratum 1 Time Server (version 2.3.1)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -141,7 +141,6 @@ This release is built using:
 
 - **[Visual Studio Code](https://code.visualstudio.com/)**
 - **[Espressif ESP-IDF Extension for VS Code](https://marketplace.visualstudio.com/items?itemName=espressif.esp-idf-extension)**
-- **ESP-IDF v5.5.3**
 
 (It has been tested to compile on 5.5.3+ and 6.0.2+)
 
@@ -166,15 +165,44 @@ Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
 ### Configuration
 
 All user-configurable settings — GPIO pins, GPS options, LCD options, button
-support, time zone, and safeguard threshold — are centralised in:
+support, time zone, and safeguard threshold — are centralized in:
 
 ```plaintext
 main/ESP32TimeServerSettings.h
 ```
 
 Edit this file before building to match your hardware setup.
+**Note:** settings in this file indicate if you are using certain features or not,
+including: supportForAnUpTimeRestartButton, supportForLiquidCrystalDisplay, and 
+supportForOTEUpdates. Please ensure you set these to the correct values (true or false) for 
+your desired usage.  If you are not connecting a Liquid Crystal Display the 
+value for supportForLiquidCrystalDisplay must be set to false or you will have
+critical run time error.
 
 ### Build & Flash
+
+#### ESP32-P4 Revision Profiles
+
+ESP32-P4 revisions earlier than v3.0 and v3.x use binary-incompatible hardware
+families. Select the build profile that matches the board:
+
+- **ESP32-P4 v1.x / engineering samples**: use the pre-v3 overlay at
+  `config/esp32p4_rev_pre_v3.defaults`. After loading the ESP-IDF environment,
+  delete the generated `sdkconfig` when switching profiles, then run:
+
+  ```cmd
+  del sdkconfig
+  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_pre_v3.defaults" set-target esp32p4 build
+  ```
+
+  The same isolated profile is available through
+  `tools\build_esp32p4_pre_v3.bat`.
+
+- **ESP32-P4 v3.x**: use the normal defaults and build command below. Do not
+  apply the pre-v3 overlay.
+
+> **Important:** Do not use `--force` to flash a v3.1+ image to an ESP32-P4
+> v1.3 board. Rebuild the firmware with the pre-v3 profile instead.
 
 Pull the git repository with submodule:
 
