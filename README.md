@@ -100,7 +100,6 @@ in that folder for more information.
 | TXD     | GPIO 17 (RX)     |
 | RXD     | GPIO 16 (TX)     |
 
-
 **LCD 2004 (HD44780 + PCF8574 I²C backpack) → ESP32-P4-ETH** *(optional)*
 
 | LCD pin | ESP32-P4-ETH pin |
@@ -148,28 +147,30 @@ This release is built using:
 ### Dependencies
 
 The [`SparkFun u-blox GNSS Arduino Library v3`](https://github.com/sparkfun/SparkFun_u-blox_GNSS_v3)
-(v3.1.14) is included as a **git submodule** in the [`3rdparty/SparkFun_u-blox_GNSS_v3`](./3rdparty/SparkFun_u-blox_GNSS_v3)
-directory. Since it is an Arduino library and is not published to the ESP-IDF
-Component Registry it will be manually created as part of the 'Setup Step 1 - Download' steps outlined below.
-
+(v3.1.14) is included as a **git submodule** in
+[`3rdparty/SparkFun_u-blox_GNSS_v3`](./3rdparty/SparkFun_u-blox_GNSS_v3).
+Since it is an Arduino library and is not published to the ESP-IDF Component
+Registry, it is manually created during Setup Step 1.
 
 The remaining dependencies are managed automatically via the ESP-IDF Component
 Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
 
 - `esp-idf-lib/hd44780` — LCD driver
 - `esp-idf-lib/pcf8574` — I²C LCD backpack driver
-- `espressif/arduino-esp32` — Arduino compatibility layer (used for OTA and serial)
+- `espressif/arduino-esp32` — Arduino compatibility layer for OTA and serial
 
-> **Note:** the ESP-IDF Component Manager resolves these dependencies
+> **Note:** The ESP-IDF Component Manager resolves these dependencies
 > dynamically at build time. A `dependencies.lock` file is generated locally
-> on first build but is intentionally not committed (it is git-ignored).
+> on first build but is intentionally not committed because it is git-ignored.
 
 ## Setup
+
 ### Setup Step 1 - Download
 
-Create a folder for this project, clone this repository into it, and updated the SparkFun library within it.<br>
-For example:<br>
-```
+Create a folder for this project, clone this repository into it, and update the
+SparkFun library within it. For example:
+
+```cmd
 c:
 mkdir c:\temp\ESP32TimeServerProject
 cd \temp\ESP32TimeserverProject
@@ -181,34 +182,39 @@ git submodule update --init --recursive
 ### Setup Step 2 - Configuration
 
 All user-configurable settings — GPIO pins, GPS options, LCD options, button
-support, time zone, etc. are centralized in the file:
+support, time zone, etc. — are centralized in:
 
 ```plaintext
 main/ESP32TimeServerSettings.h
 ```
 
-This file should be edited to match your desired hardware setup before building.<br>
-> **Note:** the settings file is used to indicate if you are using certain features or not.<br>
-> These include: 'supportForAnUpTimeRestartButton', 'supportForLiquidCrystalDisplay', and 
-> 'supportForOTEUpdates'.<br>
-> Please ensure the correct values ('true' or 'false') are set appropriately for your desired usage.<br>
-> If a Liquid Crystal Display is **not** connected the value for 'supportForLiquidCrystalDisplay'
-> **must** be set as 'false' or a critical run time error will occur.
+Edit this file to match your desired hardware setup before building.
+
+> **Note:** The settings file indicates whether certain features are enabled.
+> These include `supportForAnUpTimeRestartButton`,
+> `supportForLiquidCrystalDisplay`, and `supportForOTEUpdates`. Ensure each
+> value is set to `true` or `false` as appropriate. If a Liquid Crystal Display
+> is **not** connected, `supportForLiquidCrystalDisplay` **must** be `false` or
+> a critical runtime error will occur.
+
 ### Setup Step 3 - Build
 
-#### Setup Step 3a - Pre-work for early ESP32-P4 modules:
+#### Setup Step 3a - Pre-work for early ESP32-P4 modules
 
-The ESP32-P4 has different revisions.  
+The ESP32-P4 has different revisions.
 
-- For current ESP32-P4 modules (at revision 3.1 or above) no pre-work is required and you can skip to Setup Step 3b below.<br>
-
-- For older ESP32-P4 modules (prior to version 3.1 - for example v1.x engineering samples): use the pre-v3 overlay at
-  `config/esp32p4_rev_pre_v3.defaults`. After loading the ESP-IDF environment,
-  delete the generated `sdkconfig` when switching profiles, then run:
+- For current ESP32-P4 modules at revision 3.1 or above, no pre-work is
+  required. Skip to Setup Step 3b.
+- For older ESP32-P4 modules prior to version 3.1, such as v1.x engineering
+  samples, use the pre-v3 overlay at `config/esp32p4_rev_pre_v3.defaults`.
+  After loading the ESP-IDF environment, delete the generated `sdkconfig` when
+  switching profiles, then run:
 
   ```cmd
   del sdkconfig
-  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_pre_v3.defaults" set-target esp32p4 build
+  idf.py -D ^
+    SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_pre_v3.defaults" ^
+    set-target esp32p4 build
   ```
 
   The same isolated profile is available through
@@ -217,14 +223,13 @@ The ESP32-P4 has different revisions.
 > **Important:** Do not use `--force` to flash a v3.1+ image to an ESP32-P4
 > v1.3 board. Rebuild the firmware with the pre-v3 profile instead.
 
-<br>
-
-#### Setup Step 3 b - Load the ESP-IDF environment and build:
+#### Setup Step 3b - Load the ESP-IDF environment and build
 
 ```cmd
 call C:\esp\v5.5.3\esp-idf\export.bat
 idf.py build
 ```
+
 ### Setup Step 4 - Flash
 
 ```cmd
@@ -235,14 +240,15 @@ idf.py -p COMx flash monitor
 
 ### OTA Updates (Over Ethernet)
 
-Following the initial flash of this project OTA updates may be performed assuming the option
-'supportForOTEUpdates' was set to 'true' for the initial build and flash.
+Following the initial flash, OTA updates can be performed if
+`supportForOTEUpdates` was set to `true` for the initial build and flash.
 
 A VS Code task **"ESP-IDF: OTA Upload over Ethernet"** is included in
 `.vscode/tasks.json`. It builds the firmware and deploys it to the device over
-Ethernet using `espota.py` — no USB cable needed after the first flash.
-Alternatively, there is a terminal command that can be used, it is found in the
-`misc` folder, in the file [`Useful Power Shell Commands.txt`](./misc/usefull%20powershell%20commands.txt).
+Ethernet using `espota.py`, so no USB cable is needed after the first flash.
+Alternatively, use the terminal command in
+[`Useful Power Shell Commands.txt`](./misc/usefull%20powershell%20commands.txt)
+in the `misc` folder.
 
 ---
 
