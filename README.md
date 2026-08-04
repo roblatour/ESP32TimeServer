@@ -187,18 +187,20 @@ main/ESP32TimeServerSettings.h
 ```
 
 This file should be edited to match your desired hardware setup before building.<br>
->> **Note:** the settings file is used to indicate if you are using certain features or not.<br>
->> These include: supportForAnUpTimeRestartButton, supportForLiquidCrystalDisplay, and 
->> supportForOTEUpdates.<br>
->> Please ensure the correct values (true or false) are set appropriately for your desired usage.<br>
->> If a Liquid Crystal Display is **not** connected the value for supportForLiquidCrystalDisplay
->> **must** be set to false or a critical run time error will occur.
+> **Note:** the settings file is used to indicate if you are using certain features or not.<br>
+> These include: supportForAnUpTimeRestartButton, supportForLiquidCrystalDisplay, and 
+> supportForOTEUpdates.<br>
+> Please ensure the correct values (true or false) are set appropriately for your desired usage.<br>
+> If a Liquid Crystal Display is **not** connected the value for supportForLiquidCrystalDisplay
+> **must** be set to false or a critical run time error will occur.
 ### Build & Flash
 
 #### ESP32-P4 Revision Profiles
 
 ESP32-P4 revisions earlier than v3.0 and v3.x use binary-incompatible hardware families. 
 Select the build profile that matches the board:
+
+- **For (in most cases) ESP32-P4 v3.x**: no additional steps are required to use the normal defaults and build command below. 
 
 - **For ESP32-P4 v1.x / engineering samples**: use the pre-v3 overlay at
   `config/esp32p4_rev_pre_v3.defaults`. After loading the ESP-IDF environment,
@@ -211,8 +213,6 @@ Select the build profile that matches the board:
 
   The same isolated profile is available through
   `tools\build_esp32p4_pre_v3.bat`.
-
-- **For (in most cases) ESP32-P4 v3.x**: no additional steps are required to use the normal defaults and build command below. 
 
 > **Important:** Do not use `--force` to flash a v3.1+ image to an ESP32-P4
 > v1.3 board. Rebuild the firmware with the pre-v3 profile instead.
