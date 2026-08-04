@@ -150,7 +150,7 @@ This release is built using:
 The [`SparkFun u-blox GNSS Arduino Library v3`](https://github.com/sparkfun/SparkFun_u-blox_GNSS_v3)
 (v3.1.14) is included as a **git submodule** in the [`3rdparty/SparkFun_u-blox_GNSS_v3`](./3rdparty/SparkFun_u-blox_GNSS_v3)
 directory. Since it is an Arduino library and is not published to the ESP-IDF
-Component Registry it will be downloaded as part of the 'Build and Flash' steps outlined below.
+Component Registry it will be manually created as part of the 'Download' steps outlined below.
 
 
 The remaining dependencies are managed automatically via the ESP-IDF Component
@@ -166,7 +166,7 @@ Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
 
 ### Download
 
-Create a folder, clone this repository into it, and updated the SparkFun library within it.<br>
+Create a folder for this project, clone this repository into it, and updated the SparkFun library within it.<br>
 For example:<br>
 ```
 c:
