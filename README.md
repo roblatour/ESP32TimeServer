@@ -234,7 +234,6 @@ The ESP32-P4 has different revisions; the build steps are detailed below for eac
 ### Setup Step 4 - Flash
 
 ```cmd
-call C:\esp\v5.5.3\esp-idf\export.bat
 idf.py -p COMx flash monitor
 ```
 
