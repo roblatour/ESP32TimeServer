@@ -1,5 +1,6 @@
+# ESP32-P4 engineering samples earlier than rev v3.0.
+# This build profile supports rev v0.x and v1.x chips only.
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
-CONFIG_ESP32P4_REV_MIN_100=y
 CONFIG_ESP32P4_REV_MIN_1=y
 CONFIG_ESP_HOSTED_ENABLED=n
 CONFIG_ESP_WIFI_REMOTE_ENABLED=n
