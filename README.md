@@ -223,14 +223,18 @@ The ESP32-P4 has different revisions; the build steps are detailed below for eac
   ```cmd
   call tools\build_esp32p4_pre_v3_1.bat
   ```
+  ```cmd
+  call C:\esp\v5.5.3\esp-idf\export.bat
+  ```
 
-> **Important:** Do not use `--force` to flash a v3.1+ image to an ESP32-P4
-> v1.3 board. Rebuild the firmware with the pre-v3 profile instead.
+> **Important:** Do not use `--force` to flash a v3.1+ image to an earlier 
+> revision ESP32-P4. Rebuild the firmware with the pre-v3 profile instead.
 
 
 ### Setup Step 4 - Flash
 
 ```cmd
+call C:\esp\v5.5.3\esp-idf\export.bat
 idf.py -p COMx flash monitor
 ```
 
