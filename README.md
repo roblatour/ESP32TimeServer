@@ -172,10 +172,20 @@ SparkFun library within it. For example:
 
 ```cmd
 c:
+```
+```cmd
 mkdir c:\temp\ESP32TimeServerProject
+```
+```cmd
 cd \temp\ESP32TimeserverProject
+```
+```cmd
 git clone --recursive https://github.com/roblatour/ESP32TimeServer
+```
+```cmd
 cd ESP32TimeServer
+```
+```cmd
 git submodule update --init --recursive
 ```
 
@@ -199,36 +209,24 @@ Edit this file to match your desired hardware setup before building.
 
 ### Setup Step 3 - Build
 
-#### Setup Step 3a - Pre-work for early ESP32-P4 modules
+The ESP32-P4 has different revisions; the build steps are detailed below for each.
 
-The ESP32-P4 has different revisions.
-
-- For current ESP32-P4 modules at revision 3.1 or above, no pre-work is
-  required. Skip to Setup Step 3b.
-- For older ESP32-P4 modules prior to version 3.1, such as v1.x engineering
-  samples, use the pre-v3 overlay at `config/esp32p4_rev_pre_v3.defaults`.
-  After loading the ESP-IDF environment, delete the generated `sdkconfig` when
-  switching profiles, then run:
-
+- For current ESP32-P4 modules (revision 3.1 and above):
   ```cmd
-  del sdkconfig
-  idf.py -D ^
-    SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_pre_v3.defaults" ^
-    set-target esp32p4 build
+  call C:\esp\v5.5.3\esp-idf\export.bat
   ```
-
-  The same isolated profile is available through
-  `tools\build_esp32p4_pre_v3.bat`.
+  ```cmd
+  idf.py build
+  ```
+- For older ESP32-P4 modules (prior to version 3.1):
+ 
+  ```cmd
+  call tools\build_esp32p4_pre_v3_1.bat
+  ```
 
 > **Important:** Do not use `--force` to flash a v3.1+ image to an ESP32-P4
 > v1.3 board. Rebuild the firmware with the pre-v3 profile instead.
 
-#### Setup Step 3b - Load the ESP-IDF environment and build
-
-```cmd
-call C:\esp\v5.5.3\esp-idf\export.bat
-idf.py build
-```
 
 ### Setup Step 4 - Flash
 
