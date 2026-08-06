@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.3.1
+// ESP32 Time Server v2.4
 // Copyright Rob Latour, 2026
 
 //
@@ -1696,7 +1696,7 @@ static void setup_gps()
             ubx_fix_ready = (fix_type > 0 && fix_type < 6) && gnss_fix_ok && date_valid && time_valid;
 
             char satellites_line[lcdColumns + 1];
-            snprintf(satellites_line, sizeof(satellites_line), "Satellites: %u", static_cast<unsigned int>(satellites_used));
+            snprintf(satellites_line, sizeof(satellites_line), "Satellites: %u of 4", static_cast<unsigned int>(satellites_used));
             display_line(2, satellites_line);
         }
 
@@ -1950,7 +1950,7 @@ void write_opening_messages_to_the_console()
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Sever v2.3.1");
+    ESP_LOGI(TAG, "ESP32 Time Server v2.4");
 
     if (!debugIsOn)
     {
@@ -2728,7 +2728,7 @@ void setup_the_gps()
     display_line(1, "Getting date & time");
     display_line(2, "");
 
-    xTaskCreatePinnedToCore(gps_time_sync_task, "gps_time_sync", 2540, nullptr, 15, nullptr, tskNO_AFFINITY);
+    xTaskCreatePinnedToCore(gps_time_sync_task, "gps_time_sync", 16384, nullptr, 15, nullptr, tskNO_AFFINITY);
     xTaskCreatePinnedToCore(pps_discipline_task, "pps_discipline", 2385, nullptr, 14, nullptr, tskNO_AFFINITY);
 
     while (!s_time_has_been_set.load())
@@ -3019,7 +3019,7 @@ static void update_display_task(void *parameter)
 extern "C" void app_main()
 {
     setup_pps_input();
-    
+
     initArduino();
 
     write_opening_messages_to_the_console();

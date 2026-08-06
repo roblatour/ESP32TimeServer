@@ -44,9 +44,9 @@ static constexpr char PrimaryDNS[] = "";      // optional - leave as "" to omit,
 static constexpr char SecondaryDNS[] = "";    // optional - leave as "" to omit, or for example: 1.1.1.1
 
 // GPS support (required)
-static constexpr int TXPin = 16;
-static constexpr int RXPin = 17;
-static constexpr int PPSPin = 18;
+static constexpr int TXPin = 22;  // note: prior to release 2.4 pin 16 was used for TX
+static constexpr int RXPin = 21;  // note: prior to release 2.4 pin 17 was used for RX
+static constexpr int PPSPin = 20; // note: prior to release 2.4 pin 18 was used for PPS
 
 // This code was designed and tested to work with a SparkFun GNSS Receiver Breakout board which uses a u-blox - MAX-M10S module.
 // ( https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html )
