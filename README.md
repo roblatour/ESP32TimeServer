@@ -211,24 +211,33 @@ Edit this file to match your desired hardware setup before building.
 
 The ESP32-P4 has different revisions; the build steps are detailed below for each.
 
-- For current ESP32-P4 modules (revision 3.1 and above):
+
   ```cmd
-  call C:\esp\v5.5.3\esp-idf\export.bat
+  del sdkconfig
   ```
+  
+- For current ESP32-P4 modules at revision 3.1 and above:
+
   ```cmd
-  idf.py build
-  ```
-- For older ESP32-P4 modules (prior to version 3.1):
- 
-  ```cmd
-  call tools\build_esp32p4_pre_v3_1.bat
-  ```
-  ```cmd
-  call C:\esp\v5.5.3\esp-idf\export.bat
+  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_1.defaults" set-target esp32p4 build
   ```
 
-> **Important:** Do not use `--force` to flash a v3.1+ image to an earlier 
-> revision ESP32-P4. Rebuild the firmware with the pre-v3 profile instead.
+ - For current ESP32-P4 modules at revision 3.0:
+      ```cmd
+   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_0.defaults" set-target esp32p4 build
+   ```
+  
+- For older ESP32-P4 modules with revisions prior to version 3.0:
+   
+   ```cmd
+   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_pre_v3.defaults" set-target esp32p4 build
+   ```
+   
+> **Important:** Do not use `--force` to flash an image to an earlier revision ESP32-P4.
+>
+```cmd
+  call C:\esp\v5.5.3\esp-idf\export.bat
+ ```
 
 
 ### Setup Step 4 - Flash
@@ -253,7 +262,7 @@ in the `misc` folder.
 
 ---
 
-### Setting up your Network / Systems to make use of the ESP32 Time Server
+## Setting up your Network / Systems to make use of the ESP32 Time Server
 
 Please see [`Setup.md`](Setup.md)
 
