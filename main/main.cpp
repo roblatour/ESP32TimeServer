@@ -2722,7 +2722,6 @@ void setup_the_gps()
     display_line(2, "");
 
     apply_timezone_settings();
-    setup_pps_input();
 
     setup_gps();
 
@@ -3019,6 +3018,8 @@ static void update_display_task(void *parameter)
 
 extern "C" void app_main()
 {
+    setup_pps_input();
+    
     initArduino();
 
     write_opening_messages_to_the_console();
