@@ -1415,7 +1415,7 @@ static void setup_pps_input()
     config.pin_bit_mask = 1ULL << PPSPin;
     config.mode = GPIO_MODE_INPUT;
     config.pull_up_en = GPIO_PULLUP_DISABLE;
-    config.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    config.pull_down_en = GPIO_PULLDOWN_DISABLE;
     config.intr_type = GPIO_INTR_POSEDGE;
     ESP_ERROR_CHECK(gpio_config(&config));
 
