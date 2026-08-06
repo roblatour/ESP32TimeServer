@@ -233,8 +233,7 @@ The ESP32-P4 has different revisions; the build steps are detailed below for eac
    idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_pre_v3.defaults" set-target esp32p4 build
    ```
    
-> **Important:** Do not use `--force` to flash an image to an earlier revision ESP32-P4.
->
+
 ```cmd
   call C:\esp\v5.5.3\esp-idf\export.bat
  ```
@@ -246,7 +245,9 @@ The ESP32-P4 has different revisions; the build steps are detailed below for eac
 idf.py -p COMx flash monitor
 ```
 
-*(Replace `COMx` with your actual serial port.)*
+>Note: Replace `COMx` with your actual serial port. For example: COM6
+
+> **Important:** Do not use `--force` to flash an image to an earlier revision ESP32-P4.
 
 ### OTA Updates (Over Ethernet)
 
