@@ -135,7 +135,7 @@ the [`3D printable case/`](./3D%20printable%20case/) folder. Both `.stl`
 can tweak the design to suit your needs.
 
 > **Note:** the 3D printable enclosure files also include the needed models for
-> version one of this project which used the Olimex ESP32-PoE-ISO Rev. B.
+> version 1 of this project which used the Olimex ESP32-PoE-ISO Rev. B.
 
 ---
 
