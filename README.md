@@ -236,6 +236,7 @@ The ESP32-P4 has different revisions; the build steps are detailed below for eac
 
       ```cmd
    idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_0.defaults" set-target esp32p4 build
+
    ```
   
 - For older ESP32-P4 modules with revisions prior to version 3.0:
