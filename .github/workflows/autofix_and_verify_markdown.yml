@@ -24,6 +24,12 @@ jobs:
         with:
           node-version: '18'
 
+      - name: Install Prettier
+        run: npm install -g prettier
+
+      - name: Run Prettier on markdown
+        run: prettier --write "**/*.md" --print-width 80 --prose-wrap always
+
       - name: Install markdownlint-cli2
         run: npm install -g markdownlint-cli2
 
