@@ -100,9 +100,9 @@ in that folder for more information.
 | TXD     | GPIO 21 (RX)     |
 | RXD     | GPIO 22 (TX)     |
 
-> Important: the above pin selections have changed in version 2.4 for better forward and backward 
+> Important: the above pin selections have changed in version 2.4 for better forward and backward
 > compatibility between revisions of the ESP32-P4 chip.
-> However, if an earlier version of the software has been working fine for you then 
+> However, if an earlier version of the software has been working fine for you then
 > you should be able to use the old pin specifications if you want to avoid rewiring your project.<br>
 > Please see the ESP32TimeServerSettings.h file for more information.
 
@@ -179,18 +179,23 @@ SparkFun library within it. For example:
 ```cmd
 c:
 ```
+
 ```cmd
 mkdir c:\temp\ESP32TimeServerProject
 ```
+
 ```cmd
 cd \temp\ESP32TimeserverProject
 ```
+
 ```cmd
 git clone --recursive https://github.com/roblatour/ESP32TimeServer
 ```
+
 ```cmd
 cd ESP32TimeServer
 ```
+
 ```cmd
 git submodule update --init --recursive
 ```
@@ -217,7 +222,6 @@ Edit this file to match your desired hardware setup before building.
 
 The ESP32-P4 has different revisions; the build steps are detailed below for each.
 
-
   ```cmd
   del sdkconfig
   ```
@@ -228,22 +232,21 @@ The ESP32-P4 has different revisions; the build steps are detailed below for eac
   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_1.defaults" set-target esp32p4 build
   ```
 
- - For ESP32-P4 modules at revision 3.0:
+- For ESP32-P4 modules at revision 3.0:
+
       ```cmd
    idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_0.defaults" set-target esp32p4 build
    ```
   
 - For older ESP32-P4 modules with revisions prior to version 3.0:
-   
+
    ```cmd
    idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_pre_v3.defaults" set-target esp32p4 build
    ```
-   
 
 ```cmd
   call C:\esp\v5.5.3\esp-idf\export.bat
  ```
-
 
 ### Setup Step 4 - Flash
 
@@ -282,7 +285,7 @@ accuracy at [https://time.is](https://time.is).
 
 You're also welcome to use this software (open source - also developed by me)
 to stress test your time server:<br>
-https://github.com/roblatour/TimeServerStressTest
+<https://github.com/roblatour/TimeServerStressTest>
 
 ---
 

@@ -18,10 +18,10 @@ ESP32 Time Server's PCB.
 > ESP32-P4-ETH GPIO21 (RX) connected to the GPS TX pin<br>
 > ESP32-P4-ETH GPIO20 connected to the GPS PPS pin<br>
 > <br>
-> However, if your setup is running fine in version 2.4 and beyond with the original 
-> GPIO16, 17 and 18 pin selections then this PCB will still work for you as long as 
+> However, if your setup is running fine in version 2.4 and beyond with the original
+> GPIO16, 17 and 18 pin selections then this PCB will still work for you as long as
 > the setting files specifies the older pin usage.
-> 
+>
 > If a newer version of the PCB is developed to use the new pins it will eventually be posted here.
 > <br>
 
