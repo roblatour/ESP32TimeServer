@@ -284,7 +284,9 @@ Please see [`Setup.md`](Setup.md)
 Once running, and with your Network and System changes setup, you can validate
 accuracy at [https://time.is](https://time.is).
 
-You're also welcome to use this open source software (also developed by me) to stress test your time server:<br>
+You're also welcome to use this open source software (also developed by me) to
+stress test your time server:
+
 <https://github.com/roblatour/TimeServerStressTest>
 
 ---
