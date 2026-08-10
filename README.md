@@ -100,7 +100,7 @@ in that folder for more information.
 | TXD     | GPIO 21 (RX)     |
 | RXD     | GPIO 22 (TX)     |
 
-> Important: the above pin selections have changed in version 2.4 for better forward and backward
+> **Important:** the above pin selections have changed in version 2.4 for better forward and backward
 > compatibility between revisions of the ESP32-P4 chip.
 > However, if an earlier version of the software has been working fine for you then
 > you should be able to use the old pin specifications if you want to avoid rewiring your project.<br>
