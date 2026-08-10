@@ -7,7 +7,31 @@ on:
     branches: [ main ]
 
 jobs:
+  markdown-autofix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install markdownlint-cli2
+        run: npm install -g markdownlint-cli2
+
+      - name: Run markdownlint auto-fix
+        run: markdownlint-cli2 --fix "**/*.md" || true
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'chore: auto-fix markdown formatting'
+          file_pattern: '*.md **/*.md'
+
   markdownlint:
+    needs: markdown-autofix
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -16,5 +40,4 @@ jobs:
       - name: Run markdownlint-cli2
         uses: DavidAnson/markdownlint-cli2-action@v19
         with:
-          # Scans all Markdown files in the repo recursively
           globs: '**/*.md'
