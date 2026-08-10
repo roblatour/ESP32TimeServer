@@ -5,7 +5,12 @@ the **ESP32 NTP Stratum 1 Time Server** as their time source.
 
 ---
 
-## Step 1 — Assign a Static IP Address
+## Physically connenct the ESP32 Time Server to your network
+
+For optimal results, the ESP32 Time Server should be connected as directly to your primary router as possible.<br>
+Connecting the ESP32 Time Server behind several layers of switch may degrade its effectiveness.
+
+## Assign a Static IP Address
 
 Before pointing any client at the ESP32 Time Server, it should have a
 **fixed, reserved IP address** on your network so that its address never changes
