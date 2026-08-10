@@ -3,18 +3,19 @@ name: Auto-fix Markdown
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
 permissions:
   contents: write
-  
+
 jobs:
   markdown-autofix:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -31,4 +32,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: 'chore: auto-fix markdown formatting'
-          file_pattern: '*.md **/*.md'
+          file_pattern: '**/*.md'
