@@ -10,8 +10,8 @@ the **ESP32 NTP Stratum 1 Time Server** as their time source.
 For optimal results the ESP32 Time Server should be connected as directly to
 your primary router as possible.
 
-Connecting the ESP32 Time Server behind
-several layers of switches may degrade its effectiveness.
+Connecting the ESP32 Time Server behind several layers of switches may degrade
+its effectiveness.
 
 ## Assign a Static IP Address
 
