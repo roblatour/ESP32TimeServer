@@ -3,27 +3,33 @@
 This folder and its sub-folders contain the KiCad files used to create the
 ESP32 Time Server's PCB.
 
-> **Important:**<br>
-> <br>
-> **This PCB is only compatible when using the RX, TX, and PPS pin configurations used in the ESP32TimeServer v2.3.1 software and earlier.**<br>
-> <br>
-> In version 2.4 the RX, TX, and PPS pin configurations were changed for better forward and backward compatibility between revisions of the ESP32-P4 chip.<br><br>
- > In version 2.3.1 and earlier the following were used:<br>
-> ESP32-P4-ETH GPIO16 (TX) connected to the GPS RX pin<br>
-> ESP32-P4-ETH GPIO17 (RX) connected to the GPS TX pin<br>
-> ESP32-P4-ETH GPIO18 connected to the GPS PPS pin<br>
-> <br>
-> In version 2.4 the pin configurations have been changed to:<br>
-> ESP32-P4-ETH GPIO22 (TX) connected to the GPS RX pin<br>
-> ESP32-P4-ETH GPIO21 (RX) connected to the GPS TX pin<br>
-> ESP32-P4-ETH GPIO20 connected to the GPS PPS pin<br>
-> <br>
-> However, if your setup is running fine in version 2.4 and beyond with the original
-> GPIO16, 17 and 18 pin selections then this PCB will still work for you as long as
-> the setting files specifies the older pin usage.
+> **Important:**
 >
-> If a newer version of the PCB is developed to use the new pins it will eventually be posted here.
-> <br>
+> **This PCB is only compatible when using the RX, TX, and PPS pin
+> configurations used in the ESP32TimeServer v2.3.1 software and earlier.**
+>
+> In version 2.4, the RX, TX, and PPS pin configurations were changed for
+> better forward and backward compatibility between revisions of the ESP32-P4
+> chip.
+>
+> In version 2.3.1 and earlier, the following were used:
+>
+> - ESP32-P4-ETH GPIO16 (TX) connected to the GPS RX pin
+> - ESP32-P4-ETH GPIO17 (RX) connected to the GPS TX pin
+> - ESP32-P4-ETH GPIO18 connected to the GPS PPS pin
+>
+> In version 2.4, the pin configurations have been changed to:
+>
+> - ESP32-P4-ETH GPIO22 (TX) connected to the GPS RX pin
+> - ESP32-P4-ETH GPIO21 (RX) connected to the GPS TX pin
+> - ESP32-P4-ETH GPIO20 connected to the GPS PPS pin
+>
+> However, if your setup is running fine in version 2.4 and beyond with the
+> original GPIO16, 17, and 18 pin selections, this PCB will still work as long
+> as the setting files specify the older pin usage.
+>
+> If a newer version of the PCB is developed to use the new pins, it will
+> eventually be posted here.
 
 The BOM components part numbers needed to order this board via JLCPBC are as follows:
 
