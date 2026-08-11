@@ -134,7 +134,7 @@ Refer to the pin definitions in
 
 ## 3D Printed Case
 
-An downloadable 3D printable enclosure designed for use the WaveShare
+A downloadable 3D printable enclosure designed for use the WaveShare
 ESP32-P4-ETH (with or without the POE hat) + Sparkfun GPS boards is included in
 the [`3D printable case/`](./3D%20printable%20case/) folder. Both `.stl`
 (print-ready) and `.f3z` (Fusion 360 editable source) files are provided so you
