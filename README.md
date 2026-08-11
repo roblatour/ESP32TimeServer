@@ -108,8 +108,8 @@ that folder for more information.
 > forward and backward compatibility between revisions of the ESP32-P4 chip.
 > However, if an earlier version of the software has been working fine for you
 > then you should be able to use the old pin specifications if you want to avoid
-> rewiring your project.<br> Please see the ESP32TimeServerSettings.h file for
-> more information.
+> rewiring your project. Please see the ESP32TimeServerSettings.h file for more
+> information.
 
 **LCD 2004 (HD44780 + PCF8574 I²C backpack) → ESP32-P4-ETH** _(optional)_
 
@@ -242,14 +242,8 @@ del sdkconfig
 
 - For ESP32-P4 modules at revision 3.0:
 
-      ```cmd
-
-  idf.py -D
-  SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_0.defaults"
-  set-target esp32p4 build
-
-  ```
-
+  ```cmd
+  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_0.defaults" set-target esp32p4 build
   ```
 
 - For older ESP32-P4 modules with revisions prior to version 3.0:
@@ -259,7 +253,7 @@ del sdkconfig
   ```
 
 ```cmd
-  call C:\esp\v5.5.3\esp-idf\export.bat
+call C:\esp\v5.5.3\esp-idf\export.bat
 ```
 
 ### Setup Step 4 - Flash
@@ -269,7 +263,7 @@ idf.py -p COMx flash monitor
 ```
 
 > Note: Replace `COMx` with your actual serial port. For example: COM6
-
+>
 > **Important:** Do not use `--force` to flash an image to an earlier revision
 > ESP32-P4.
 
