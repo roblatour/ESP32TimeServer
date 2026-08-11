@@ -107,7 +107,7 @@ that folder for more information.
 > **Important:** the above pin selections have changed in version 2.4 for better
 > forward and backward compatibility between revisions of the ESP32-P4 chip.
 > However, if an earlier version of the software has been working fine for you
-> then you should be able to use the old pin specifications if you want to avoid
+> then you may be able to use the old pin specifications if you want to avoid
 > rewiring your project. Please see the ESP32TimeServerSettings.h file for more
 > information.
 
