@@ -3,8 +3,14 @@ name: Auto-fix and Lint Markdown
 on:
   push:
     branches: [ main ]
+    paths:
+      - '**.md'
+      - '.github/workflows/autofix_and_verify_markdown.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - '**.md'
+      - '.github/workflows/autofix_and_verify_markdown.yml'
 
 permissions:
   contents: write

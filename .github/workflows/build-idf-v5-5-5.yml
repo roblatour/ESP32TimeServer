@@ -3,8 +3,36 @@ name: Build ESP32TimeServer (ESP-IDF v5.5.5)
 on:
   push:
     branches: [ main ]
+    paths:
+      - '**.c'
+      - '**.cc'
+      - '**.cpp'
+      - '**.h'
+      - '**.hpp'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+      - 'sdkconfig'
+      - 'sdkconfig.*'
+      - 'main/idf_component.yml'
+      - 'dependencies.lock'
+      - '.github/workflows/build-idf-v6-0-2.yml'
+      - '.github/workflows/build-idf-v5-5-5.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - '**.c'
+      - '**.cc'
+      - '**.cpp'
+      - '**.h'
+      - '**.hpp'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+      - 'sdkconfig'
+      - 'sdkconfig.*'
+      - 'main/idf_component.yml'
+      - 'dependencies.lock'
+      - '.github/workflows/build-idf-v6-0-2.yml'
+      - '.github/workflows/build-idf-v5-5-5.yml'
   workflow_dispatch:
 
 jobs:
