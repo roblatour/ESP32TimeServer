@@ -233,9 +233,9 @@ each.
 ```cmd
 del sdkconfig
 ```
-
+<!-- markdownlint-disable MD013 -->
 - For current ESP32-P4 modules at revision 3.1 and above:
-
+  
   ```cmd
   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_1.defaults" set-target esp32p4 build
   ```
@@ -255,6 +255,7 @@ del sdkconfig
 ```cmd
 call C:\esp\v5.5.3\esp-idf\export.bat
 ```
+<!-- markdownlint-enable MD013 -->
 
 ### Setup Step 4 - Flash
 
