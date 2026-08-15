@@ -31,3 +31,6 @@ CONFIG_LIBC_NEWLIB=y
 # framework maintenance updates.
 # ============================================================================
 CONFIG_COMPILER_DISABLE_DEFAULT_ERRORS=y
+
+# allows up to 64 NTP requests to be serviced concurrently
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=64

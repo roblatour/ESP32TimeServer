@@ -74,6 +74,12 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
+# auto release update files
+Release/
+Release.bat
+ReleaseNotes.txt
+Releases.md
+
 # User-specific configuration files
 *.user
 *.workspace # General workspace files, can be from various tools

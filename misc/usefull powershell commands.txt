@@ -11,9 +11,9 @@ Notes: In the examples below:
 
 1. Here is a command which may be used, following a build, to provide for an Over The Ethernet (OTE) update:
       
-   python tools\espota.py -i ESP32TimeServer.local -p 3232 -P 3232 -a ESP32TimeServerpw -f build\sample_project.bin -r -d
+   python tools\python espota.py -i ESP32TimeServer.local -p 3232 -P 3232 -a ESP32TimeServerpw -f ..\build\ESP32TimeServer.bin -r -d
    or
-   python tools\espota.py -i xx.xx.xx.xx -p 3232 -P 3232 -a ESP32TimeServerpw -f build\sample_project.bin -r -d
+   python tools\python espota.py -i xx.xx.xx.xx -p 3232 -P 3232 -a ESP32TimeServerpw -f ..\build\ESP32TimeServer.bin -r -d
 
 
 2. Here is a command which may be used for sending a NTP test request:
@@ -46,4 +46,8 @@ Notes: In the examples below:
    net start ntp 
    
    (between 15 minutes to a hour later a new ntp.drift file will be created by the service)
+
+4. Here is an other open source project (also written by me) that allows you to stress test your NTP server via a Window approximately
+   
+
    

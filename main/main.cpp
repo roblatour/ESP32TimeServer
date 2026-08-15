@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.4
+// ESP32 Time Server v2.4.1
 // Copyright Rob Latour, 2026
 
 //
@@ -1950,7 +1950,7 @@ void write_opening_messages_to_the_console()
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Server v2.4");
+    ESP_LOGI(TAG, "ESP32 Time Server v2.4.1");
 
     if (!debugIsOn)
     {
@@ -2807,7 +2807,7 @@ static void ntp_server_task(void *parameter)
                 time_t now_utc = time(nullptr);
                 inet_ntoa_r(source_addr.sin_addr, source_address, sizeof(source_address));
                 format_local_date_time(now_utc, date_string, sizeof(date_string), time_string, sizeof(time_string));
-                ESP_LOGI(TAG, "NTP response provided to %s on %s at %s", source_address, date_string, time_string);
+                ESP_LOGI(TAG, "NTP response to %s on %s at %s", source_address, date_string, time_string);
             }
         }
 

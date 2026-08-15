@@ -4,7 +4,8 @@
 #include <ctime>
 
 // debug displays
-static constexpr bool debugIsOn = true;
+// NOTE: setting debugIsOn = true will reduce high volume performance
+static constexpr bool debugIsOn = false; 
 static constexpr int serialMonitorSpeed = 115200;
 
 // support for an (optional) up time / reset momentary button
