@@ -55,7 +55,8 @@ Version 2 is a significant upgrade over
   default ESP32-P4's MAC address or for a custom MAC address to be set.
 - **Ability to set a Static IP Address** — (version 2.3) allows the use of a
   DHCP assigned or static IP address.
-- **Handles greater throughput and number of concurrent requests** (version 2.4.1).
+- **Handles greater throughput and number of concurrent requests** (version
+  2.4.1).
 
 > The source code for **Version 1** (Arduino / PlatformIO) remains available at:
 > [https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0)
