@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 2.4.1)
+# ESP32 NTP Stratum 1 Time Server (version 2.5)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -24,15 +24,14 @@ A full write-up of the original (version 1) project is available on
 
 ---
 
-## What's New in Version 2
-
-Version 2 is a significant upgrade over
-[Version 1](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0):
+## What's New in 
+[Version 2](https://github.com/roblatour/ESP32TimeServer/releases/tag/v2.0.0.0) 
 
 - **New microcontroller board** — now built around the
   [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm) instead
   of the Olimex ESP32-PoE-ISO. The ESP32-P4 is more modern and faster than the
   ESP32-WROOM-32/32E used in v1.
+  
 - **More accurate NTP responses** — PPS (Pulse Per Second) pin support is now
   fully exploited to discipline the time reference, delivering sub-millisecond
   accuracy when using a PPS-capable GPS module.
@@ -57,6 +56,17 @@ Version 2 is a significant upgrade over
   DHCP assigned or static IP address.
 - **Handles greater throughput and number of concurrent requests** (version
   2.4.1).
+- **IPv6 support** - (version 2.5) IPv6 support has been added.
+- **MQTT publishing** — (version 2.5) optional MQTT publishing of time server stats is 
+  now available.
+  
+  For more information see
+  [this document](misc/esp32timeserver_json_doc.md)
+- **Improved GNSS Satellite lock and PPS discipline tracking and recovery** - 
+  (version 2.5) with returned results being tagged as Stratum 16 (undefined) until 
+  a lost lock and/or failed PPS discipline is recovered.
+- **Conditional compilation** - (version 2.5) when optional features are disabled
+  in the settings their associated code will now be excluded from the executable.
 
 > The source code for **Version 1** (Arduino / PlatformIO) remains available at:
 > [https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0)
@@ -221,11 +231,11 @@ main/ESP32TimeServerSettings.h
 Edit this file to match your desired hardware setup before building.
 
 > **Note:** The settings file indicates whether certain features are enabled.
-> These include `supportForAnUpTimeRestartButton`,
-> `supportForLiquidCrystalDisplay`, and `supportForOTEUpdates`. Ensure each
-> value is set to `true` or `false` as appropriate. If a Liquid Crystal Display
-> is **not** connected, `supportForLiquidCrystalDisplay` **must** be `false` or
-> a critical runtime error will occur.
+> These include support for an Uptime/Restart Button, a Liquid Crystal Display, 
+> MQTT reporting, and Over the Ethernet Updates. 
+> Please also note, that if a Liquid Crystal Display
+> is **not** connected, `LIQUID_CRYSTAL_DISPLAY_ENABLED` **must** be `0` 
+> (disabled) or a critical runtime error will occur.
 
 ### Setup Step 3 - Build
 
@@ -276,7 +286,7 @@ idf.py -p COMx flash monitor
 ### OTA Updates (Over Ethernet)
 
 Following the initial flash, OTA updates can be performed if
-`supportForOTEUpdates` was set to `true` for the initial build and flash.
+`OTE_UPDATES_ENABLED` was set to `1` (Enabled) for the initial build and flash.
 
 A VS Code task **"ESP-IDF: OTA Upload over Ethernet"** is included in
 `.vscode/tasks.json`. It builds the firmware and deploys it to the device over

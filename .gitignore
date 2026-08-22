@@ -16,9 +16,15 @@
 # Log files
 *.log
 
+.vscode/
+
+AGENTS.md
+
 # Build artifacts and directories
 **/build/
 build/
+build-esp32p4-pre-v3/
+build-esp32p4-rev-1-3/
 *.o
 *.a
 *.out

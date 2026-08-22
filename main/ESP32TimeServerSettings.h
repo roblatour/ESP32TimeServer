@@ -1,39 +1,60 @@
 #pragma once
-
 #include <cstdint>
 #include <ctime>
 
-// debug displays
-// NOTE: setting debugIsOn = true will reduce high volume performance
-static constexpr bool debugIsOn = false; 
+// (optional) debug support
+// NOTE: setting DEBUG_ENABLED to 1 (Enabled) will degrade accuracy and performance during periods of high volume ntp requests
+#define DEBUG_ENABLED 0 // 0 = Disabled; 1 = Enabled
 static constexpr int serialMonitorSpeed = 115200;
 
-// support for an (optional) up time / reset momentary button
-static constexpr bool supportForAnUpTimeRestartButton = true;
+// (optional) up time / reset momentary button support
+#define UPTIME_RESTART_BUTTON_ENABLED 1 // 0 = Disabled; 1 = Enabled
 static constexpr int upTimeRestartPin = 3;
 static constexpr unsigned long holdUpTimeRestartButtonForThisManySecondsToTriggerAReset = 10UL;
 static constexpr int upTimeDisplayWillStayActiveForThisManySeconds = 10;
 
-// support for an (optional) attached LCD
-static constexpr bool supportForLiquidCrystalDisplay = true;
+// (optional) attached LCD support
+#define LIQUID_CRYSTAL_DISPLAY_ENABLED 1 // 0 = Disabled; 1 = Enabled
 static constexpr int lcdI2CAddressPrimary = 0x27;
 static constexpr int lcdI2CAddressSecondary = 0x3F;
 static constexpr int lcdColumns = 20;
 static constexpr int lcdRows = 4;
 static constexpr bool displayTimeZone = false;
 
-// support for (optional) over the ethernet updates
-static constexpr bool supportForOTEUpdates = true;
+// (optional) Over The Ethernet updates support
+#define OTE_UPDATES_ENABLED 1 // 0 = Disabled; 1 = Enabled
 static constexpr char DeviceName[] = "ESP32TimeServer";
-static constexpr char OTA_Password[] = "ESP32TimeServerpw";
+static constexpr char OTAPassword[] = "ESP32TimeServerpw";
 static constexpr uint16_t OTA_Port = 3232;
 
-// support for the (optional) setting of the ESP32-P4's MAC address
+// (optional) MQTT reporting support
+// MQTT_ENABLED provides for current system status and activity reporting on information such as: uptime, number of active satellites, ntp request counts, etc.
+// Additional detailed related to client activity, memory usage, and historical information can be optionally included
+#define MQTT_ENABLED 1                                        // 0 = Disabled; 1 = Enabled
+#define MQTT_CLIENT_REPORTING_ENABLED 1                       // 0 = Disabled; 1 = Enabled
+#define MQTT_MEMORY_REPORTING_ENABLED 1                       // 0 = Disabled; 1 = Enabled
+#define MQTT_HISTORICAL_REPORTING_ENABLED 1                   // 0 = Disabled; 1 = Enabled
+static constexpr char MQTTServerIPAddress[] = "";             // For example 192.168.1.15
+static constexpr uint16_t MQTT_Port = 1883;
+static constexpr char MQTTUsername[] = "";
+static constexpr char MQTTPassword[] = "";  
+static constexpr char MQTTTopic[] = "ESP32TimeServer";
+static constexpr uint32_t MQTTReportingPeriod = 900;            // in seconds
+static constexpr uint32_t MQTTFrequencyOfKeepAliveRequest = 60; // in seconds
+// QoS 0 delivers at most once and does not retain reports while disconnected
+// QoS 1 delivers at least once and queues reports while disconnected
+// QoS 2 delivers exactly once and queues reports while disconnected
+// Notes: - only limit message queuing is provided for MQTT_QOS 1 and 2 (up to 4 prior periods, each detailing the usage of a maximum of 50 unique clients)
+//        - message queuing is held in volatile RAM and will be lost if power is lost or there is a unexpected system crash - flash ram is not used so as to not degrade it over time
+//          a future release may include using a TF card to improve queuing
+static constexpr int MQTT_QOS = 0;
+
+// (optional) setting of the ESP32-P4's MAC address support
 // set the value below to "" to use the ESP32-P4's default MAC address, or
 // set the value below to a desired MAC address, such as "80:f1:b2:d1:d9:18"
-static constexpr char MACAddress[] = "";
+static constexpr char MACAddress[] = ""; 
 
-// support for the (optional) setting of a static IP address on the ESP32-P4's Ethernet interface.
+// (optional) setting a static IP address for the ESP32-P4 support
 // set StaticIPAddress to "" to use DHCP (the default behaviour), which allows the router to
 // auto-assign an IP address, or set it to a desired static IP address such as "192.168.1.100".
 // when a static IP address is set, Gateway and SubnetMask must also be provided.
@@ -44,7 +65,7 @@ static constexpr char SubnetMask[] = "";      // optional - leave as "" to omit,
 static constexpr char PrimaryDNS[] = "";      // optional - leave as "" to omit, or for example: 8.8.8.8
 static constexpr char SecondaryDNS[] = "";    // optional - leave as "" to omit, or for example: 1.1.1.1
 
-// GPS support (required)
+// (required) GPS support
 static constexpr int TXPin = 22;  // note: prior to release 2.4 pin 16 was used for TX
 static constexpr int RXPin = 21;  // note: prior to release 2.4 pin 17 was used for RX
 static constexpr int PPSPin = 20; // note: prior to release 2.4 pin 18 was used for PPS
@@ -64,6 +85,7 @@ static constexpr int PPSPin = 20; // note: prior to release 2.4 pin 18 was used 
 //   accumulated error between syncs; temperature variation can push this toward ~6-9 ms worst case.
 // - With PPS: the PPS discipline task applies continuous sub-second corrections via adjtime() on every GPS pulse.
 //   This reduces inter-sync error to well under 1 ms, limited mainly by interrupt latency (~10-100 us).
+//   Accordingly, the use of PPS is highly recommended
 // - Preferred GPS (MAX-M10S) connects at 921600 baud, minimizing serial latency and enabling faster, more precise time
 //   message processing. Fallback modules may be limited to 9600 baud, introducing additional parsing delay and reducing
 //   the accuracy of the time set at each GPS resync.
@@ -88,5 +110,5 @@ static constexpr bool rebootIfSanityCheckFails = true; // Further to the above,
                                                        // - display double asterisks'**' on the LCD screen to indicate an issue with the GPS
                                                        //   and then will providing the esp32's time, unsynced by the GPS, moving forward.
 
-// Time zone setting for your region - for more information see https://gist.github.com/alwynallan/24d96091655391107939
+// (required) Time zone setting for your region - for more information see https://gist.github.com/alwynallan/24d96091655391107939
 static constexpr const char *timeZoneSpec = "EST5EDT,M3.2.0/2,M11.1.0/2";

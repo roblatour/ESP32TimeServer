@@ -1,6 +1,30 @@
 {
   "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf",
+  "idf.buildPathWin": "${workspaceFolder}\\build-esp32p4-rev-1-3",
+  "idf.sdkconfigDefaults": [
+    "sdkconfig.defaults",
+    "config/esp32p4_rev_pre_v3.defaults"
+  ],
   "files.associations": {
     "sdkconfig.defaults*": "kconfig"
-  }
+  },
+  "idf.portWin": "COM6",
+  "idf.flashType": "UART",
+  "cSpell.words": [
+    "blox",
+    "colour",
+    "gotoxy",
+    "IRAM",
+    "LOGI",
+    "LOGW",
+    "MDIO",
+    "nmea",
+    "stripchart"
+  ],
+  "clangd.path": "C:\\Espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=e:\\Documents\\GitHub\\ESP32TimeServer\\build-esp32p4-rev-1-3"
+  ]
 }
