@@ -11,70 +11,66 @@ the reporting content as described in more detail below.
 
 ```json
 {
-  "current": {
-    "time": "2026-08-21T22:27:11-0400",
-    "uptime": 1637,
-    "ethernet_up": true,
-    "pps_active": true,
-    "gnss_locked": true,
-    "satellites": 7,
-    "memory": {
-      "malloc_cap_8bit": 440236,
-      "malloc_cap_32bit": 440236,
-      "malloc_cap_internal": 440236,
-      "malloc_cap_dma": 400656,
-      "malloc_cap_spiram": 0,
-      "malloc_cap_default": 440236,
-      "free_heap": 440236,
-      "minimum_free_heap": 435648,
-      "largest_free_8bit_block": 385024
-    }
-  },
-  "queued_messages": {
-    "held": 0,
-    "discarded": 0
-  },
-  "this_period": {
-    "ethernet_up_secs": 120,
-    "pps_pulses": 120,
-    "gnss_locked_secs": 120,
-    "satellites": {
-      "min": 7,
-      "max": 11
+    "current": {
+        "time": "2026-08-22T22:59:49-0400",
+        "uptime": 4514,
+        "ethernet_up": true,
+        "pps_active": true,
+        "gnss_locked": true,
+        "satellites": 21,
+        "memory": {
+            "malloc_cap_8bit": 404732,
+            "malloc_cap_32bit": 404732,
+            "malloc_cap_internal": 404732,
+            "malloc_cap_dma": 365152,
+            "malloc_cap_spiram": 0,
+            "malloc_cap_default": 404732,
+            "free_heap": 404732,
+            "minimum_free_heap": 398576,
+            "largest_free_8bit_block": 360448
+        }
     },
-    "ntp": {
-      "requests": {
-        "valid": 5281,
-        "invalid": 0,
-        "max_per_second": 1823
-      },
-      "responses": {
-        "gnss_lock": 5281,
-        "gnss_unlock": 0
-      }
+    "queued_messages": {
+        "held": 0,
+        "discarded": 0
     },
-    "clients": [
-      {
-        "address": "192.168.1.1",
-        "requests": 2
-      },
-      {
-        "address": "192.168.1.10",
-        "requests": 3
-      },
-      {
-        "address": "192.168.1.15",
-        "requests": 1
-      }
-    ],
-    "clients_overflown": false
-  },
-  "historical": {
-    "gnss": {
-      "last_lock": "2026-08-21T22:17:11-0400",
-      "last_unlock": ""
+    "this_period": {
+        "ethernet_up_secs": 900,
+        "pps_pulses": 900,
+        "gnss_locked_secs": 900,
+        "satellites": {
+            "min": 19,
+            "max": 26
+        },
+        "ntp": {
+            "requests": {
+                "valid": 9079,
+                "invalid": 0,
+                "max_per_second": 1840
+            },
+            "responses": {
+                "gnss_lock": 9079,
+                "gnss_unlock": 0
+            }
+        },
+        "clients": [
+            {
+                "address": "192.168.7.24",
+                "requests": 14
+            },
+            {
+                "address": "192.168.1.10",
+                "requests": 9065
+            }
+        ],
+        "clients_overflown": false
+    },
+    "historical": {
+        "gnss": {
+            "last_lock": "2026-08-22T22:25:03-0400",
+            "last_unlock": "2026-08-22T22:25:01-0400"
+        }
     }
-  }
 }
 ```
 
