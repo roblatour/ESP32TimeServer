@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.5
+// ESP32 Time Server v2.5.1
 // Copyright Rob Latour, 2026
 
 //
@@ -136,13 +136,30 @@ static std::atomic<bool> s_time_has_been_set{false};
 static uint64_t s_ntp_reference_time_64 = 0;
 static bool s_ntp_reference_valid = false;
 
+static_assert(PreferIPvX == 0 || PreferIPvX == 4 || PreferIPvX == 6, "PreferIPvX must be 0, 4, or 6");
+
 static char s_ip_address[IP_ADDRESS_TEXT_SIZE] = "";
 static char s_ipv4_address[INET_ADDRSTRLEN] = "";
 static char s_ipv6_address[IP_ADDRESS_TEXT_SIZE] = "";
 
 static void update_selected_ip_address()
 {
-    snprintf(s_ip_address, sizeof(s_ip_address), "%s", s_ipv4_address[0] != '\0' ? s_ipv4_address : s_ipv6_address);
+    const bool has_ipv4 = s_ipv4_address[0] != '\0';
+    const bool has_ipv6 = s_ipv6_address[0] != '\0';
+
+    const char *selected_address = "";
+    if (PreferIPvX == 4)
+        selected_address = has_ipv4 ? s_ipv4_address : s_ipv6_address;
+    else if (PreferIPvX == 6)
+        selected_address = has_ipv6 ? s_ipv6_address : s_ipv4_address;
+    else if (strcmp(s_ip_address, s_ipv4_address) == 0 && has_ipv4)
+        selected_address = s_ipv4_address;
+    else if (strcmp(s_ip_address, s_ipv6_address) == 0 && has_ipv6)
+        selected_address = s_ipv6_address;
+    else
+        selected_address = has_ipv4 ? s_ipv4_address : s_ipv6_address;
+
+    snprintf(s_ip_address, sizeof(s_ip_address), "%s", selected_address);
 }
 
 static std::atomic<bool> s_ethernet_connected{false};
@@ -187,6 +204,7 @@ struct mqtt_report_t
 
 static SemaphoreHandle_t s_mqtt_stats_mutex = nullptr;
 static esp_mqtt_client_handle_t s_mqtt_client = nullptr;
+static std::atomic<bool> s_mqtt_setup_failed{false};
 static std::atomic<bool> s_mqtt_connected{false};
 static std::atomic<int> s_mqtt_restart_publish_id{-1};
 static std::atomic<bool> s_mqtt_restart_publish_completed{false};
@@ -216,7 +234,7 @@ static int64_t s_mqtt_last_link_up_us = 0;
 static mqtt_report_t s_mqtt_reports[MQTT_REPORT_QUEUE_DEPTH]{};
 static char s_mqtt_payload[MQTT_REPORT_SIZE] = "";
 static size_t s_mqtt_report_head = 0;
-static size_t s_mqtt_queued_messages_count = 0;
+static std::atomic<size_t> s_mqtt_queued_messages_count{0};
 static uint32_t s_mqtt_queued_messages_discarded = 0;
 static mqtt_client_request_t s_mqtt_clients[MQTT_CLIENT_LIMIT]{};
 static uint32_t s_ntp_requests_this_second = 0;
@@ -692,59 +710,35 @@ static esp_err_t setup_lcd()
 
 static void display_selected_ip_address(int seconds)
 {
-    static bool IPAddressIsIPv4 = strlen(s_ipv4_address) > 0;
-    static bool IPAddressIsIPv6 = strlen(s_ipv6_address) > 0;
-    static bool variables_initialized = false;
-    static char IPv6_Part1[IP_ADDRESS_TEXT_SIZE] = "";
-    static char IPv6_Part2[IP_ADDRESS_TEXT_SIZE] = "";
-
-    if (IPAddressIsIPv4)
-    {
-        display_line(3, s_ipv4_address);
-    }
-    else if (IPAddressIsIPv6)
-    {
-
-        if (!variables_initialized)
-        {
-            size_t total_len = strlen(s_ipv6_address);
-            size_t half_len = total_len / 2;
-
-            // As an IPv6 address will not fit into the 20 character display line,
-            // so it needs to be broken into two parts.
-            // The first part will set to be approximately half the size of the IPv6 address, and
-            // the second part will be also set to approximately half the size.
-            // However, the code below will ensure the second part starts with a colon (:)
-            // so the user knows which is the first part and which is the second part
-            // as the first character of an IPv6 address will not start with a colon
-
-            // Find the correct split point where the second part starts with a colon
-            while (half_len < total_len && s_ipv6_address[half_len] != ':')
-                half_len++;
-
-            size_t remainder_len = total_len - half_len;
-
-            // Copy the first part (including characters shifted from the second part)
-            strncpy(IPv6_Part1, s_ipv6_address, half_len);
-            IPv6_Part1[half_len] = '\0';
-
-            // Copy the second part (now guaranteed to start with a colon, if one exists)
-            strncpy(IPv6_Part2, s_ipv6_address + half_len, remainder_len);
-            IPv6_Part2[remainder_len] = '\0';
-
-            variables_initialized = true;
-        }
-
-        // for an IPv6 address display part 1 for the first half of the minute and part 2 for the second half
-        if (seconds < 30)
-            display_line(3, IPv6_Part1);
-        else
-            display_line(3, IPv6_Part2);
-    }
-    else
+    if (s_ip_address[0] == '\0')
     {
         display_line(3, "");
+        return;
     }
+
+    if (strcmp(s_ip_address, s_ipv4_address) == 0)
+    {
+        display_line(3, s_ip_address);
+        return;
+    }
+
+    char ipv6_part1[IP_ADDRESS_TEXT_SIZE] = "";
+    char ipv6_part2[IP_ADDRESS_TEXT_SIZE] = "";
+    size_t total_len = strlen(s_ip_address);
+    size_t half_len = total_len / 2;
+    while (half_len < total_len && s_ip_address[half_len] != ':')
+        half_len++;
+
+    size_t remainder_len = total_len - half_len;
+    strncpy(ipv6_part1, s_ip_address, half_len);
+    ipv6_part1[half_len] = '\0';
+    strncpy(ipv6_part2, s_ip_address + half_len, remainder_len);
+    ipv6_part2[remainder_len] = '\0';
+
+    if (seconds < 30)
+        display_line(3, ipv6_part1);
+    else
+        display_line(3, ipv6_part2);
 }
 
 static void apply_timezone_settings()
@@ -2009,6 +2003,7 @@ static void setup_gps()
     static constexpr uint32_t gpsNoSignalRecoveryMs = 180000UL;
 
     bool no_signal_recovery_attempted = false;
+    bool nmea_fallback_enabled = s_use_nmea_fallback;
     uint32_t wait_start_ms = millis();
     uint32_t last_status_log_ms = 0;
     uint32_t last_long_wait_warning_ms = 0;
@@ -2038,9 +2033,9 @@ static void setup_gps()
         }
 
         uint32_t now_ms = millis();
-        if (!ubx_fix_ready && !s_use_nmea_fallback && allowFallbackProcessing && (now_ms - wait_start_ms) >= gpsFixEscalationToNmeaFallbackMs)
+        if (!ubx_fix_ready && !nmea_fallback_enabled && allowFallbackProcessing && (now_ms - wait_start_ms) >= gpsFixEscalationToNmeaFallbackMs)
         {
-            s_use_nmea_fallback = true;
+            nmea_fallback_enabled = true;
 #if DEBUG_ENABLED
             ESP_LOGW(TAG, "No UBX fix after %lu ms. Enabling NMEA fallback for additional acquisition path.", static_cast<unsigned long>(now_ms - wait_start_ms));
 #endif
@@ -2058,7 +2053,7 @@ static void setup_gps()
             }
         }
 
-        if (!ubx_fix_ready && s_use_nmea_fallback)
+        if (!ubx_fix_ready && nmea_fallback_enabled)
         {
             nmea_rmc_time_t nmea_time{};
             nmea_fix_ready = wait_for_nmea_rmc_time(&nmea_time, 1200UL);
@@ -2066,6 +2061,9 @@ static void setup_gps()
 
         if (ubx_fix_ready || nmea_fix_ready)
         {
+            if (nmea_fix_ready)
+                s_use_nmea_fallback = true;
+
 #if DEBUG_ENABLED
             if (ubx_fix_ready)
                 ESP_LOGI(TAG, "GPS fix obtained after %lu ms: fix_type=%u (%s)",
@@ -2134,7 +2132,7 @@ static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
     else
         return;
 
-    if (xSemaphoreTake(s_mqtt_stats_mutex, 0) != pdTRUE)
+    if (s_mqtt_stats_mutex == nullptr || xSemaphoreTake(s_mqtt_stats_mutex, 0) != pdTRUE)
         return;
 
     time_t now = time(nullptr);
@@ -2236,14 +2234,14 @@ static void mqtt_enqueue_report(const char *payload)
     if (MQTT_QOS == 0)
         return;
 
-    if (s_mqtt_queued_messages_count == MQTT_REPORT_QUEUE_DEPTH)
+    if (s_mqtt_queued_messages_count.load() == MQTT_REPORT_QUEUE_DEPTH)
     {
         s_mqtt_report_head = (s_mqtt_report_head + 1) % MQTT_REPORT_QUEUE_DEPTH;
         s_mqtt_queued_messages_count--;
         s_mqtt_queued_messages_discarded++;
     }
 
-    size_t index = (s_mqtt_report_head + s_mqtt_queued_messages_count) % MQTT_REPORT_QUEUE_DEPTH;
+    size_t index = (s_mqtt_report_head + s_mqtt_queued_messages_count.load()) % MQTT_REPORT_QUEUE_DEPTH;
     snprintf(s_mqtt_reports[index].payload, sizeof(s_mqtt_reports[index].payload), "%s", payload);
     s_mqtt_queued_messages_count++;
 }
@@ -2253,7 +2251,7 @@ static void mqtt_send_queued_messages()
     if (MQTT_QOS == 0)
         return;
 
-    while (s_mqtt_queued_messages_count > 0 && s_mqtt_connected.load())
+    while (s_mqtt_queued_messages_count.load() > 0 && s_mqtt_connected.load())
     {
         if (!mqtt_publish_report(s_mqtt_reports[s_mqtt_report_head].payload))
             return;
@@ -2285,7 +2283,7 @@ static uint32_t gnss_locked_seconds_this_period()
 
 static void mqtt_build_report(char *payload, size_t payload_size)
 {
-    uint32_t queued_messages = static_cast<uint32_t>(s_mqtt_queued_messages_count);
+    uint32_t queued_messages = static_cast<uint32_t>(s_mqtt_queued_messages_count.load());
     uint32_t queued_messages_discarded = s_mqtt_queued_messages_discarded;
     s_mqtt_queued_messages_discarded = 0;
     uint32_t most_requests_per_second = 0;
@@ -2486,11 +2484,17 @@ static void setup_mqtt()
 #if MQTT_ENABLED
 
     if (MQTTServerIPAddress[0] == '\0' || MQTT_QOS < 0 || MQTT_QOS > 2)
+    {
+        s_mqtt_setup_failed.store(true);
         return;
+    }
 
     s_mqtt_stats_mutex = xSemaphoreCreateMutex();
     if (s_mqtt_stats_mutex == nullptr)
+    {
+        s_mqtt_setup_failed.store(true);
         return;
+    }
     snprintf(s_mqtt_uri, sizeof(s_mqtt_uri), "mqtt://%s:%u", MQTTServerIPAddress, static_cast<unsigned int>(MQTT_Port));
     snprintf(s_mqtt_report_topic, sizeof(s_mqtt_report_topic), "%s/report", MQTTTopic);
     snprintf(s_mqtt_status_topic, sizeof(s_mqtt_status_topic), "%s/status", MQTTTopic);
@@ -2505,11 +2509,22 @@ static void setup_mqtt()
     config.session.last_will.retain = 1;
     s_mqtt_client = esp_mqtt_client_init(&config);
     if (s_mqtt_client == nullptr)
+    {
+        s_mqtt_setup_failed.store(true);
         return;
-    esp_mqtt_client_register_event(s_mqtt_client, MQTT_EVENT_ANY, mqtt_event_handler, nullptr);
+    }
+    if (esp_mqtt_client_register_event(s_mqtt_client, MQTT_EVENT_ANY, mqtt_event_handler, nullptr) != ESP_OK)
+    {
+        s_mqtt_setup_failed.store(true);
+        return;
+    }
     if (esp_mqtt_client_start(s_mqtt_client) != ESP_OK)
+    {
+        s_mqtt_setup_failed.store(true);
         return;
-    xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", 6144, nullptr, 5, nullptr, 0);
+    }
+    if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", 6144, nullptr, 5, nullptr, 0) != pdPASS)
+        s_mqtt_setup_failed.store(true);
 
 #endif
 }
@@ -2727,7 +2742,7 @@ void write_opening_messages_to_the_console()
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Server v2.5");
+    ESP_LOGI(TAG, "ESP32 Time Server v2.5.1");
 
 #if !DEBUG_ENABLED
     ESP_LOGW(TAG, "DEBUG_ENABLED is turned off in the settings");
@@ -3516,19 +3531,36 @@ static void gps_time_sync_task(void *parameter)
 
             uint32_t refresh_start_ms = millis();
             uint32_t refresh_interval_ms = periodicGPSRefreshEveryThisNumberOfMinutes * 60UL * 1000UL;
+            int64_t invalid_started_us = 0;
+
             while ((millis() - refresh_start_ms) < refresh_interval_ms)
             {
                 bool gnss_valid = current_gnss_timing_is_valid();
 
-                sync_state_note_gnss_validity(gnss_valid);
-
-                if (!gnss_valid)
+                if (gnss_valid)
                 {
-#if DEBUG_ENABLED
-                    ESP_LOGW(TAG, "GNSS timing validity lost; starting immediate reacquisition.");
-#endif
-                    break;
+                    invalid_started_us = 0;
+                    sync_state_note_gnss_validity(true);
                 }
+                else
+                {
+                    // provide for a two second tolerance to avoid false positive reporting on the loss of a gnss lock
+                    if (invalid_started_us == 0)
+                        invalid_started_us = esp_timer_get_time();
+
+                    if ((esp_timer_get_time() - invalid_started_us) >= 2000000)
+                    {
+                        sync_state_note_gnss_validity(false);
+
+#if DEBUG_ENABLED
+                        ESP_LOGW(TAG,
+                                 "GNSS timing invalid for more than 2 seconds; starting immediate reacquisition.");
+#endif
+
+                        break;
+                    }
+                }
+
                 vTaskDelay(pdMS_TO_TICKS(1000));
             }
         }
@@ -3756,7 +3788,7 @@ static void ntp_server_task(void *parameter)
 
           // Results of this testing:
           //
-          //  ntp_server_task: Stack report: Allocated=16384 bytes, HighWater=448 bytes unused, PeakUsage=15936 bytes, Suggested=19920 bytes
+          //  ntp_server_task: Stack report: Allocated=19920 bytes, HighWater=17772 bytes unused, PeakUsage=2148 bytes, Suggested=2685 bytes
   */
     }
 }
@@ -3803,11 +3835,13 @@ static void update_display_task(void *parameter)
             // Determine message code for the first line:
             // 0 none;                                               "ESP32 Time Server   "
             // 1 Time sync underway (normal periodic behaviour);     "ESP32 Time Server * "
-            // 2 Sanity check mismatch;                              "ESP32 Time Server[1]"
-            // 3 PPS missing;                                        "ESP32 Time Server[2]"
-            // 4 GNSS missing or invalid;                            "ESP32 Time Server[3]"
-            // 5 GNSS snyc stale;                                    "ESP32 Time Server[5]"
-            // 6 GNSS unlocked;                                      "ESP32 Time Server[6]"
+            // 2 MQTT setup failed;                                  "ESP32 Time Server[1]"
+            // 3 MQTT there are queued items;                        "ESP32 Time Server[2]"
+            // 4 Sanity check mismatch;                              "ESP32 Time Server[3]"
+            // 5 PPS missing;                                        "ESP32 Time Server[4]"
+            // 6 GNSS missing or invalid;                            "ESP32 Time Server[5]"
+            // 7 GNSS snyc stale;                                    "ESP32 Time Server[6]"
+            // 8 GNSS unlocked;                                      "ESP32 Time Server[7]"
             // 10  used for when the button is pressed;              "ESP32 Time Server's "
 
             if (s_time_setting_in_progress.load())
@@ -3816,26 +3850,32 @@ static void update_display_task(void *parameter)
             }
             else
             {
+#if MQTT_ENABLED
+                if (s_mqtt_setup_failed.load())
+                    required_top_line_message = 2;
+                else if (s_mqtt_queued_messages_count.load() > 0)
+                    required_top_line_message = 3;
+#endif
                 switch (sync_snapshot.fault)
                 {
                 case sync_fault_t::sanity_mismatch:
-                    required_top_line_message = 2;
-                    break;
-
-                case sync_fault_t::pps_missing:
-                    required_top_line_message = 3;
-                    break;
-
-                case sync_fault_t::gps_invalid:
                     required_top_line_message = 4;
                     break;
 
-                case sync_fault_t::sync_stale:
+                case sync_fault_t::pps_missing:
                     required_top_line_message = 5;
                     break;
 
+                case sync_fault_t::gps_invalid:
+                    required_top_line_message = 6;
+                    break;
+
+                case sync_fault_t::sync_stale:
+                    required_top_line_message = 7;
+                    break;
+
                 default:
-                    required_top_line_message = s_gnss_locked.load() ? 0 : 6;
+                    required_top_line_message = s_gnss_locked.load() ? 0 : 8;
                     break;
                 }
             }
@@ -3934,28 +3974,28 @@ static void update_display_task(void *parameter)
           //
           // Below is the code that has now already been used to calculate the ideal stack size:
 
-          // *** Hard‑coded stack size originally used when creating the task (bytes) ***
-          const size_t allocated_bytes = 16384; // <-- set this to the value passed to xTaskCreatePinnedToCore
+        // *** Hard‑coded stack size originally used when creating the task (bytes) ***
+        const size_t allocated_bytes = 16384; // <-- set this to the value passed to xTaskCreatePinnedToCore
 
-          // high watermark is returned in words
-          UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
-          size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
+        // high watermark is returned in words
+        UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
+        size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
 
-          // compute peak usage and suggested size (25% margin)
-          size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
-          size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
+        // compute peak usage and suggested size (25% margin)
+        size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
+        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
 
-          ESP_LOGI("update_display_task",
-                   "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
-                   (unsigned)allocated_bytes,
-                   (unsigned)high_watermark_bytes,
-                   (unsigned)peak_usage_bytes,
-                   (unsigned)suggested_bytes);
+        ESP_LOGI("update_display_task",
+                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
+                 (unsigned)allocated_bytes,
+                 (unsigned)high_watermark_bytes,
+                 (unsigned)peak_usage_bytes,
+                 (unsigned)suggested_bytes);
 
-          // Results of this testing:
-          //
-          //  update_display_task: Stack report: Allocated=16384 bytes, HighWater=14416 bytes unused, PeakUsage=1968 bytes, Suggested=2460 bytes
-           */
+        // Results of this testing:
+        //
+        //   update_display_task: Stack report: Allocated=16384 bytes, HighWater=14416 bytes unused, PeakUsage=1968 bytes, Suggested=2460 byte
+        */
     }
 #else
     for (;;)
@@ -3992,7 +4032,7 @@ extern "C" void app_main()
 
     setup_mqtt();
 
-    xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", 19920, nullptr, 20, nullptr, tskNO_AFFINITY);
+    xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", 2685, nullptr, 20, nullptr, tskNO_AFFINITY);
 
     xTaskCreatePinnedToCore(update_display_task, "display_service", 2460, nullptr, 10, nullptr, tskNO_AFFINITY);
 }
