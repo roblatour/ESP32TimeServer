@@ -4,7 +4,7 @@
 
 Copyright Rob Latour, 2026
 
-## Below you will find some 3D printed models that can be used with this project.
+## Below you will find some 3D printed models that can be used with this project
 
 The first grouping below are models which use the Waveshare ESP32-P4-ETH 
 dev board combined with the recommended SparkFun GNSS Receiver, 
@@ -16,8 +16,9 @@ project.  If you have a model you would like to share, please just open
 a github issue and let me know.
 
 
-## Group 1 
-### For ESP32-P4-ETH (with or without the POE module) + SparkFun GNSS Receiver builds
+## Group 1
+
+### For ESP32-P4-ETH (with or without the POE module) + SparkFun GNSS Receiver builds, including optional LCD and/or uptime/reset button support
 
 ### Fusion 360 Source file
 
@@ -39,8 +40,7 @@ below:
 
 The case (filename Case) is designed to accommodate the following:
 
-- [Waveshare ESP32-P4-ETH development board 
-  (with or without a POE Hat)](https://www.waveshare.com/esp32-p4-eth.htm)
+- [Waveshare ESP32-P4-ETH development board (with or without a POE Hat)](https://www.waveshare.com/esp32-p4-eth.htm)
 
   or
 
