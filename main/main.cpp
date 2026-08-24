@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.5.1
+// ESP32 Time Server v2.5.2
 // Copyright Rob Latour, 2026
 
 //
@@ -1150,7 +1150,7 @@ static void build_ntp_reply(const uint8_t *request, uint8_t *reply, uint64_t rec
 {
     memset(reply, 0, NTP_PACKET_SIZE);
 
-    reply[0] = static_cast<uint8_t>((status.leap_indicator << 6) | 0b00011100);
+    reply[0] = static_cast<uint8_t>((status.leap_indicator << 6) | 0b00100100);
     reply[1] = status.stratum;
     reply[2] = 4;
     reply[3] = 0xF7;
@@ -2742,7 +2742,7 @@ void write_opening_messages_to_the_console()
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Server v2.5.1");
+    ESP_LOGI(TAG, "ESP32 Time Server v2.5.2");
 
 #if !DEBUG_ENABLED
     ESP_LOGW(TAG, "DEBUG_ENABLED is turned off in the settings");
@@ -3591,6 +3591,7 @@ static void ntp_server_task(void *parameter)
 {
     int ipv4_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     int ipv6_socket = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    int ipv6_link_local_socket = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
     if (ipv4_socket < 0 || ipv6_socket < 0)
     {
 #if DEBUG_ENABLED
@@ -3600,6 +3601,8 @@ static void ntp_server_task(void *parameter)
             closesocket(ipv4_socket);
         if (ipv6_socket >= 0)
             closesocket(ipv6_socket);
+        if (ipv6_link_local_socket >= 0)
+            closesocket(ipv6_link_local_socket);
         vTaskDelete(nullptr);
         return;
     }
@@ -3610,14 +3613,18 @@ static void ntp_server_task(void *parameter)
     ipv4_listen_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     int ipv6_only = 1;
+    int reuse_address = 1;
     if (setsockopt(ipv6_socket, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6_only, sizeof(ipv6_only)) != 0 ||
+        setsockopt(ipv6_socket, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) != 0 ||
         bind(ipv4_socket, reinterpret_cast<struct sockaddr *>(&ipv4_listen_addr), sizeof(ipv4_listen_addr)) != 0)
     {
 #if DEBUG_ENABLED
-        ESP_LOGE(TAG, "Unable to configure IPv4 NTP UDP socket: errno %d", errno);
+        ESP_LOGE(TAG, "Unable to configure NTP UDP sockets: errno %d", errno);
 #endif
         closesocket(ipv4_socket);
         closesocket(ipv6_socket);
+        if (ipv6_link_local_socket >= 0)
+            closesocket(ipv6_link_local_socket);
         vTaskDelete(nullptr);
         return;
     }
@@ -3633,8 +3640,42 @@ static void ntp_server_task(void *parameter)
 #endif
         closesocket(ipv4_socket);
         closesocket(ipv6_socket);
+        if (ipv6_link_local_socket >= 0)
+            closesocket(ipv6_link_local_socket);
         vTaskDelete(nullptr);
         return;
+    }
+
+    esp_ip6_addr_t link_local_address{};
+    if (ipv6_link_local_socket < 0 ||
+        setsockopt(ipv6_link_local_socket, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6_only, sizeof(ipv6_only)) != 0 ||
+        setsockopt(ipv6_link_local_socket, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) != 0 ||
+        esp_netif_get_ip6_linklocal(ETH.netif(), &link_local_address) != ESP_OK)
+    {
+#if DEBUG_ENABLED
+        ESP_LOGW(TAG, "IPv6 link-local NTP listener unavailable: errno %d", errno);
+#endif
+        if (ipv6_link_local_socket >= 0)
+            closesocket(ipv6_link_local_socket);
+        ipv6_link_local_socket = -1;
+    }
+    else
+    {
+        struct sockaddr_in6 ipv6_link_local_listen_addr{};
+        ipv6_link_local_listen_addr.sin6_family = AF_INET6;
+        ipv6_link_local_listen_addr.sin6_port = htons(NTP_PORT);
+        memcpy(&ipv6_link_local_listen_addr.sin6_addr, link_local_address.addr, sizeof(ipv6_link_local_listen_addr.sin6_addr));
+        ipv6_link_local_listen_addr.sin6_scope_id = esp_netif_get_netif_impl_index(ETH.netif());
+        if (bind(ipv6_link_local_socket,
+                 reinterpret_cast<struct sockaddr *>(&ipv6_link_local_listen_addr),
+                 sizeof(ipv6_link_local_listen_addr)) != 0)
+        {
+#if DEBUG_ENABLED
+            ESP_LOGW(TAG, "IPv6 link-local NTP listener unavailable: errno %d", errno);
+#endif
+            closesocket(ipv6_link_local_socket);
+            ipv6_link_local_socket = -1;
+        }
     }
 
     for (;;)
@@ -3643,9 +3684,16 @@ static void ntp_server_task(void *parameter)
         FD_ZERO(&read_fds);
         FD_SET(ipv4_socket, &read_fds);
         FD_SET(ipv6_socket, &read_fds);
+        if (ipv6_link_local_socket >= 0)
+            FD_SET(ipv6_link_local_socket, &read_fds);
         struct timeval timeout{};
         timeout.tv_sec = 1;
-        int ready = select((ipv4_socket > ipv6_socket ? ipv4_socket : ipv6_socket) + 1, &read_fds, nullptr, nullptr, &timeout);
+        int max_socket = ipv4_socket;
+        if (ipv6_socket > max_socket)
+            max_socket = ipv6_socket;
+        if (ipv6_link_local_socket >= 0 && ipv6_link_local_socket > max_socket)
+            max_socket = ipv6_link_local_socket;
+        int ready = select(max_socket + 1, &read_fds, nullptr, nullptr, &timeout);
         if (ready < 0)
         {
 #if DEBUG_ENABLED
@@ -3656,15 +3704,21 @@ static void ntp_server_task(void *parameter)
         if (ready == 0)
             continue;
 
-        static bool receive_ipv6_next = false;
-        int sock = ipv4_socket;
-        if (FD_ISSET(ipv4_socket, &read_fds) && FD_ISSET(ipv6_socket, &read_fds))
+        static uint8_t next_socket = 0;
+        const int sockets[] = {ipv4_socket, ipv6_socket, ipv6_link_local_socket};
+        int sock = -1;
+        for (size_t offset = 0; offset < sizeof(sockets) / sizeof(sockets[0]); ++offset)
         {
-            sock = receive_ipv6_next ? ipv6_socket : ipv4_socket;
-            receive_ipv6_next = !receive_ipv6_next;
+            size_t index = (next_socket + offset) % (sizeof(sockets) / sizeof(sockets[0]));
+            if (sockets[index] >= 0 && FD_ISSET(sockets[index], &read_fds))
+            {
+                sock = sockets[index];
+                next_socket = static_cast<uint8_t>((index + 1) % (sizeof(sockets) / sizeof(sockets[0])));
+                break;
+            }
         }
-        else if (FD_ISSET(ipv6_socket, &read_fds))
-            sock = ipv6_socket;
+        if (sock < 0)
+            continue;
 
         uint8_t request[NTP_PACKET_SIZE];
         uint8_t reply[NTP_PACKET_SIZE];

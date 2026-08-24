@@ -64,16 +64,17 @@ static constexpr char Gateway[] = "";         // optional - leave as "" to omit,
 static constexpr char SubnetMask[] = "";      // optional - leave as "" to omit, or for example: 255.255.255.0
 static constexpr char PrimaryDNS[] = "";      // optional - leave as "" to omit, or for example: 8.8.8.8
 static constexpr char SecondaryDNS[] = "";    // optional - leave as "" to omit, or for example: 1.1.1.1
-static constexpr int PreferIPvX = 4;          // Preference for network connection
-                                              // 0 - no preference between IPv4 and IPv6
-                                              // 4 - prefer IPv4
-                                              // 6 - prefer IPv6
-                                              // Note: with prefer IPv4: if an IPv6 address is offered it will be temporarily accepted,
-                                              // until an IPv4 offer comes in at which time the program will automatically switch over
-                                              // to an IPv4 address.
-                                              // The same is true, in reverse, for prefer IPv6.
-                                              // Additionally, regardless of the value selected ntp requests from either IPv4 and IPv6
-                                              // clients will be accepted
+
+// Preference for network connection
+static constexpr int PreferIPvX = 4; // 0 - no preference between IPv4 and IPv6
+                                     // 4 - prefer IPv4
+                                     // 6 - prefer IPv6
+                                     // Note: with prefer IPv4: if an IPv6 address is offered it will be temporarily accepted,
+                                     // until an IPv4 offer comes in at which time the program will automatically switch over
+                                     // to an IPv4 address.
+                                     // The same is true, in reverse, for prefer IPv6.
+                                     // Additionally, regardless of the value selected ntp requests from either IPv4 and IPv6
+                                     // clients will be accepted
 
 // (required) GPS support
 static constexpr int TXPin = 22;  // note: prior to release 2.4 pin 16 was used for TX

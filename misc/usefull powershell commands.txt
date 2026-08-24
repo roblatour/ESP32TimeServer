@@ -1,7 +1,7 @@
 
 Below, in more detail are Windows Command Prompt commands that will allow you to:
 - provide for Over The Ethernet updates,
-- test NTP responses,
+- tests for NTP responses,
 - reset the Meinberg drift file (to recreate a new baseline for the use of a different time server)
 
 Notes: In the examples below:
@@ -25,20 +25,30 @@ Notes: In the examples below:
 
    With the output showing, for example:
 
-   Tracking esp32timeserver.local [192.168.1.24:123].
+   Tracking 192.168.7.24 [192.168.7.24:123].
    Collecting 5 samples.
-   The current time is 2026-03-16 3:54:09 PM.
-   15:54:09, +00.0004071s
-   15:54:11, +00.0002725s
-   15:54:13, +00.0004652s
-   15:54:15, +00.0004417s
-   15:54:17, +00.0004249s
+   The current time is 2026-08-24 8:23:44 AM.
+   08:23:44, +00.0022650s
+   08:23:46, +00.0016820s
+   08:23:48, +00.0016135s
+   08:23:50, +00.0017035s
+   08:23:52, +00.0018610s
 
    The first number above is the current time.
    The second number above is the clock offset between the machine issuing the command and the esp32timeserver.local devices ESP32TimeServer
    (in the case above approximately 4/10000's of a second).
 
-3. If you are using the Meinberg NTP Time Server https://www.meinbergglobal.com/english/sw/ntp.htm
+3. Here is an alternative command which may be used for sending a NTP test request:
+
+   ntpdate -q 192.168.7.25
+
+   With the output showing, for example:
+   24 Aug 08:20:01 ntpdate[48144]: Raised to high priority class, realtime requires Increase Scheduling Priority privilege (enabled with secpol.msc).
+   server 192.168.7.25, stratum 1, offset +0.003054, delay 0.04068
+   24 Aug 08:20:01 ntpdate[48144]: adjust time server 192.168.7.25 offset +0.003054 sec
+
+
+4. If you are using the Meinberg NTP Time Server https://www.meinbergglobal.com/english/sw/ntp.htm
    and you want to create a new baseline as you are now using a new time server, 
    then from the Windows Command Prompt with Administrative Privileges you can use these commands:
    

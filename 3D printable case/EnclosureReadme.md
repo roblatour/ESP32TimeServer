@@ -4,7 +4,22 @@
 
 Copyright Rob Latour, 2026
 
-## Fusion 360 Source file
+### Below you will find some 3D printed models that can be used with this project.
+
+The first grouping below are models which use the Waveshare ESP32-P4-ETH 
+dev board combined with the recommended SparkFun GNSS Receiver, 
+with additional options for the ESP32-P4-ETH's POE module,
+an LCD screen, and/or a uptime/reset button.
+
+The second grouping below includes models which are being shared by other users of this  
+project.  If you have a model you would like to share, please just open
+a github issue and let me know.
+
+
+## Group 1 
+### For builds using the Waveshare ESP32-P4-ETH (with or without the POE module) + SparkFun GNSS Receiver + optional LCD and/or uptime/reset button
+
+### Fusion 360 Source file
 
 The Fusion 360 source code containing the models for all 3D print files
 identified below:
@@ -82,3 +97,13 @@ built into the back.
 
 6. A USB-C cable connector option is not available for the Olimex board
    configuration.
+
+## Group 2 - other user builds using various combinations of hardware
+
+2.1 with thanks to github and printables user Duglum:
+
+Two compact case designs for use with ESP32-P4-ETH (with or without the POE module)
+without an LCD or an uptime/Reset button and various GNSS boards (NEO-M9N, MAX-M10S-00B, GT-U16)
+
+
+https://www.printables.com/model/1821834-case-for-waveshare-esp32-p4

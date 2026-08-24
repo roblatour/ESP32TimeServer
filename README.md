@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 2.5.1)
+# ESP32 NTP Stratum 1 Time Server (version 2.5.2)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
