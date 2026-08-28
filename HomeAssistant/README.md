@@ -649,7 +649,6 @@ mqtt: !include mqtt.yaml
 Then add the template sensors into `configuration.yaml` exactly as described in
 [Option A above](#option-a--configurationyaml-with-a-new-mqttyaml).
 
-
 ### Option C — configuration.yaml with a separate MQTT file
 
 Replace the existing `mqtt: !include mqtt.yaml` line with the following so Home
