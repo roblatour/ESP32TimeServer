@@ -17,8 +17,11 @@ project. If you have a model you would like to share, please just open a github
 issue and let me know.
 
 ## Group 1
+<!-- markdownlint-disable MD013 -->
 
 ### For ESP32-P4-ETH (with or without the POE module) + SparkFun GNSS Receiver builds, including optional LCD and/or uptime/reset button support
+
+<!-- markdownlint-enable MD013 -->
 
 ### Fusion 360 Source file
 
