@@ -70,7 +70,10 @@ A full write-up of the original (version 1) project is available on
 - **TF card support** — (version 2.6) enabling queueing of vastly greater
   amounts of MQTT reporting data should broker communications be lost
 - **Home Assistant** - (version 2.6) dashboard card setup documentation added
+<!-- markdownlint-disable MD059 -->
   [here](./Homeassistant/README.md)
+<!-- markdownlint-disable MD059 -->
+  
 
 > The source code for **Version 1** (Arduino / PlatformIO) remains available at:
 > [https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0)
