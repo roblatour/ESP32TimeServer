@@ -647,7 +647,8 @@ mqtt: !include mqtt.yaml
 ```
 
 Then add the template sensors into `configuration.yaml` exactly as described in
-[Option A above](#a--configurationyaml-with-a-new-mqttyaml).
+[Option A above](#option-a--configurationyaml-with-a-new-mqttyaml).
+
 
 ### Option C — configuration.yaml with a separate MQTT file
 
@@ -666,7 +667,7 @@ mqtt:
 > Step 2 takes its place.
 
 Then add the template sensors into `configuration.yaml` exactly as described in
-[Option A above](#a--configurationyaml-with-a-new-mqttyaml).
+[Option A above](#option-a--configurationyaml-with-a-new-mqttyaml).
 
 ---
 
@@ -725,5 +726,9 @@ entities:
 title: ESP32 Time Server
 ```
 
+<!-- markdownlint-disable MD029 -->
+
 4. Click **Save**. The card will appear on your dashboard displaying last
    published report from the ESP32 Time Server.
+
+<!-- markdownlint-enable MD029 -->
