@@ -1,7 +1,7 @@
 # Useful Windows Command Prompt Commands
 
-Below, in more detail, are Windows Command Prompt commands that will allow
-you to:
+Below, in more detail, are Windows Command Prompt commands that will allow you
+to:
 
 - Provide for Over The Ethernet (OTE) updates
 - Test for NTP responses
@@ -14,8 +14,8 @@ In the examples below:
 
 - The device name, `ESP32TimeServer`, is set as `DeviceName` in
   `ESP32TimeServerSettings.h`.
-- `xx.xx.xx.xx` is the IP address of the ESP32-P4 running the ESP32 time
-  server software.
+- `xx.xx.xx.xx` is the IP address of the ESP32-P4 running the ESP32 time server
+  software.
 
 ## 1. Over The Ethernet (OTE) Updates
 
@@ -60,15 +60,13 @@ The current time is 2026-08-24 8:23:44 AM.
 08:23:52, +00.0018610s
 ```
 
-The first number above is the current time. The second number above is the
-clock offset between the machine issuing the command and the
-`ESP32TimeServer.local` device (in the case above approximately 4/10000's of
-a second).
+The first number above is the current time. The second number above is the clock
+offset between the machine issuing the command and the `ESP32TimeServer.local`
+device (in the case above approximately 4/10000's of a second).
 
 ## 3. NTP Test Request (ntpdate)
 
-Here is an alternative command which may be used for sending a NTP test
-request:
+Here is an alternative command which may be used for sending a NTP test request:
 
 ```cmd
 ntpdate -q 192.168.7.25
@@ -87,8 +85,8 @@ server 192.168.7.25, stratum 1, offset +0.003054, delay 0.04068
 If you are using the
 [Meinberg NTP Time Server](https://www.meinbergglobal.com/english/sw/ntp.htm)
 and you want to create a new baseline as you are now using a new time server,
-then from the Windows Command Prompt with Administrative Privileges you can
-use these commands:
+then from the Windows Command Prompt with Administrative Privileges you can use
+these commands:
 
 ```cmd
 net stop ntp
@@ -107,4 +105,3 @@ stress test your NTP server.
 [TimeServerStressTest](https://github.com/roblatour/TimeServerStressTest)
 
 ![Screenshot](https://raw.githubusercontent.com/roblatour/TimeServerStressTest/main/Misc/screenshot.jpg)
-

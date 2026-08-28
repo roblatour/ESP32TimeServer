@@ -59,19 +59,18 @@ A full write-up of the original (version 1) project is available on
   2.4.1).
 - **IPv6 support** - (version 2.5) IPv6 support has been added.
 - **MQTT publishing** — (version 2.5) optional MQTT publishing of time server
-  stats is now available.
-  For more information see [this document](misc/esp32timeserver_json_doc.md)
+  stats is now available. For more information see
+  [this document](misc/esp32timeserver_json_doc.md)
 - **Improved GNSS Satellite lock and PPS discipline tracking and recovery** -
   (version 2.5) with returned results being tagged as Stratum 16 (undefined)
   until a lost lock and/or failed PPS discipline is recovered.
 - **Conditional compilation** - (version 2.5) when optional features are
   disabled in the settings their associated code will now be excluded from the
   executable.
-- **TF card support** — (version 2.6) enabling queueing of vastly 
-  greater amounts of MQTT reporting data should broker communications be lost  
-- **Home Assistant** - (version 2.6) dashboard card 
-  setup documentation added [here](./Homeassistant/README.md)
-  
+- **TF card support** — (version 2.6) enabling queueing of vastly greater
+  amounts of MQTT reporting data should broker communications be lost
+- **Home Assistant** - (version 2.6) dashboard card setup documentation added
+  [here](./Homeassistant/README.md)
 
 > The source code for **Version 1** (Arduino / PlatformIO) remains available at:
 > [https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0)
@@ -297,8 +296,8 @@ A VS Code task **"ESP-IDF: OTE Upload over Ethernet"** is included in
 `.vscode/tasks.json`. It builds the firmware and deploys it to the device over
 Ethernet using `espota.py`, so no USB cable is needed after the first flash.
 Alternatively, use the terminal command in
-[`UsefulPowerShellCommands.md`](./misc/UsefullPowerShellCommands.md)
-in the `misc` folder.
+[`UsefulPowerShellCommands.md`](./misc/UsefullPowerShellCommands.md) in the
+`misc` folder.
 
 ---
 

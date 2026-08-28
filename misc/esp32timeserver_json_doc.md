@@ -11,74 +11,74 @@ the reporting content as described in more detail below.
 
 ```json
 {
-    "current": {
-        "time": "2026-08-27T17:24:20-0400",
-        "uptime": 15327,
-        "ethernet_up": true,
-        "pps_active": true,
-        "gnss_locked": true,
-        "satellites": 22,
-        "memory": {
-            "malloc_cap_8bit": 161192,
-            "malloc_cap_32bit": 161192,
-            "malloc_cap_internal": 161192,
-            "malloc_cap_dma": 121612,
-            "malloc_cap_spiram": 0,
-            "malloc_cap_default": 161192,
-            "free_heap": 161192,
-            "minimum_free_heap": 154948,
-            "largest_free_8bit_block": 114688
-        }
-    },
-    "queued_messages": {
-        "held": 0,
-        "discarded": 0
-    },
-    "this_period": {
-        "ethernet_up_secs": 900,
-        "pps_pulses": 900,
-        "gnss_locked_secs": 900,
-        "satellites": {
-            "min": 16,
-            "max": 22
-        },
-        "ntp": {
-            "requests": {
-                "valid": 41,
-                "invalid": 0,
-                "max_per_second": 1
-            },
-            "responses": {
-                "gnss_lock": 41,
-                "gnss_unlock": 0
-            }
-        },
-        "clients": [
-            {
-                "address": "192.168.1.10",
-                "requests": 13
-            },
-            {
-                "address": "192.168.1.15",
-                "requests": 14
-            },
-            {
-                "address": "192.168.4.4",
-                "requests": 1
-            },
-            {
-                "address": "192.168.7.1",
-                "requests": 13
-            }
-        ],
-        "clients_overflown": false
-    },
-    "historical": {
-        "gnss": {
-            "last_lock": "2026-08-27T13:09:20-0400",
-            "last_unlock": ""
-        }
+  "current": {
+    "time": "2026-08-27T17:24:20-0400",
+    "uptime": 15327,
+    "ethernet_up": true,
+    "pps_active": true,
+    "gnss_locked": true,
+    "satellites": 22,
+    "memory": {
+      "malloc_cap_8bit": 161192,
+      "malloc_cap_32bit": 161192,
+      "malloc_cap_internal": 161192,
+      "malloc_cap_dma": 121612,
+      "malloc_cap_spiram": 0,
+      "malloc_cap_default": 161192,
+      "free_heap": 161192,
+      "minimum_free_heap": 154948,
+      "largest_free_8bit_block": 114688
     }
+  },
+  "queued_messages": {
+    "held": 0,
+    "discarded": 0
+  },
+  "this_period": {
+    "ethernet_up_secs": 900,
+    "pps_pulses": 900,
+    "gnss_locked_secs": 900,
+    "satellites": {
+      "min": 16,
+      "max": 22
+    },
+    "ntp": {
+      "requests": {
+        "valid": 41,
+        "invalid": 0,
+        "max_per_second": 1
+      },
+      "responses": {
+        "gnss_lock": 41,
+        "gnss_unlock": 0
+      }
+    },
+    "clients": [
+      {
+        "address": "192.168.1.10",
+        "requests": 13
+      },
+      {
+        "address": "192.168.1.15",
+        "requests": 14
+      },
+      {
+        "address": "192.168.4.4",
+        "requests": 1
+      },
+      {
+        "address": "192.168.7.1",
+        "requests": 13
+      }
+    ],
+    "clients_overflown": false
+  },
+  "historical": {
+    "gnss": {
+      "last_lock": "2026-08-27T13:09:20-0400",
+      "last_unlock": ""
+    }
+  }
 }
 ```
 
@@ -172,15 +172,15 @@ Included when `MQTT_CLIENT_REPORTING_ENABLED` is `1` (Enabled).
   table could not hold every unique client observed during the reporting period.
 
   Without a TF card installed in the ESP32-P4-ETCH only up to 50 client entries
-  that can be held for reporting at the end of the reporting period. Client 
-  information is held and reported on a first come first serve basis.
-  If more than 50 unique clients are active in a reporting period, while their 
-  NTP requests will be processed, they will not be reported in the MQTT message,
-  rather the overflow flag will be set to true and reported as such. 
-  This flag will be reset after reporting for the next reporting period.
+  that can be held for reporting at the end of the reporting period. Client
+  information is held and reported on a first come first serve basis. If more
+  than 50 unique clients are active in a reporting period, while their NTP
+  requests will be processed, they will not be reported in the MQTT message,
+  rather the overflow flag will be set to true and reported as such. This flag
+  will be reset after reporting for the next reporting period.
 
-  With a TF card installed the limit to how many client entries can be
-  held for reporting is set in the Settings file (with a default of 500).
+  With a TF card installed the limit to how many client entries can be held for
+  reporting is set in the Settings file (with a default of 500).
 
 ### `historical`
 
