@@ -4430,7 +4430,7 @@ static void update_display_task(void *parameter)
             // Sanity check mismatch .............................................. "ESP32 Time Server[4]"
             // PPS missing ........................................................ "ESP32 Time Server[5]"
             // GNSS missing or invalid ............................................ "ESP32 Time Server[6]"
-            // GNSS snyc stale .................................................... "ESP32 Time Server[7]"
+            // GNSS sync stale .................................................... "ESP32 Time Server[7]"
             // GNSS unlocked ...................................................... "ESP32 Time Server[8]"
 
             // 98 used for when the button is pressed (normal periodic behaviour) . "ESP32 Time Server's "

@@ -23,6 +23,8 @@ Here are a couple example command line commands which may be used, following a
 build, to provide for an Over The Ethernet (OTE) update. The path name which
 precedes `ESP32TimeServer.bin` may vary.
 
+<!-- markdownlint-disable MD013 -->
+
 ```cmd
 python tools\espota.py -i ESP32TimeServer.local -p 3232 -P 3232 -a ESP32TimeServerpw -f build-esp32p4-rev-1-3\ESP32TimeServer.bin -r -d
 ```
@@ -46,6 +48,8 @@ or
 ```cmd
 w32tm /stripchart /computer:xx.xx.xx.xx /samples:5 /dataonly
 ```
+
+<!-- markdownlint-enable MD013 -->
 
 With the output showing, for example:
 
@@ -74,11 +78,15 @@ ntpdate -q 192.168.7.25
 
 With the output showing, for example:
 
+<!-- markdownlint-disable MD013 -->
+
 ```text
 24 Aug 08:20:01 ntpdate[48144]: Raised to high priority class, realtime requires Increase Scheduling Priority privilege (enabled with secpol.msc).
 server 192.168.7.25, stratum 1, offset +0.003054, delay 0.04068
 24 Aug 08:20:01 ntpdate[48144]: adjust time server 192.168.7.25 offset +0.003054 sec
 ```
+
+<!-- markdownlint-enable MD013 -->
 
 ## 4. Resetting the Meinberg Drift File
 
@@ -102,6 +110,10 @@ the service.
 Here is open source project Windows app, written by me, which allows you to
 stress test your NTP server.
 
+<!-- markdownlint-disable MD013 -->
+
 [TimeServerStressTest](https://github.com/roblatour/TimeServerStressTest)
 
 ![Screenshot](https://raw.githubusercontent.com/roblatour/TimeServerStressTest/main/Misc/screenshot.jpg)
+
+<!-- markdownlint-enable MD013 -->
