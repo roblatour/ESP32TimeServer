@@ -34,13 +34,17 @@ or
 ```cmd
 python tools\espota.py -i x.x.x.x -p 3232 -P 3232 -a ESP32TimeServerpw -f build-esp32p4-rev-1-3\ESP32TimeServer.bin -r -d
 ```
+
 ## 2. NTP Test Request (ntpdate) - Linux or Windows (with Meinberg)
 
-Here is a command which may be used for sending a NTP test request on Linux or Windows (with the Meinberg Network Time Protocol Daemon service for Windows installed and running):
+Here is a command which may be used for sending a NTP test request on Linux or
+Windows (with the Meinberg Network Time Protocol Daemon service for Windows
+installed and running):
 
 ```cmd
 ntpdate -q ESP32TimeServer.local
 ```
+
 or
 
 ```cmd
@@ -60,17 +64,17 @@ server 192.168.7.24, stratum 1, offset +0.006410, delay 0.04124
 <!-- markdownlint-enable MD013 -->
 
 The `stratum 1` value indicates that the server is a Stratum 1 time source
-(directly connected to a reference clock, in this case GNSS). The `offset`
-value is the clock offset between the machine issuing the command and the
+(directly connected to a reference clock, in this case GNSS). The `offset` value
+is the clock offset between the machine issuing the command and the
 `ESP32TimeServer.local` device (in the case above approximately 6/1000's of a
 second). The `delay` value is the round-trip network delay.
 
 ## 3. NTP Test Request (w32tm) - Windows only
 
-If you are using Windows and running the default Windows Time service, here is 
-a command which may be used for sending NTP test requests (will not work if 
-you are not using Windows or using the Meinberg Network Time Protocol Daemon
-service for Windows):
+If you are using Windows and running the default Windows Time service, here is a
+command which may be used for sending NTP test requests (will not work if you
+are not using Windows or using the Meinberg Network Time Protocol Daemon service
+for Windows):
 
 ```cmd
 w32tm /stripchart /computer:ESP32TimeServer.local /samples:5 /dataonly
@@ -131,9 +135,9 @@ response from ESP32TimeServer.local: offset 0.002154, delay 0.040680
 
 <!-- markdownlint-enable MD013 -->
 
-The offset value shown above is the clock offset between the machine issuing
-the command and the `ESP32TimeServer.local` device (in the case above
-approximately 2/1000's of a second).
+The offset value shown above is the clock offset between the machine issuing the
+command and the `ESP32TimeServer.local` device (in the case above approximately
+2/1000's of a second).
 
 ## 5. Resetting the Meinberg Drift File
 
@@ -152,13 +156,13 @@ net start ntp
 Between 15 minutes to an hour later a new `ntp.drift` file will be created by
 the service.
 
-If you don't do this the Meinberg software will automatically 
-recalibrate the drift file within a few hours.
+If you don't do this the Meinberg software will automatically recalibrate the
+drift file within a few hours.
 
 ## 6. NTP Stress Testing Tool
 
-Here is an open source Windows app, written by me, which can be used to
-stress test your NTP server.
+Here is an open source Windows app, written by me, which can be used to stress
+test your NTP server.
 
 <!-- markdownlint-disable MD013 -->
 
