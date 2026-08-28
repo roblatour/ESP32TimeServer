@@ -7,7 +7,7 @@
 #define DEBUG_ENABLED 0 // 0 = Disabled; 1 = Enabled
 static constexpr int serialMonitorSpeed = 115200;
 
-// (optional) up time / reset momentary button support
+// (optional) uptime / reset momentary button support
 #define UPTIME_RESTART_BUTTON_ENABLED 1 // 0 = Disabled; 1 = Enabled
 static constexpr int upTimeRestartPin = 3;
 static constexpr unsigned long holdUpTimeRestartButtonForThisManySecondsToTriggerAReset = 10UL;
@@ -24,8 +24,8 @@ static constexpr bool displayTimeZone = false;
 // (optional) Over The Ethernet updates support
 #define OTE_UPDATES_ENABLED 1 // 0 = Disabled; 1 = Enabled
 static constexpr char DeviceName[] = "ESP32TimeServer";
-static constexpr char OTAPassword[] = "ESP32TimeServerpw";
-static constexpr uint16_t OTA_Port = 3232;
+static constexpr char OTEPassword[] = "ESP32TimeServerpw";
+static constexpr uint16_t OTEPort = 3232;
 
 // (optional) MQTT reporting support
 // MQTT_ENABLED provides for current system status and activity reporting on information such as: uptime, number of active satellites, ntp request counts, etc.
@@ -35,19 +35,29 @@ static constexpr uint16_t OTA_Port = 3232;
 #define MQTT_MEMORY_REPORTING_ENABLED 1                       // 0 = Disabled; 1 = Enabled
 #define MQTT_HISTORICAL_REPORTING_ENABLED 1                   // 0 = Disabled; 1 = Enabled
 static constexpr char MQTTServerIPAddress[] = "";             // For example 192.168.1.15
-static constexpr uint16_t MQTT_Port = 1883;
+static constexpr uint16_t MQTTPort = 1883;
 static constexpr char MQTTUsername[] = "";
-static constexpr char MQTTPassword[] = "";  
+static constexpr char MQTTPassword[] = ""; 
 static constexpr char MQTTTopic[] = "ESP32TimeServer";
-static constexpr uint32_t MQTTReportingPeriod = 900;            // in seconds
+static constexpr uint16_t MQTTBrokerRetain = 1;                 // 0 = tell the broker not to retain the most current message; 1 = tell the broker to retain the most current message
+static constexpr uint32_t MQTTReportingPeriod = 900;            // in seconds - 900 for production
 static constexpr uint32_t MQTTFrequencyOfKeepAliveRequest = 60; // in seconds
 // QoS 0 delivers at most once and does not retain reports while disconnected
 // QoS 1 delivers at least once and queues reports while disconnected
 // QoS 2 delivers exactly once and queues reports while disconnected
-// Notes: - only limit message queuing is provided for MQTT_QOS 1 and 2 (up to 4 prior periods, each detailing the usage of a maximum of 50 unique clients)
-//        - message queuing is held in volatile RAM and will be lost if power is lost or there is a unexpected system crash - flash ram is not used so as to not degrade it over time
-//          a future release may include using a TF card to improve queuing
 static constexpr int MQTT_QOS = 0;
+// For MQTT_QOS > 0
+//   If a TF card, formatted using FAT32, is not present in the TF reader, or if read/write operations to it fail then only
+//   limited MQTT report queuing is provided (up to 4 prior reporting periods, each detailing the usage of a maximum of 50 unique clients)
+//   with queued reports being managed on a FIFO basis.
+//   Additionally, in these cases queued reports are held in volatile RAM and will be lost if power is lost or there is a unexpected system crash;
+//   flash ram is not used so as to not degrade it over time.
+//
+//   However, if TF is present and supports read/write operations then report queuing will be done using the TF card
+//   (an empty 16GB TF card can potentially hold more than 36,000 queued messages) with the number of unique clients set
+//   by the value MQTT_TF_Client_Limit below.  Regardless, if queued reports do exceed the TF storage capacity they will
+//   be managed on a FIFO basis.
+static constexpr size_t MQTT_TF_Client_Limit = 500;
 
 // (optional) setting of the ESP32-P4's MAC address support
 // set the value below to "" to use the ESP32-P4's default MAC address, or
@@ -76,12 +86,12 @@ static constexpr int PreferIPvX = 4; // 0 - no preference between IPv4 and IPv6
                                      // Additionally, regardless of the value selected ntp requests from either IPv4 and IPv6
                                      // clients will be accepted
 
-// (required) GPS support
-static constexpr int TXPin = 22;  // note: prior to release 2.4 pin 16 was used for TX
-static constexpr int RXPin = 21;  // note: prior to release 2.4 pin 17 was used for RX
-static constexpr int PPSPin = 20; // note: prior to release 2.4 pin 18 was used for PPS
+// (required) Time zone setting for your region - for more information see https://gist.github.com/alwynallan/24d96091655391107939
+static constexpr const char *timeZoneSpec = "EST5EDT,M3.2.0/2,M11.1.0/2";
 
-// This code was designed and tested to work with a SparkFun GNSS Receiver Breakout board which uses a u-blox - MAX-M10S module.
+// Unless you know what you are doing, the options below should be left as is
+
+// This project was designed and tested to work with a SparkFun GNSS Receiver Breakout board which uses a u-blox - MAX-M10S module.
 // ( https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html )
 // However, the code has fallback logic for non/cloned/older u-blox gps modules and has been tested with one such device as well.
 //
@@ -121,5 +131,15 @@ static constexpr bool rebootIfSanityCheckFails = true; // Further to the above,
                                                        // - display double asterisks'**' on the LCD screen to indicate an issue with the GPS
                                                        //   and then will providing the esp32's time, unsynced by the GPS, moving forward.
 
-// (required) Time zone setting for your region - for more information see https://gist.github.com/alwynallan/24d96091655391107939
-static constexpr const char *timeZoneSpec = "EST5EDT,M3.2.0/2,M11.1.0/2";
+// (required) GPS support; do not change these unless you know what you are doing
+static constexpr int TXPin = 16;  // note: prior to release 2.4 pin 16 was used for TX
+static constexpr int RXPin = 17;  // note: prior to release 2.4 pin 17 was used for RX
+static constexpr int PPSPin = 18; // note: prior to release 2.4 pin 18 was used for PPS
+
+// (required) pin definitions for the Waveshare ESP32-P4-ETH; if your using this board do not change these
+static constexpr int TFCardCommandPin = 44;
+static constexpr int TFCardClockPin = 43;
+static constexpr int TFCardData3Pin = 42;
+static constexpr int TFCardData2Pin = 41;
+static constexpr int TFCardData1Pin = 40;
+static constexpr int TFCardData0Pin = 39;

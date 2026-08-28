@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 2.5.2)
+# ESP32 NTP Stratum 1 Time Server (version 2.6)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -60,15 +60,18 @@ A full write-up of the original (version 1) project is available on
 - **IPv6 support** - (version 2.5) IPv6 support has been added.
 - **MQTT publishing** — (version 2.5) optional MQTT publishing of time server
   stats is now available.
-
   For more information see [this document](misc/esp32timeserver_json_doc.md)
-
 - **Improved GNSS Satellite lock and PPS discipline tracking and recovery** -
   (version 2.5) with returned results being tagged as Stratum 16 (undefined)
   until a lost lock and/or failed PPS discipline is recovered.
 - **Conditional compilation** - (version 2.5) when optional features are
   disabled in the settings their associated code will now be excluded from the
   executable.
+- **TF card support** — (version 2.6) enabling queueing of vastly 
+  greater amounts of MQTT reporting data should broker communications be lost  
+- **Home Assistant** - (version 2.6) dashboard card 
+  setup documentation added [here](./Homeassistant/README.md)
+  
 
 > The source code for **Version 1** (Arduino / PlatformIO) remains available at:
 > [https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0)
@@ -79,16 +82,17 @@ A full write-up of the original (version 1) project is available on
 
 <!-- markdownlint-disable line-length table-column-style -->
 
-| Qty | Item                                                                                                                                                                                                                                                                                                                                                                        |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm) development board (with or without optional PoE Hat) <sup>1</sup>                                                                                                                                                                                                                                      |
-| 1   | GPS/GNSS module [Recommeded: SparkFun GNSS Receiver Breakout - MAX-M10S (Qwiic)](https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html) <sup>1</sup>. Note: while some lower-cost generic modules ([AliExpress - NEO8M](https://www.aliexpress.com/item/1005003721844881.html)) are also supported, those including a PPS pin are strongly preferred |
-| 1   | GPS/GNSS antenna with SMA connector ([SparkFun GPS/GNSS Magnetic Mount Antenna - 3m (SMA)](https://www.sparkfun.com/products/14986)) <sup>1</sup>                                                                                                                                                                                                                           |
-| 1   | _(Optional)_ 4×20 I²C LCD display with HD44780 controller with PCF8574 I²C backpack ([AliExpress](https://www.aliexpress.com/item/1005006829045609)) <sup>1</sup>                                                                                                                                                                                                           |
-| 1   | _(Optional)_ Momentary push button for displaying up time and triggering a reset ([AliExpress](https://www.aliexpress.com/item/1005004066257419.html)) <sup>1</sup>                                                                                                                                                                                                         |
-| 1   | _(Optional)_ USB C extension cable (with right angle end) ([AliExpress](https://www.aliexpress.com/item/1005006584965187.html)) <sup>1</sup> + two M3*8                                                                                                                                                                                                                     |
-| —   | Miscellaneous: Ethernet cable, female dupont connection wires, small 4" .1" zip ties, solder <sup>2</sup>                                                                                                                                                                                                                                                                   |
-| —   | A PoE-capable switch, PoE injector, **or** USB-C power supply and USB-C cable                                                                                                                                                                                                                                                                                               |
+| Qty | Item                                                                                                                                                                                                                                                                                                                                                                         |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm) development board (with or without optional PoE Hat) <sup>1</sup>                                                                                                                                                                                                                                       |
+| 1   | GPS/GNSS module [Recommended: SparkFun GNSS Receiver Breakout - MAX-M10S (Qwiic)](https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html) <sup>1</sup>. Note: while some lower-cost generic modules ([AliExpress - NEO8M](https://www.aliexpress.com/item/1005003721844881.html)) are also supported, those including a PPS pin are strongly preferred |
+| 1   | GPS/GNSS antenna with SMA connector ([SparkFun GPS/GNSS Magnetic Mount Antenna - 3m (SMA)](https://www.sparkfun.com/products/14986)) <sup>1</sup>                                                                                                                                                                                                                            |
+| 1   | _(Optional)_ TF Card, formatted as FAT32, if you're using MQTT and want more than four messages queued should broker communications be down) <sup>1</sup>                                                                                                                                                                                                                    |
+| 1   | _(Optional)_ 4×20 I²C LCD display with HD44780 controller with PCF8574 I²C backpack ([AliExpress](https://www.aliexpress.com/item/1005006829045609)) <sup>1</sup>                                                                                                                                                                                                            |
+| 1   | _(Optional)_ Momentary push button for displaying up time and triggering a reset ([AliExpress](https://www.aliexpress.com/item/1005004066257419.html)) <sup>1</sup>                                                                                                                                                                                                          |
+| 1   | _(Optional)_ USB C extension cable (with right angle end) ([AliExpress](https://www.aliexpress.com/item/1005006584965187.html)) <sup>1</sup> + two M3*8                                                                                                                                                                                                                      |
+| —   | Miscellaneous: Ethernet cable, female dupont connection wires, small 4" .1" zip ties, solder <sup>2</sup>                                                                                                                                                                                                                                                                    |
+| —   | A PoE-capable switch, PoE injector, **or** USB-C power supply and USB-C cable                                                                                                                                                                                                                                                                                                |
 
 <!-- markdownlint-enable line-length table-column-style -->
 
@@ -284,16 +288,16 @@ idf.py -p COMx flash monitor
 > **Important:** Do not use `--force` to flash an image to an earlier revision
 > ESP32-P4.
 
-### OTA Updates (Over Ethernet)
+### Over The Ethernet (OTE) Updates
 
-Following the initial flash, OTA updates can be performed if
+Following the initial flash, OTE updates can be performed if
 `OTE_UPDATES_ENABLED` was set to `1` (Enabled) for the initial build and flash.
 
-A VS Code task **"ESP-IDF: OTA Upload over Ethernet"** is included in
+A VS Code task **"ESP-IDF: OTE Upload over Ethernet"** is included in
 `.vscode/tasks.json`. It builds the firmware and deploys it to the device over
 Ethernet using `espota.py`, so no USB cable is needed after the first flash.
 Alternatively, use the terminal command in
-[`Useful Power Shell Commands.txt`](./misc/usefull%20powershell%20commands.txt)
+[`UsefulPowerShellCommands.md`](./misc/UsefullPowerShellCommands.md)
 in the `misc` folder.
 
 ---

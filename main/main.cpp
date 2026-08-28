@@ -1,6 +1,5 @@
-// ESP32 Time Server v2.5.2
+// ESP32 Time Server v2.6
 // Copyright Rob Latour, 2026
-
 //
 // ESP32 Dev Board:     ESP32-P4-ETH https://www.waveshare.com/esp32-p4-eth.htm
 //                                   https://www.waveshare.com/wiki/ESP32-P4-ETH?srsltid=AfmBOoo6nZm5hsPAhtpzT6lWSHd2zhWNPM_mqgbNvyoESbjvbO7uykcH
@@ -31,7 +30,7 @@
 // LCD SDA            <- -> ESP32-P4-ETH GPIO8 (SDA)
 // LCD SLC/SCL        <- -> ESP32-P4-ETH GPIO7 (SCL)
 //
-// (optional) Up time momentary button to and from teh ESP32-P4-ETH board:
+// (optional) Uptime momentary button to and from teh ESP32-P4-ETH board:
 // one terminal       <- -> ESP32-P4-ETH GPI03
 // the other terminal <- -> ESP32-P4-ETH GND
 
@@ -41,7 +40,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <dirent.h>
+#include <sys/stat.h>
 #include <sys/time.h>
+#include <unistd.h>
+#include <algorithm>
+#include <string>
 #include <vector>
 
 #include "Arduino.h"
@@ -54,6 +58,7 @@ extern "C"
 {
 #include "esp_event.h"
 #include "esp_log.h"
+#include "ff.h"
 #include "esp_mac.h"
 #if MQTT_ENABLED
 #include "esp_heap_caps.h"
@@ -61,7 +66,11 @@ extern "C"
 #endif
 #include "esp_netif.h"
 #include "esp_timer.h"
+#include "esp_vfs_fat.h"
 #include "nvs.h"
+#include "driver/sdmmc_host.h"
+#include "sd_pwr_ctrl_by_on_chip_ldo.h"
+#include "sdmmc_cmd.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -75,6 +84,38 @@ extern "C"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 }
+
+// The following are used in the development of this program to determine the ideal stack sizes for various routines
+//
+// Unless you are modifying the programming code the options below should all be disabled (set to 0)
+//
+// In ESP32TimeServerSetting.h:
+//    set DEBUG_ENABLE to 1
+//    for the MQTT test, all of MQTT_ENABLED, MQTT_CLIENT_REPORTING_ENABLED, MQTT_MEMORY_REPORTING_ENABLED, MQTT_HISTORICAL_REPORTING_ENABLED should be set to 1 above
+//
+// The following is required when any of the STACK_SIZE_ENABLED options below are enabled:
+//    From the ESP-IDF Terminal enter the command
+//         idf.py menuconfig
+//         (the menu screen may take 30 seconds or more to load)
+//    Navigate to:
+//         Component config → FreeRTOS → Kernel
+//    use the down arrow key to scroll down to
+//        configUSE_TRACE_FACILITY
+//        enable FreeTOS trace facility by pressing the space bar (puts a star in the option [*] to signify it is enabled)
+//    press 'S' (enter) to save the change
+//    press the ESC key
+//    press 'Q' to quit
+//    code should now build, flash and run ok
+//
+//    Once the ideal stack size is known, the configUSE_TRACE_FACILITY should be disabled following the same process described above
+//
+#define CALCULATE_MQTT_SERVICE_TASK_STACK_SIZE_ENABLED 0   // 0 = Disabled; 1 = Enabled
+#define CALCULATE_OTE_SERVICE_TASK_STACK_SIZE_ENABLED 0    // 0 = Disabled; 1 = Enabled
+#define CALCULATE_GPS_TIME_SYNC_TASK_STACK_SIZE_ENABLED 0  // 0 = Disabled; 1 = Enabled
+#define CALCULATE_GPS_RECOVERY_TASK_STACK_SIZE_ENABLED 0   // 0 = Disabled; 1 = Enabled
+#define CALCULATE_PPS_DISCIPLINE_TASK_STACK_SIZE_ENABLED 0 // 0 = Disabled; 1 = Enabled
+#define CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED 0     // 0 = Disabled; 1 = Enabled
+#define CALCULATE_UPDATE_DISPLAY_TASK_STACK_SIZE_ENABLED 0 // 0 = Disabled; 1 = Enabled
 
 static constexpr gpio_num_t ETH_MDC_GPIO = GPIO_NUM_31;
 static constexpr gpio_num_t ETH_MDIO_GPIO = GPIO_NUM_52;
@@ -94,8 +135,8 @@ static constexpr EventBits_t ETH_CONNECTED_BIT = BIT0;
 static constexpr EventBits_t ETH_GOT_IP_BIT = BIT1;
 static constexpr EventBits_t ETH_GOT_IP6_BIT = BIT2;
 static constexpr size_t IP_ADDRESS_TEXT_SIZE = INET6_ADDRSTRLEN;
-static constexpr uint32_t OTA_Failure_Display_Time_Ms = 10000;
-static constexpr uint32_t OTA_Reboot_Delay_Ms = 5000;
+static constexpr uint32_t OTE_Failure_Display_Time_Ms = 10000;
+static constexpr uint32_t OTE_Reboot_Delay_Ms = 5000;
 
 static const char *TAG = "main_cpp";
 
@@ -114,20 +155,20 @@ static EventGroupHandle_t s_net_event_group = nullptr;
 static SemaphoreHandle_t s_time_mutex = nullptr;
 static SemaphoreHandle_t s_pps_semaphore = nullptr;
 static QueueHandle_t s_pps_timestamp_queue = nullptr;
-static SemaphoreHandle_t s_ota_mutex = nullptr;
+static SemaphoreHandle_t s_ote_mutex = nullptr;
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
 static SemaphoreHandle_t s_lcd_mutex = nullptr;
 #endif
 static SemaphoreHandle_t s_sync_state_mutex = nullptr;
 
 #if OTE_UPDATES_ENABLED
-static bool s_ota_in_progress = false;
-static bool s_ota_failed = false;
-static bool s_ota_success = false;
-static int s_ota_progress_percent = -1;
-static int64_t s_ota_failure_display_until_us = 0;
-static int64_t s_ota_reboot_at_us = 0;
-static char s_ota_error_reason[lcdColumns + 1] = "";
+static bool s_ote_in_progress = false;
+static bool s_ote_failed = false;
+static bool s_ote_success = false;
+static int s_ote_progress_percent = -1;
+static int64_t s_ote_failure_display_until_us = 0;
+static int64_t s_ote_reboot_at_us = 0;
+static char s_ote_error_reason[lcdColumns + 1] = "";
 #endif
 
 static std::atomic<bool> s_safe_guard_tripped{false};
@@ -185,10 +226,15 @@ static bool format_socket_address(const struct sockaddr_storage &address, char *
 
 #if MQTT_ENABLED
 
-static constexpr size_t MQTT_REPORT_QUEUE_DEPTH = 4; // be able to queue this many messages
-static constexpr size_t MQTT_REPORT_SIZE = 4096;     // maximum message size
-static constexpr size_t MQTT_CLIENT_LIMIT = 50;      // each message can contain request records for this many clients
+static constexpr size_t MQTT_REPORT_QUEUE_DEPTH = 4;
+static constexpr size_t MQTT_REPORT_SIZE = 4096;
+static constexpr size_t MQTT_CLIENT_LIMIT = 50;
+
+static constexpr size_t MQTT_MAX_REPORT_SIZE = 131072;
 static constexpr uint32_t MQTT_RESTART_PUBLISH_TIMEOUT_MS = 1000;
+static constexpr uint32_t MQTT_QUEUED_PUBLISH_DELAY_MS = 250;
+static constexpr char TF_MOUNT_POINT[] = "/tfcard";
+static constexpr char TF_QUEUE_DIRECTORY[] = "/tfcard/Queue";
 
 struct mqtt_client_request_t
 {
@@ -226,17 +272,20 @@ static std::atomic<time_t> s_last_gnss_unlock{0};
 
 #if MQTT_ENABLED && MQTT_CLIENT_REPORTING_ENABLED
 static std::atomic<bool> s_mqtt_client_table_overflown{false};
-static char s_mqtt_clients_json[2048] = "";
+static char s_mqtt_clients_json[MQTT_MAX_REPORT_SIZE] = "";
 static size_t s_mqtt_client_count = 0;
 #endif
 
 static int64_t s_mqtt_last_link_up_us = 0;
 static mqtt_report_t s_mqtt_reports[MQTT_REPORT_QUEUE_DEPTH]{};
-static char s_mqtt_payload[MQTT_REPORT_SIZE] = "";
+static char s_mqtt_payload[MQTT_MAX_REPORT_SIZE] = "";
 static size_t s_mqtt_report_head = 0;
 static std::atomic<size_t> s_mqtt_queued_messages_count{0};
 static uint32_t s_mqtt_queued_messages_discarded = 0;
-static mqtt_client_request_t s_mqtt_clients[MQTT_CLIENT_LIMIT]{};
+static mqtt_client_request_t s_mqtt_clients[MQTT_TF_Client_Limit]{};
+static std::atomic<bool> s_tf_queue_available{false};
+static sdmmc_card_t *s_tf_card = nullptr;
+static uint64_t s_tf_queue_next_sequence = 0;
 static uint32_t s_ntp_requests_this_second = 0;
 static uint32_t s_ntp_most_requests_per_second = 0;
 static time_t s_ntp_request_second = 0;
@@ -261,6 +310,8 @@ static std::atomic<bool> s_gnss_locked{false};
 static std::atomic<int64_t> s_gnss_lock_started_us{0};
 static std::atomic<int64_t> s_gnss_locked_total_us{0};
 static std::atomic<bool> s_pps_discipline_active{false};
+static std::atomic<bool> s_gps_recovery_in_progress{false};
+static std::atomic<int64_t> s_last_gps_recovery_us{0};
 
 enum class sync_fault_t : uint8_t
 {
@@ -301,8 +352,17 @@ static constexpr int64_t Sync_Stale_After_Us = static_cast<int64_t>(periodicGPSR
 static constexpr int64_t Gnss_Validity_Timeout_Us = 3500000LL;
 static constexpr int64_t Sync_Reboot_After_Us = 30LL * 60LL * 1000000LL;
 static constexpr int64_t Max_Sync_Attempt_Us = 10000000LL;
-static constexpr uint32_t Sync_Failures_Before_Runtime_Recovery = 3;
+static constexpr int64_t Gnss_Invalid_Reacquisition_After_Us = 30LL * 1000000LL;
+static constexpr int64_t Runtime_Gps_Recovery_Min_Interval_Us = 5LL * 60LL * 1000000LL;
+static constexpr uint32_t Sync_Failures_Before_Runtime_Recovery = 20;
 static constexpr uint32_t Sanity_Failures_Before_Fault = 2;
+static constexpr uint32_t GPS_Startup_Qualification_Duration_Ms = 15000UL;
+static constexpr uint32_t GPS_Startup_Qualification_PPS_Edges = 10;
+static constexpr int64_t GPS_Startup_Min_PPS_Interval_Us = 800000LL;
+static constexpr int64_t GPS_Startup_Max_PPS_Interval_Us = 1200000LL;
+static constexpr uint32_t GPS_Time_Sync_Task_Stack_Size = 4096;
+static constexpr uint32_t PPS_Discipline_Task_Stack_Size = 3072;
+static constexpr uint32_t GPS_Recovery_Task_Stack_Size = 12288;
 
 static constexpr char GPS_NVS_NAMESPACE[] = "gps_state";
 static constexpr char GPS_NVS_KEY_ID_TYPE[] = "id_type";
@@ -538,23 +598,6 @@ static sync_state_t get_sync_state_snapshot()
     }
 
     return snapshot;
-}
-
-static const char *sync_fault_to_display_text(sync_fault_t fault)
-{
-    switch (fault)
-    {
-    case sync_fault_t::pps_missing:
-        return "PPS missing";
-    case sync_fault_t::gps_invalid:
-        return "GPS invalid";
-    case sync_fault_t::sanity_mismatch:
-        return "Sanity check";
-    case sync_fault_t::sync_stale:
-        return "Sync stale";
-    default:
-        return "";
-    }
 }
 
 static bool first_sync_candidates_are_plausible(const sync_candidate_t &first_candidate, const sync_candidate_t &second_candidate)
@@ -1072,7 +1115,7 @@ static bool check_uptime_request()
     {
         clear_gps_nvs_data();
 #if DEBUG_ENABLED
-        ESP_LOGI(TAG, "Up time/reset button restart requested: cleared stored GPS NVS values.");
+        ESP_LOGI(TAG, "Uptime/reset button restart requested: cleared stored GPS NVS values.");
 #endif
 #if MQTT_ENABLED
         mqtt_publish_final_report();
@@ -1837,39 +1880,22 @@ static void pps_discipline_task(void *parameter)
             }
         }
 
-        /*
+#if CALCULATE_PPS_DISCIPLINE_TASK_STACK_SIZE_ENABLED
 
-        // The following code is used to determine the ideal stack size for this method (pps_discipline_task)
+        // The following code is used to determine the ideal stack size for this method
         // it only needs to be setup and run once
         //
         // NOTE 1: Specific to pps_discipline_task to get a valid result the code below needed to be running
-        //         with the Stack report usage display being examined when anPPS event happens (every second)
+        //         with the stack report usage display being examined when a PPS event happens (every second)
         //
         // NOTE 2: Results were taken after a minute to allow the numbers to settle in
         //
-        // NOTE 3: The following is required to have the code directly below compile (build):
-        //         From the ESP-IDF Terminal enter the command
-        //            idf.py menuconfig
-        //            (the menu screen may take 30 seconds or more to load)
-        //         Navigate to:
-        //            Component config → FreeRTOS → Kernel
-        //         use the down arrow key to scroll down to
-        //            configUSE_TRACE_FACILITY
-        //            enable FreeTOS trace facility by pressing the space bar (puts a star in the option [*] to signify it is enabled)
-        //         press 'S' (enter) to save the change
-        //         press the ESC key
-        //         press 'Q' to quit
-        //         code should now build, flash and run ok
-        //
-        //         once the ideal stack size is known, the code can below can be commented out and the configUSE_TRACE_FACILITY disabled to save RAM
-        //
-        // NOTE 4: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
+        // NOTE 3: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
         //
         // Below is the code that has now already been used to calculate the ideal stack size:
         //
-
-        // *** Hard‑coded stack size originally used when creating the task (bytes) ***
-        const size_t allocated_bytes = 16384; // <-- set this to the value passed to xTaskCreatePinnedToCore
+        // Configured task stack; rerun this measurement after changing PPS processing.
+        const size_t allocated_bytes = PPS_Discipline_Task_Stack_Size;
 
         // high watermark is returned in words
         UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
@@ -1877,6 +1903,7 @@ static void pps_discipline_task(void *parameter)
 
         // compute peak usage and suggested size (25% margin)
         size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
+
         size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
 
         ESP_LOGI("pps_discipline_task",
@@ -1887,10 +1914,81 @@ static void pps_discipline_task(void *parameter)
                  (unsigned)suggested_bytes);
 
         // Results of this testing (when a PPS event was underway):
-        //
-        // pps_discipline_task: Stack report: Allocated=16384 bytes, HighWater=540 bytes unused, PeakUsage=15844 bytes, Suggested=19805 bytes
+        // pps_discipline_task: Stack report: Allocated=22000 bytes, HighWater=20148 bytes unused, PeakUsage=1852 bytes, Suggested=2315 bytes
 
-        */
+#endif
+    }
+}
+
+static bool wait_for_gps_startup_qualification()
+{
+    int64_t valid_started_us = 0;
+    int64_t last_pps_us = 0;
+    uint32_t stable_pps_edges = 0;
+
+    clear_pps_events();
+
+#if DEBUG_ENABLED
+    ESP_LOGI(TAG, "Qualifying GNSS and PPS stability before startup.");
+#endif
+
+    for (;;)
+    {
+        int64_t now_us = esp_timer_get_time();
+        if (!current_gnss_timing_is_valid())
+        {
+            valid_started_us = 0;
+            last_pps_us = 0;
+            stable_pps_edges = 0;
+            clear_pps_events();
+            vTaskDelay(pdMS_TO_TICKS(250));
+            continue;
+        }
+
+        if (valid_started_us == 0)
+        {
+            valid_started_us = now_us;
+            display_line(1, "GNSS Time Valid");
+            display_line(2, "Qualifying PPS");
+        }
+
+        if (xSemaphoreTake(s_pps_semaphore, 0) == pdTRUE)
+        {
+            now_us = esp_timer_get_time();
+            if (last_pps_us == 0 ||
+                ((now_us - last_pps_us) >= GPS_Startup_Min_PPS_Interval_Us &&
+                 (now_us - last_pps_us) <= GPS_Startup_Max_PPS_Interval_Us))
+            {
+                stable_pps_edges++;
+            }
+            else
+            {
+                stable_pps_edges = 1;
+            }
+            last_pps_us = now_us;
+
+            uint32_t displayed_pps_edges = std::min(stable_pps_edges, GPS_Startup_Qualification_PPS_Edges);
+            char pps_edges_line[lcdColumns + 1];
+            snprintf(pps_edges_line,
+                     sizeof(pps_edges_line),
+                     "Edges %lu of %lu",
+                     static_cast<unsigned long>(displayed_pps_edges),
+                     static_cast<unsigned long>(GPS_Startup_Qualification_PPS_Edges));
+            display_line(1, "PPS Stabilizing");
+            display_line(2, pps_edges_line);
+        }
+
+        if ((now_us - valid_started_us) >= static_cast<int64_t>(GPS_Startup_Qualification_Duration_Ms) * 1000LL &&
+            stable_pps_edges >= GPS_Startup_Qualification_PPS_Edges)
+        {
+#if DEBUG_ENABLED
+            ESP_LOGI(TAG, "GNSS and PPS startup qualification complete after %lu stable PPS edges.",
+                     static_cast<unsigned long>(stable_pps_edges));
+#endif
+            return true;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
@@ -2027,9 +2125,23 @@ static void setup_gps()
             time_valid = s_gps.getTimeValid();
             ubx_fix_ready = (fix_type == 3 || fix_type == 4 || fix_type == 5) && gnss_fix_ok && date_valid && time_valid;
 
-            char satellites_line[lcdColumns + 1];
-            snprintf(satellites_line, sizeof(satellites_line), "Satellites: %u of 4", static_cast<unsigned int>(satellites_used));
-            display_line(2, satellites_line);
+            if ((fix_type == 3 || fix_type == 4) && satellites_used >= 4 && !gnss_fix_ok)
+            {
+                display_line(1, "3D Fix Detected");
+                display_line(2, "Verifying GNSS");
+            }
+            else if (ubx_fix_ready)
+            {
+                display_line(1, "GNSS Time Valid");
+                display_line(2, "Qualifying PPS");
+            }
+            else
+            {
+                char satellites_line[lcdColumns + 1];
+                snprintf(satellites_line, sizeof(satellites_line), "Satellites %u of 4", static_cast<unsigned int>(satellites_used));
+                display_line(1, "Acquiring GNSS");
+                display_line(2, satellites_line);
+            }
         }
 
         uint32_t now_ms = millis();
@@ -2075,10 +2187,8 @@ static void setup_gps()
                          static_cast<unsigned long>(millis() - wait_start_ms));
 #endif
 
-            display_line(1, "GPS fix obtained");
-            display_line(2, ubx_fix_ready ? fix_type_to_text(fix_type) : "NMEA fallback");
-            vTaskDelay(pdMS_TO_TICKS(5000));
-            return;
+            if (wait_for_gps_startup_qualification())
+                return;
         }
 
         if (last_status_log_ms == 0 || (now_ms - last_status_log_ms) >= 5000UL)
@@ -2115,6 +2225,7 @@ static void setup_gps()
 }
 
 #if MQTT_ENABLED
+
 static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
 {
     size_t address_size = 0;
@@ -2145,7 +2256,7 @@ static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
     if (s_ntp_requests_this_second > s_ntp_most_requests_per_second)
         s_ntp_most_requests_per_second = s_ntp_requests_this_second;
 
-#if MQTT_ENABLED && MQTT_CLIENT_REPORTING_ENABLED
+#if MQTT_CLIENT_REPORTING_ENABLED
 
     for (size_t index = 0; index < s_mqtt_client_count; index++)
     {
@@ -2158,7 +2269,7 @@ static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
         }
     }
 
-    if (s_mqtt_client_count < MQTT_CLIENT_LIMIT)
+    if (s_mqtt_client_count < (s_tf_queue_available.load() ? MQTT_TF_Client_Limit : MQTT_CLIENT_LIMIT))
     {
         mqtt_client_request_t &client = s_mqtt_clients[s_mqtt_client_count];
         client.address_family = source_address.ss_family;
@@ -2179,6 +2290,7 @@ static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
 #endif
 
     s_mqtt_client_table_overflown = true;
+
 #endif
 
     xSemaphoreGive(s_mqtt_stats_mutex);
@@ -2186,6 +2298,11 @@ static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
 
 static void mqtt_format_time(time_t value, char *output, size_t output_size)
 {
+    // Returns local time using the ISO-8601 time format = for example 2026-08-25T21:57:14-0400
+    // ISO 8601 is an international standard for formatting dates and times from largest to smallest unit
+    // concluding with an offset indicating how many hours and minutes that specific time is ahead of or behind GMT/UTC.
+    // YYYY-MM-DDTHH:mm:ss—Z
+
     if (value <= 0)
     {
         if (output_size > 0)
@@ -2226,13 +2343,81 @@ static bool mqtt_publish_report(const char *payload)
     if (!s_mqtt_connected.load())
         return false;
 
-    return esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, 0) >= 0;
+    return esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain) >= 0;
+}
+
+static std::vector<std::string> mqtt_tf_queue_files()
+{
+    std::vector<std::string> files;
+    DIR *directory = opendir(TF_QUEUE_DIRECTORY);
+    if (directory == nullptr)
+        return files;
+
+    dirent *entry = nullptr;
+    while ((entry = readdir(directory)) != nullptr)
+    {
+        unsigned long high = 0;
+        unsigned long low = 0;
+        if (strlen(entry->d_name) == 12 && sscanf(entry->d_name, "R%7lX.%3lX", &high, &low) == 2)
+            files.emplace_back(std::string(TF_QUEUE_DIRECTORY) + "/" + entry->d_name);
+    }
+    closedir(directory);
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
+static void mqtt_tf_refresh_queue_count()
+{
+    s_mqtt_queued_messages_count.store(mqtt_tf_queue_files().size());
+}
+
+static bool mqtt_tf_write_report(const char *payload)
+{
+    char path[128] = "";
+    char temporary_path[128] = "";
+    uint64_t sequence = s_tf_queue_next_sequence++;
+    unsigned long high = static_cast<unsigned long>(sequence >> 12);
+    unsigned long low = static_cast<unsigned long>(sequence & 0xFFF);
+    snprintf(path, sizeof(path), "%s/R%07lX.%03lX", TF_QUEUE_DIRECTORY, high, low);
+    snprintf(temporary_path, sizeof(temporary_path), "%s/R%07lX.TMP", TF_QUEUE_DIRECTORY, high);
+    FILE *file = fopen(temporary_path, "wb");
+    if (file == nullptr)
+        return false;
+
+    const size_t length = strlen(payload);
+    bool written = fwrite(payload, 1, length, file) == length && fflush(file) == 0 && fsync(fileno(file)) == 0;
+    fclose(file);
+    if (!written || rename(temporary_path, path) != 0)
+    {
+        unlink(temporary_path);
+        return false;
+    }
+    mqtt_tf_refresh_queue_count();
+    return true;
 }
 
 static void mqtt_enqueue_report(const char *payload)
 {
     if (MQTT_QOS == 0)
         return;
+
+    if (s_tf_queue_available.load())
+    {
+        while (!mqtt_tf_write_report(payload))
+        {
+            std::vector<std::string> files = mqtt_tf_queue_files();
+            if (files.empty() || unlink(files.front().c_str()) != 0)
+            {
+#if DEBUG_ENABLED
+                ESP_LOGE(TAG, "Unable to queue MQTT report on TF card");
+#endif
+                return;
+            }
+            s_mqtt_queued_messages_discarded++;
+            mqtt_tf_refresh_queue_count();
+        }
+        return;
+    }
 
     if (s_mqtt_queued_messages_count.load() == MQTT_REPORT_QUEUE_DEPTH)
     {
@@ -2246,17 +2431,69 @@ static void mqtt_enqueue_report(const char *payload)
     s_mqtt_queued_messages_count++;
 }
 
+static bool mqtt_publish_queued_report(const char *payload)
+{
+    if (MQTT_QOS != 2)
+        return mqtt_publish_report(payload);
+
+    s_mqtt_restart_publish_id.store(-1);
+    s_mqtt_restart_publish_completed.store(false);
+    int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain);
+    if (message_id < 0)
+        return false;
+
+    s_mqtt_restart_publish_id.store(message_id);
+    TickType_t wait_started = xTaskGetTickCount();
+    while (!s_mqtt_restart_publish_completed.load() && s_mqtt_connected.load() &&
+           (xTaskGetTickCount() - wait_started) < pdMS_TO_TICKS(MQTT_RESTART_PUBLISH_TIMEOUT_MS))
+        vTaskDelay(pdMS_TO_TICKS(10));
+    bool published = s_mqtt_restart_publish_completed.load();
+    s_mqtt_restart_publish_id.store(-1);
+    return published;
+}
+
 static void mqtt_send_queued_messages()
 {
-    if (MQTT_QOS == 0)
+    if (MQTT_QOS == 0 || !s_mqtt_connected.load() || s_mqtt_queued_messages_count.load() == 0)
         return;
 
-    while (s_mqtt_queued_messages_count.load() > 0 && s_mqtt_connected.load())
+    if (!s_tf_queue_available.load())
     {
-        if (!mqtt_publish_report(s_mqtt_reports[s_mqtt_report_head].payload))
-            return;
-        s_mqtt_report_head = (s_mqtt_report_head + 1) % MQTT_REPORT_QUEUE_DEPTH;
-        s_mqtt_queued_messages_count--;
+        if (mqtt_publish_queued_report(s_mqtt_reports[s_mqtt_report_head].payload))
+        {
+#if DEBUG_ENABLED
+            ESP_LOGI(TAG, "Published queued message (RAM): %.200s", s_mqtt_reports[s_mqtt_report_head].payload);
+#endif
+            s_mqtt_report_head = (s_mqtt_report_head + 1) % MQTT_REPORT_QUEUE_DEPTH;
+            s_mqtt_queued_messages_count--;
+        }
+        return;
+    }
+
+    std::vector<std::string> files = mqtt_tf_queue_files();
+    if (files.empty())
+    {
+        mqtt_tf_refresh_queue_count();
+        return;
+    }
+
+    FILE *file = fopen(files.front().c_str(), "rb");
+    if (file == nullptr)
+        return;
+    std::string payload;
+    char buffer[512];
+    size_t read = 0;
+    while ((read = fread(buffer, 1, sizeof(buffer), file)) > 0)
+        payload.append(buffer, read);
+    bool read_failed = ferror(file) != 0;
+    fclose(file);
+    if (!read_failed && mqtt_publish_queued_report(payload.c_str()))
+    {
+#if DEBUG_ENABLED
+        ESP_LOGW(TAG, "Published queued message (TF): %.200s", payload.c_str());
+#endif
+        if (unlink(files.front().c_str()) == 0)
+            mqtt_tf_refresh_queue_count();
     }
 }
 
@@ -2296,6 +2533,24 @@ static void mqtt_build_report(char *payload, size_t payload_size)
     {
         most_requests_per_second = s_ntp_most_requests_per_second;
         s_ntp_most_requests_per_second = s_ntp_requests_this_second;
+        std::sort(s_mqtt_clients, s_mqtt_clients + s_mqtt_client_count,
+                  [](const mqtt_client_request_t &left, const mqtt_client_request_t &right)
+                  {
+                      auto address_family_order = [](sa_family_t address_family)
+                      {
+                          if (address_family == AF_INET)
+                              return 0;
+                          if (address_family == AF_INET6)
+                              return 1;
+                          return 2;
+                      };
+                      int left_order = address_family_order(left.address_family);
+                      int right_order = address_family_order(right.address_family);
+                      if (left_order != right_order)
+                          return left_order < right_order;
+                      size_t address_size = left.address_family == AF_INET ? sizeof(struct in_addr) : sizeof(struct in6_addr);
+                      return memcmp(left.address, right.address, address_size) < 0;
+                  });
         for (size_t index = 0; index < s_mqtt_client_count; index++)
         {
             struct sockaddr_storage address{};
@@ -2447,7 +2702,7 @@ static void mqtt_publish_final_report()
 
     s_mqtt_restart_publish_id.store(-1);
     s_mqtt_restart_publish_completed.store(false);
-    int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, 0);
+    int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain);
     if (message_id < 0)
         return;
 
@@ -2463,21 +2718,211 @@ static void mqtt_publish_final_report()
 static void mqtt_service_task(void *parameter)
 {
     bool previously_connected = false;
+    TickType_t next_report = xTaskGetTickCount() + pdMS_TO_TICKS(MQTTReportingPeriod * 1000UL);
     for (;;)
     {
-        vTaskDelay(pdMS_TO_TICKS(MQTTReportingPeriod * 1000UL));
         bool connected = s_mqtt_connected.load();
         if (connected && !previously_connected)
             esp_mqtt_client_publish(s_mqtt_client, s_mqtt_status_topic, "online", 0, MQTT_QOS, 1);
         previously_connected = connected;
-        mqtt_send_queued_messages();
-        mqtt_build_report(s_mqtt_payload, sizeof(s_mqtt_payload));
-        if (!mqtt_publish_report(s_mqtt_payload))
-            mqtt_enqueue_report(s_mqtt_payload);
+
+        if (connected && s_mqtt_queued_messages_count.load() > 0)
+            mqtt_send_queued_messages();
+
+        if (xTaskGetTickCount() >= next_report)
+        {
+            mqtt_build_report(s_mqtt_payload, sizeof(s_mqtt_payload));
+            if (!mqtt_publish_report(s_mqtt_payload))
+                mqtt_enqueue_report(s_mqtt_payload);
+            next_report += pdMS_TO_TICKS(MQTTReportingPeriod * 1000UL);
+        }
+        vTaskDelay(pdMS_TO_TICKS(MQTT_QUEUED_PUBLISH_DELAY_MS));
+
+#if CALCULATE_MQTT_SERVICE_TASK_STACK_SIZE_ENABLED
+
+        // The following code is used to determine the ideal stack size for this method
+        // it only needs to be setup and run once
+        //
+        // NOTE 1: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
+        //
+        // Below is the code that has now already been used to calculate the ideal stack size:
+        //
+
+        // *** Hard‑coded stack size originally used when creating the task (bytes) ***
+        const size_t allocated_bytes = 22000; // <-- set this to the value passed to xTaskCreatePinnedToCore
+
+        // high watermark is returned in words
+        UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
+        size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
+
+        // compute peak usage and suggested size (25% margin)
+        size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
+        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
+
+        ESP_LOGI("mqtt_service_task",
+                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
+                 (unsigned)allocated_bytes,
+                 (unsigned)high_watermark_bytes,
+                 (unsigned)peak_usage_bytes,
+                 (unsigned)suggested_bytes);
+
+        // Results of this testing:
+        // mqtt_service_task: Stack report: Allocated=22000 bytes, HighWater=19976 bytes unused, PeakUsage=2024 bytes, Suggested=2530 bytes
+
+#endif
     }
 }
 
+static void mqtt_log_tf_directory(const char *path)
+{
+#if DEBUG_ENABLED
+    DIR *directory = opendir(path);
+    if (directory == nullptr)
+        return;
+    dirent *entry = nullptr;
+    while ((entry = readdir(directory)) != nullptr)
+    {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        std::string child_path = std::string(path) + "/" + entry->d_name;
+        struct stat information{};
+        if (stat(child_path.c_str(), &information) != 0)
+            continue;
+        ESP_LOGI(TAG, "%s", child_path.c_str());
+        if (S_ISDIR(information.st_mode))
+            mqtt_log_tf_directory(child_path.c_str());
+    }
+    closedir(directory);
+#else
+    (void)path;
 #endif
+}
+
+#endif
+
+static void setup_mqtt_tf_queue()
+{
+
+#if MQTT_ENABLED
+
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    sd_pwr_ctrl_ldo_config_t ldo_config{};
+    ldo_config.ldo_chan_id = 4;
+    sd_pwr_ctrl_handle_t power_control = nullptr;
+    esp_err_t result = sd_pwr_ctrl_new_on_chip_ldo(&ldo_config, &power_control);
+    if (result != ESP_OK)
+    {
+#if DEBUG_ENABLED
+        ESP_LOGW(TAG, "Unable to enable TF card power: %s. Queued MQTT messages will be stored in ram.", esp_err_to_name(result));
+#endif
+        return;
+    }
+    host.pwr_ctrl_handle = power_control;
+    auto cleanup_power_control = [&power_control]()
+    {
+        if (power_control != nullptr)
+        {
+            sd_pwr_ctrl_del_on_chip_ldo(power_control);
+            power_control = nullptr;
+        }
+    };
+
+    sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot.width = 4;
+    slot.clk = static_cast<gpio_num_t>(TFCardClockPin);
+    slot.cmd = static_cast<gpio_num_t>(TFCardCommandPin);
+    slot.d0 = static_cast<gpio_num_t>(TFCardData0Pin);
+    slot.d1 = static_cast<gpio_num_t>(TFCardData1Pin);
+    slot.d2 = static_cast<gpio_num_t>(TFCardData2Pin);
+    slot.d3 = static_cast<gpio_num_t>(TFCardData3Pin);
+    slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+    esp_vfs_fat_mount_config_t mount_config{};
+    mount_config.format_if_mount_failed = false;
+    mount_config.max_files = 4;
+    mount_config.allocation_unit_size = 16 * 1024;
+
+    result = esp_vfs_fat_sdmmc_mount(TF_MOUNT_POINT, &host, &slot, &mount_config, &s_tf_card);
+    if (result != ESP_OK)
+    {
+#if DEBUG_ENABLED
+        ESP_LOGW(TAG, "TF card unavailable: %s. Queued MQTT messages will be stored in ram.", esp_err_to_name(result));
+#endif
+        cleanup_power_control();
+        return;
+    }
+
+    FATFS *filesystem = nullptr;
+    DWORD free_clusters = 0;
+    if (f_getfree("0:", &free_clusters, &filesystem) != FR_OK || filesystem == nullptr || filesystem->fs_type != FS_FAT32)
+    {
+#if DEBUG_ENABLED
+        ESP_LOGW(TAG, "TF card is not FAT32. Queued MQTT messages will be stored in ram.");
+#endif
+        esp_vfs_fat_sdcard_unmount(TF_MOUNT_POINT, s_tf_card);
+        s_tf_card = nullptr;
+        cleanup_power_control();
+        return;
+    }
+
+    mqtt_log_tf_directory(TF_MOUNT_POINT);
+    bool queue_directory_created = mkdir(TF_QUEUE_DIRECTORY, 0775) == 0;
+    if (!queue_directory_created && errno != EEXIST)
+    {
+#if DEBUG_ENABLED
+        ESP_LOGW(TAG, "Unable to create TF MQTT queue directory. Queued MQTT messages will be stored in ram.");
+#endif
+        esp_vfs_fat_sdcard_unmount(TF_MOUNT_POINT, s_tf_card);
+        s_tf_card = nullptr;
+        cleanup_power_control();
+        return;
+    }
+#if DEBUG_ENABLED
+    if (queue_directory_created)
+        ESP_LOGI(TAG, "%s", TF_QUEUE_DIRECTORY);
+#endif
+
+    char probe_path[128] = "";
+    snprintf(probe_path, sizeof(probe_path), "%s/PROBE.TMP", TF_QUEUE_DIRECTORY);
+    FILE *probe = fopen(probe_path, "wb+");
+    char probe_value = 0;
+    bool usable = probe != nullptr && fwrite("T", 1, 1, probe) == 1 && fflush(probe) == 0 &&
+                  fseek(probe, 0, SEEK_SET) == 0 && fread(&probe_value, 1, 1, probe) == 1 && probe_value == 'T';
+    if (probe != nullptr)
+        fclose(probe);
+    unlink(probe_path);
+    if (!usable)
+    {
+#if DEBUG_ENABLED
+        ESP_LOGW(TAG, "TF card read/write verification failed. Queued MQTT messages will be stored in ram.");
+#endif
+        esp_vfs_fat_sdcard_unmount(TF_MOUNT_POINT, s_tf_card);
+        s_tf_card = nullptr;
+        cleanup_power_control();
+        return;
+    }
+
+    std::vector<std::string> files = mqtt_tf_queue_files();
+    for (const std::string &path : files)
+    {
+        unsigned long high = 0;
+        unsigned long low = 0;
+        if (sscanf(path.c_str(), "/tfcard/Queue/R%7lX.%3lX", &high, &low) == 2)
+        {
+            uint64_t sequence = (static_cast<uint64_t>(high) << 12) | low;
+            if (sequence >= s_tf_queue_next_sequence)
+                s_tf_queue_next_sequence = sequence + 1;
+        }
+    }
+    s_mqtt_queued_messages_count.store(files.size());
+    s_tf_queue_available.store(true);
+#if DEBUG_ENABLED
+    ESP_LOGI(TAG, "TF card MQTT queue enabled");
+    if (files.empty())
+        ESP_LOGI(TAG, "No queued messages found");
+#endif
+
+#endif
+}
 
 static void setup_mqtt()
 {
@@ -2495,7 +2940,7 @@ static void setup_mqtt()
         s_mqtt_setup_failed.store(true);
         return;
     }
-    snprintf(s_mqtt_uri, sizeof(s_mqtt_uri), "mqtt://%s:%u", MQTTServerIPAddress, static_cast<unsigned int>(MQTT_Port));
+    snprintf(s_mqtt_uri, sizeof(s_mqtt_uri), "mqtt://%s:%u", MQTTServerIPAddress, static_cast<unsigned int>(MQTTPort));
     snprintf(s_mqtt_report_topic, sizeof(s_mqtt_report_topic), "%s/report", MQTTTopic);
     snprintf(s_mqtt_status_topic, sizeof(s_mqtt_status_topic), "%s/status", MQTTTopic);
     esp_mqtt_client_config_t config{};
@@ -2523,7 +2968,8 @@ static void setup_mqtt()
         s_mqtt_setup_failed.store(true);
         return;
     }
-    if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", 6144, nullptr, 5, nullptr, 0) != pdPASS)
+
+    if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", 2530, nullptr, 5, nullptr, 0) != pdPASS)
         s_mqtt_setup_failed.store(true);
 
 #endif
@@ -2541,8 +2987,8 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
         display_line(1, "Ethernet started");
         break;
     case ARDUINO_EVENT_ETH_CONNECTED:
-#if MQTT_ENABLED
         s_ethernet_connected.store(true);
+#if MQTT_ENABLED
         s_eth_link_connected_us.store(esp_timer_get_time());
 #endif
 #if DEBUG_ENABLED
@@ -2585,8 +3031,8 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
         display_selected_ip_address(static_cast<int>(time(nullptr) % 10));
         break;
     case ARDUINO_EVENT_ETH_DISCONNECTED:
-#if MQTT_ENABLED
         s_ethernet_connected.store(false);
+#if MQTT_ENABLED
         mqtt_note_ethernet_disconnected();
 #endif
 #if DEBUG_ENABLED
@@ -2600,8 +3046,8 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
         display_line(3, "");
         break;
     case ARDUINO_EVENT_ETH_STOP:
-#if MQTT_ENABLED
         s_ethernet_connected.store(false);
+#if MQTT_ENABLED
         mqtt_note_ethernet_disconnected();
 #endif
 #if DEBUG_ENABLED
@@ -2740,20 +3186,15 @@ void write_opening_messages_to_the_console()
     Serial.begin(serialMonitorSpeed);
     vTaskDelay(pdMS_TO_TICKS(100));
 
+#if DEBUG_ENABLED
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Server v2.5.2");
-
-#if !DEBUG_ENABLED
-    ESP_LOGW(TAG, "DEBUG_ENABLED is turned off in the settings");
-    ESP_LOGW(TAG, "No further application generate console displays will be generated");
-    return;
-#endif
+    ESP_LOGI(TAG, "ESP32 Time Server v2.6");
 
 #if UPTIME_RESTART_BUTTON_ENABLED
-    ESP_LOGI(TAG, "Up time / Reset button support is enabled in the settings");
+    ESP_LOGI(TAG, "Uptime / Reset button support is enabled in the settings");
 #else
-    ESP_LOGW(TAG, "Up time / Reset button support is disabled in the settings");
+    ESP_LOGW(TAG, "Uptime / Reset button support is disabled in the settings");
 #endif
 
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
@@ -2766,6 +3207,33 @@ void write_opening_messages_to_the_console()
     ESP_LOGI(TAG, "Over the Ethernet update support is enabled in the settings");
 #else
     ESP_LOGW(TAG, "Over the Ethernet update support is disabled in the settings");
+#endif
+
+#if MQTT_ENABLED
+    ESP_LOGI(TAG, "MQTT is enabled in the settings");
+
+#if MQTT_CLIENT_REPORTING_ENABLED
+    ESP_LOGI(TAG, "MQTT client reporting is enabled in the settings");
+#else
+    ESP_LOGW(TAG, "MQTT client reporting is disabled in the settings");
+#endif
+
+#if MQTT_MEMORY_REPORTING_ENABLED
+    ESP_LOGI(TAG, "MQTT memory reporting is enabled in the settings");
+#else
+    ESP_LOGW(TAG, "MQTT memory reporting is disabled in the settings");
+#endif
+
+#if MQTT_HISTORICAL_REPORTING_ENABLED
+    ESP_LOGI(TAG, "MQTT historical reporting is enabled in the settings");
+#else
+    ESP_LOGW(TAG, "MQTT historical reporting is disabled in the settings");
+#endif
+
+#else
+    ESP_LOGW(TAG, "MQTT support is disabled in the settings");
+#endif
+
 #endif
 }
 
@@ -2785,7 +3253,7 @@ void create_mutexes_and_semaphores(void)
     s_time_mutex = xSemaphoreCreateMutex();
     s_pps_semaphore = xSemaphoreCreateBinary();
     s_pps_timestamp_queue = xQueueCreate(1, sizeof(int64_t));
-    s_ota_mutex = xSemaphoreCreateMutex();
+    s_ote_mutex = xSemaphoreCreateMutex();
     s_sync_state_mutex = xSemaphoreCreateMutex();
 }
 
@@ -2874,8 +3342,9 @@ static void configure_mac_address()
 #endif
         return;
     }
-
+#if DEBUG_ENABLED
     ESP_LOGI(TAG, "MAC address changed to : %s", MACAddress);
+#endif
 }
 
 void setup_ethernet_connection()
@@ -2891,7 +3360,7 @@ void setup_ethernet_connection()
 
 #if OTE_UPDATES_ENABLED
 
-static void ota_copy_reason(char *destination, size_t destination_size, const char *reason)
+static void OTE_copy_reason(char *destination, size_t destination_size, const char *reason)
 {
     if (destination_size == 0)
         return;
@@ -2905,51 +3374,51 @@ static void ota_copy_reason(char *destination, size_t destination_size, const ch
     snprintf(destination, destination_size, "%s", reason);
 }
 
-static void ota_set_running_state(unsigned int progress, unsigned int total)
+static void OTE_set_running_state(unsigned int progress, unsigned int total)
 {
-    if (xSemaphoreTake(s_ota_mutex, portMAX_DELAY) == pdTRUE)
+    if (xSemaphoreTake(s_ote_mutex, portMAX_DELAY) == pdTRUE)
     {
-        s_ota_in_progress = true;
-        s_ota_failed = false;
-        s_ota_success = false;
-        s_ota_failure_display_until_us = 0;
-        s_ota_reboot_at_us = 0;
-        s_ota_error_reason[0] = '\0';
-        s_ota_progress_percent = total == 0 ? 0 : static_cast<int>((progress * 100U) / total);
-        xSemaphoreGive(s_ota_mutex);
+        s_ote_in_progress = true;
+        s_ote_failed = false;
+        s_ote_success = false;
+        s_ote_failure_display_until_us = 0;
+        s_ote_reboot_at_us = 0;
+        s_ote_error_reason[0] = '\0';
+        s_ote_progress_percent = total == 0 ? 0 : static_cast<int>((progress * 100U) / total);
+        xSemaphoreGive(s_ote_mutex);
     }
 }
 
-static void ota_set_failure_state(const char *reason)
+static void OTE_set_failure_state(const char *reason)
 {
-    if (xSemaphoreTake(s_ota_mutex, portMAX_DELAY) == pdTRUE)
+    if (xSemaphoreTake(s_ote_mutex, portMAX_DELAY) == pdTRUE)
     {
-        s_ota_in_progress = false;
-        s_ota_failed = true;
-        s_ota_success = false;
-        s_ota_failure_display_until_us = esp_timer_get_time() + static_cast<int64_t>(OTA_Failure_Display_Time_Ms) * 1000LL;
-        s_ota_reboot_at_us = 0;
-        ota_copy_reason(s_ota_error_reason, sizeof(s_ota_error_reason), reason);
-        xSemaphoreGive(s_ota_mutex);
+        s_ote_in_progress = false;
+        s_ote_failed = true;
+        s_ote_success = false;
+        s_ote_failure_display_until_us = esp_timer_get_time() + static_cast<int64_t>(OTE_Failure_Display_Time_Ms) * 1000LL;
+        s_ote_reboot_at_us = 0;
+        OTE_copy_reason(s_ote_error_reason, sizeof(s_ote_error_reason), reason);
+        xSemaphoreGive(s_ote_mutex);
     }
 }
 
-static void ota_set_success_state()
+static void OTE_set_success_state()
 {
-    if (xSemaphoreTake(s_ota_mutex, portMAX_DELAY) == pdTRUE)
+    if (xSemaphoreTake(s_ote_mutex, portMAX_DELAY) == pdTRUE)
     {
-        s_ota_in_progress = false;
-        s_ota_failed = false;
-        s_ota_success = true;
-        s_ota_progress_percent = 100;
-        s_ota_failure_display_until_us = 0;
-        s_ota_reboot_at_us = esp_timer_get_time() + static_cast<int64_t>(OTA_Reboot_Delay_Ms) * 1000LL;
-        s_ota_error_reason[0] = '\0';
-        xSemaphoreGive(s_ota_mutex);
+        s_ote_in_progress = false;
+        s_ote_failed = false;
+        s_ote_success = true;
+        s_ote_progress_percent = 100;
+        s_ote_failure_display_until_us = 0;
+        s_ote_reboot_at_us = esp_timer_get_time() + static_cast<int64_t>(OTE_Reboot_Delay_Ms) * 1000LL;
+        s_ote_error_reason[0] = '\0';
+        xSemaphoreGive(s_ote_mutex);
     }
 }
 
-static void format_ota_error_reason(ota_error_t error, char *buffer, size_t buffer_size)
+static void format_ote_error_reason(ota_error_t error, char *buffer, size_t buffer_size)
 {
     const char *update_error = Update.errorString();
     if ((error == OTA_BEGIN_ERROR || error == OTA_END_ERROR) && update_error != nullptr && strcmp(update_error, "No Error") != 0)
@@ -2981,74 +3450,74 @@ static void format_ota_error_reason(ota_error_t error, char *buffer, size_t buff
     }
 }
 
-static bool render_ota_display()
+static bool render_ote_display()
 {
-    bool ota_in_progress = false;
-    bool ota_failed = false;
-    bool ota_success = false;
-    int ota_progress_percent = -1;
-    int64_t ota_failure_display_until_us = 0;
-    int64_t ota_reboot_at_us = 0;
-    char ota_error_reason[lcdColumns + 1] = "";
+    bool OTE_in_progress = false;
+    bool OTE_failed = false;
+    bool OTE_success = false;
+    int OTE_progress_percent = -1;
+    int64_t OTE_failure_display_until_us = 0;
+    int64_t OTE_reboot_at_us = 0;
+    char ote_error_reason[lcdColumns + 1] = "";
 
-    if (xSemaphoreTake(s_ota_mutex, portMAX_DELAY) != pdTRUE)
+    if (xSemaphoreTake(s_ote_mutex, portMAX_DELAY) != pdTRUE)
         return false;
 
-    ota_in_progress = s_ota_in_progress;
-    ota_failed = s_ota_failed;
-    ota_success = s_ota_success;
-    ota_progress_percent = s_ota_progress_percent;
-    ota_failure_display_until_us = s_ota_failure_display_until_us;
-    ota_reboot_at_us = s_ota_reboot_at_us;
-    ota_copy_reason(ota_error_reason, sizeof(ota_error_reason), s_ota_error_reason);
-    xSemaphoreGive(s_ota_mutex);
+    OTE_in_progress = s_ote_in_progress;
+    OTE_failed = s_ote_failed;
+    OTE_success = s_ote_success;
+    OTE_progress_percent = s_ote_progress_percent;
+    OTE_failure_display_until_us = s_ote_failure_display_until_us;
+    OTE_reboot_at_us = s_ote_reboot_at_us;
+    OTE_copy_reason(ote_error_reason, sizeof(ote_error_reason), s_ote_error_reason);
+    xSemaphoreGive(s_ote_mutex);
 
     int64_t now_us = esp_timer_get_time();
-    if (!ota_in_progress && !ota_failed && !ota_success)
+    if (!OTE_in_progress && !OTE_failed && !OTE_success)
         return false;
 
-    if (ota_failed && ota_failure_display_until_us > 0 && now_us >= ota_failure_display_until_us)
+    if (OTE_failed && OTE_failure_display_until_us > 0 && now_us >= OTE_failure_display_until_us)
     {
-        if (xSemaphoreTake(s_ota_mutex, portMAX_DELAY) == pdTRUE)
+        if (xSemaphoreTake(s_ote_mutex, portMAX_DELAY) == pdTRUE)
         {
-            s_ota_failed = false;
-            s_ota_progress_percent = -1;
-            s_ota_error_reason[0] = '\0';
-            s_ota_failure_display_until_us = 0;
-            xSemaphoreGive(s_ota_mutex);
+            s_ote_failed = false;
+            s_ote_progress_percent = -1;
+            s_ote_error_reason[0] = '\0';
+            s_ote_failure_display_until_us = 0;
+            xSemaphoreGive(s_ote_mutex);
         }
         return false;
     }
 
-    if (ota_in_progress)
+    if (OTE_in_progress)
     {
         char progress_line[lcdColumns + 1];
-        snprintf(progress_line, sizeof(progress_line), "%d%% complete", ota_progress_percent < 0 ? 0 : ota_progress_percent);
-        display_line(1, "OTA update started");
+        snprintf(progress_line, sizeof(progress_line), "%d%% complete", OTE_progress_percent < 0 ? 0 : OTE_progress_percent);
+        display_line(1, "OTE update started");
         display_line(2, progress_line);
         display_line(3, "Uploading firmware");
         return true;
     }
 
-    if (ota_success)
+    if (OTE_success)
     {
-        (void)ota_reboot_at_us;
-        display_line(1, "OTA successful");
+        (void)OTE_reboot_at_us;
+        display_line(1, "OTE successful");
         display_line(2, "100% complete");
         display_line(3, "Rebooting in 5 sec");
         return true;
     }
 
-    display_line(1, "OTA failed");
-    display_line(2, ota_error_reason[0] == '\0' ? "Unknown reason" : ota_error_reason);
+    display_line(1, "OTE failed");
+    display_line(2, ote_error_reason[0] == '\0' ? "Unknown reason" : ote_error_reason);
     display_line(3, "Resuming in 10 sec");
     return true;
 }
 
-static void ota_service_task(void *parameter)
+static void ote_service_task(void *parameter)
 {
 #if DEBUG_ENABLED
-    ESP_LOGI(TAG, "OTA service task started on port %u", static_cast<unsigned int>(OTA_Port));
+    ESP_LOGI(TAG, "OTE service task started on port %u", static_cast<unsigned int>(OTEPort));
 #endif
 
     // uint32_t last_heartbeat_ms = 0;   // uncomment this line and the block below if you want to see a heart beat message in the console log every 10 seconds
@@ -3065,10 +3534,10 @@ static void ota_service_task(void *parameter)
 
             #if DEBUG_ENABLED
                 ESP_LOGI(TAG,
-                         "OTA heartbeat: online=%s, ip=%s, in_progress=%s",
+                         "OTE heartbeat: online=%s, ip=%s, in_progress=%s",
                          Network.isOnline() ? "true" : "false",
                          s_ip_address[0] == '\0' ? "<none>" : s_ip_address,
-                         s_ota_in_progress ? "true" : "false");
+                         s_ote_in_progress ? "true" : "false");
 
             last_heartbeat_ms = now_ms;
         }
@@ -3076,15 +3545,15 @@ static void ota_service_task(void *parameter)
 
         bool should_reboot = false;
         TickType_t loop_delay_ticks = pdMS_TO_TICKS(50);
-        if (xSemaphoreTake(s_ota_mutex, portMAX_DELAY) == pdTRUE)
+        if (xSemaphoreTake(s_ote_mutex, portMAX_DELAY) == pdTRUE)
         {
-            bool ota_idle = !s_ota_in_progress && !s_ota_failed && !s_ota_success;
-            if (ota_idle)
+            bool OTE_idle = !s_ote_in_progress && !s_ote_failed && !s_ote_success;
+            if (OTE_idle)
                 loop_delay_ticks = pdMS_TO_TICKS(200);
 
-            if (s_ota_success && s_ota_reboot_at_us > 0 && esp_timer_get_time() >= s_ota_reboot_at_us)
+            if (s_ote_success && s_ote_reboot_at_us > 0 && esp_timer_get_time() >= s_ote_reboot_at_us)
                 should_reboot = true;
-            xSemaphoreGive(s_ota_mutex);
+            xSemaphoreGive(s_ote_mutex);
         }
 
         vTaskDelay(loop_delay_ticks);
@@ -3096,31 +3565,15 @@ static void ota_service_task(void *parameter)
             esp_restart();
         }
 
-        /*
+#if CALCULATE_OTE_SERVICE_TASK_STACK_SIZE_ENABLED
 
-        // The following code is used to determine the ideal stack size for this method (ota_service_task)
+        // The following code is used to determine the ideal stack size for this method
         // it only needs to be setup and run once
         //
-        // NOTE 1: Specific to ota_service_task to get a valid result the code below needed to be running
-        //         with the Stack report usage display being examined when an OTA update was underway
+        // NOTE 1: Specific to ote_service_task to get a valid result the code below needed to be running
+        //         with the stack report usage display being examined when an OTE update was underway
         //
-        // NOTE 2: The following is required to have the code directly below compile (build):
-        //         From the ESP-IDF Terminal enter the command
-        //            idf.py menuconfig
-        //            (the menu screen may take 30 seconds or more to load)
-        //         Navigate to:
-        //            Component config → FreeRTOS → Kernel
-        //         use the down arrow key to scroll down to
-        //            configUSE_TRACE_FACILITY
-        //            enable FreeTOS trace facility by pressing the space bar (puts a star in the option [*] to signify it is enabled)
-        //         press 'S' (enter) to save the change
-        //         press the ESC key
-        //         press 'Q' to quit
-        //         code should now build, flash and run ok
-        //
-        //         once the ideal stack size is known, the code can below can be commented out and the configUSE_TRACE_FACILITY disabled to save RAM
-        //
-        // NOTE 3: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
+        // NOTE 2: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
         //
         // Below is the code that has now already been used to calculate the ideal stack size:
         //
@@ -3136,33 +3589,32 @@ static void ota_service_task(void *parameter)
         size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
         size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
 
-        ESP_LOGI("ota_service_task",
+        ESP_LOGI("ote_service_task",
                  "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
                  (unsigned)allocated_bytes,
                  (unsigned)high_watermark_bytes,
                  (unsigned)peak_usage_bytes,
                  (unsigned)suggested_bytes);
 
-        // Results of this testing (when an OTA update was underway):
-        //
-        // ota_service_task: Stack report: Allocated=16384 bytes, HighWater=13536 bytes unused, PeakUsage=2848 bytes, Suggested=3560 bytes
+        // Results of this testing:
+        // ote_service_task: Stack report: Allocated=16384 bytes, HighWater=13536 bytes unused, PeakUsage=2848 bytes, Suggested=3560 bytes
 
-        */
+#endif
     }
 }
 
 static void setup_ota()
 {
-    if (xSemaphoreTake(s_ota_mutex, portMAX_DELAY) == pdTRUE)
+    if (xSemaphoreTake(s_ote_mutex, portMAX_DELAY) == pdTRUE)
     {
-        s_ota_in_progress = false;
-        s_ota_failed = false;
-        s_ota_success = false;
-        s_ota_progress_percent = -1;
-        s_ota_failure_display_until_us = 0;
-        s_ota_reboot_at_us = 0;
-        s_ota_error_reason[0] = '\0';
-        xSemaphoreGive(s_ota_mutex);
+        s_ote_in_progress = false;
+        s_ote_failed = false;
+        s_ote_success = false;
+        s_ote_progress_percent = -1;
+        s_ote_failure_display_until_us = 0;
+        s_ote_reboot_at_us = 0;
+        s_ote_error_reason[0] = '\0';
+        xSemaphoreGive(s_ote_mutex);
     };
 
     bool network_begin_ok = Network.begin();
@@ -3177,37 +3629,37 @@ static void setup_ota()
     ESP_LOGI(TAG,
              "Configuring ArduinoOTA: host=%s, port=%u, password_length=%u",
              DeviceName,
-             static_cast<unsigned int>(OTA_Port),
-             static_cast<unsigned int>(strlen(OTAPassword)));
+             static_cast<unsigned int>(OTEPort),
+             static_cast<unsigned int>(strlen(OTEPassword)));
 #endif
 
-    ArduinoOTA.setPort(OTA_Port);
+    ArduinoOTA.setPort(OTEPort);
     ArduinoOTA.setHostname(DeviceName);
-    ArduinoOTA.setPassword(OTAPassword);
+    ArduinoOTA.setPassword(OTEPassword);
     ArduinoOTA.setRebootOnSuccess(false);
     ArduinoOTA.onStart([]()
                        {
-                           ota_set_running_state(0, 1);
+                           OTE_set_running_state(0, 1);
 #if DEBUG_ENABLED
-                           ESP_LOGI(TAG, "OTA update started");
+                           ESP_LOGI(TAG, "OTE update started");
 #endif
                        });
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
-                          { ota_set_running_state(progress, total); });
+                          { OTE_set_running_state(progress, total); });
     ArduinoOTA.onEnd([]()
                      {
-                         ota_set_success_state();
+                         OTE_set_success_state();
 #if DEBUG_ENABLED
-                         ESP_LOGI(TAG, "OTA update completed successfully");
+                         ESP_LOGI(TAG, "OTE update completed successfully");
 #endif
                      });
     ArduinoOTA.onError([](ota_error_t error)
                        {
                            char reason[lcdColumns + 1];
-                           format_ota_error_reason(error, reason, sizeof(reason));
-                           ota_set_failure_state(reason);
+                           format_ote_error_reason(error, reason, sizeof(reason));
+                           OTE_set_failure_state(reason);
 #if DEBUG_ENABLED
-                           ESP_LOGE(TAG, "OTA update failed: %s", reason);
+                           ESP_LOGE(TAG, "OTE update failed: %s", reason);
 #endif
                        });
 #if DEBUG_ENABLED
@@ -3220,22 +3672,23 @@ static void setup_ota()
     ESP_LOGI(TAG,
              "ArduinoOTA.begin() returned, listener should be available on %s:%u",
              s_ip_address[0] == '\0' ? DeviceName : s_ip_address,
-             static_cast<unsigned int>(OTA_Port));
+             static_cast<unsigned int>(OTEPort));
 #endif
 }
 
 #endif
 
-void setup_for_ota_updates()
+void setup_for_ote_updates()
 {
 #if OTE_UPDATES_ENABLED
 
-    display_line(1, "Setup OTA");
+    display_line(1, "Setup OTE");
     display_line(2, "");
     setup_ota();
 
     // note: this task is intentionally pinned to core 0 (as opposed to tskNO_AFFINITY)
-    xTaskCreatePinnedToCore(ota_service_task, "ota_service", 3560, nullptr, 5, nullptr, 0);
+    xTaskCreatePinnedToCore(ote_service_task, "ote_service", 3560, nullptr, 5, nullptr, 0);
+
 #endif
 }
 
@@ -3378,6 +3831,33 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
     return true;
 }
 
+static void gps_runtime_recovery_task(void *parameter)
+{
+    TaskHandle_t sync_task_handle = reinterpret_cast<TaskHandle_t>(parameter);
+
+    setup_gps();
+
+#if CALCULATE_GPS_RECOVERY_TASK_STACK_SIZE_ENABLED
+    // Configured recovery stack; run with a forced runtime recovery to measure the complete path.
+    UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(nullptr);
+    size_t high_watermark_bytes = static_cast<size_t>(high_watermark_words) * sizeof(StackType_t);
+    size_t peak_usage_bytes = GPS_Recovery_Task_Stack_Size > high_watermark_bytes ? GPS_Recovery_Task_Stack_Size - high_watermark_bytes : 0;
+    size_t suggested_bytes = static_cast<size_t>(static_cast<double>(peak_usage_bytes) * 1.25);
+#if DEBUG_ENABLED
+    ESP_LOGI("gps_recovery_task",
+             "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
+             static_cast<unsigned int>(GPS_Recovery_Task_Stack_Size),
+             static_cast<unsigned int>(high_watermark_bytes),
+             static_cast<unsigned int>(peak_usage_bytes),
+             static_cast<unsigned int>(suggested_bytes));
+#endif
+#endif
+
+    s_gps_recovery_in_progress.store(false);
+    xTaskNotifyGive(sync_task_handle);
+    vTaskDelete(nullptr);
+}
+
 static void handle_runtime_sync_failure(sync_fault_t fault, time_t update_delta, uint32_t retry_delay_ms)
 {
     uint32_t failure_count = sync_state_note_failure(fault, update_delta);
@@ -3387,11 +3867,37 @@ static void handle_runtime_sync_failure(sync_fault_t fault, time_t update_delta,
 
     if (failure_count >= Sync_Failures_Before_Runtime_Recovery && (failure_count % Sync_Failures_Before_Runtime_Recovery) == 0)
     {
+        int64_t now_us = esp_timer_get_time();
+        int64_t last_recovery_us = s_last_gps_recovery_us.load();
+        bool recovery_due = last_recovery_us == 0 || (now_us - last_recovery_us) >= Runtime_Gps_Recovery_Min_Interval_Us;
+
+        if (recovery_due && !s_gps_recovery_in_progress.exchange(true))
+        {
 #if DEBUG_ENABLED
-        ESP_LOGW(TAG, "Runtime GPS recovery attempt after %lu consecutive sync failures.", static_cast<unsigned long>(failure_count));
+            ESP_LOGW(TAG, "Runtime GPS recovery attempt after %lu consecutive sync failures.", static_cast<unsigned long>(failure_count));
 #endif
-        setup_gps();
-        sync_state_reset_failure_counters();
+            s_last_gps_recovery_us.store(now_us);
+            TaskHandle_t sync_task_handle = xTaskGetCurrentTaskHandle();
+            BaseType_t created = xTaskCreatePinnedToCore(gps_runtime_recovery_task,
+                                                         "gps_recovery",
+                                                         GPS_Recovery_Task_Stack_Size,
+                                                         sync_task_handle,
+                                                         15,
+                                                         nullptr,
+                                                         tskNO_AFFINITY);
+            if (created == pdPASS)
+            {
+                ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+                sync_state_reset_failure_counters();
+            }
+            else
+            {
+                s_gps_recovery_in_progress.store(false);
+#if DEBUG_ENABLED
+                ESP_LOGE(TAG, "Unable to create the GPS recovery task.");
+#endif
+            }
+        }
     }
 
     if (snapshot.last_successful_sync_us > 0 && (esp_timer_get_time() - snapshot.last_successful_sync_us) > Sync_Reboot_After_Us)
@@ -3544,17 +4050,17 @@ static void gps_time_sync_task(void *parameter)
                 }
                 else
                 {
-                    // provide for a two second tolerance to avoid false positive reporting on the loss of a gnss lock
                     if (invalid_started_us == 0)
                         invalid_started_us = esp_timer_get_time();
 
-                    if ((esp_timer_get_time() - invalid_started_us) >= 2000000)
+                    if ((esp_timer_get_time() - invalid_started_us) >= Gnss_Invalid_Reacquisition_After_Us)
                     {
                         sync_state_note_gnss_validity(false);
 
 #if DEBUG_ENABLED
                         ESP_LOGW(TAG,
-                                 "GNSS timing invalid for more than 2 seconds; starting immediate reacquisition.");
+                                 "GNSS timing invalid for more than %lu seconds; starting reacquisition.",
+                                 static_cast<unsigned long>(Gnss_Invalid_Reacquisition_After_Us / 1000000LL));
 #endif
 
                         break;
@@ -3564,6 +4070,44 @@ static void gps_time_sync_task(void *parameter)
                 vTaskDelay(pdMS_TO_TICKS(1000));
             }
         }
+
+#if CALCULATE_GPS_TIME_SYNC_TASK_STACK_SIZE_ENABLED
+
+        // The following code is used to determine the ideal stack size for this method
+        //
+        // NOTE 1: Specific to gps_time_sync_task to get a valid result the code below needed to be running
+        //         with the stack report usage display being examined when gnss task sync happens
+        //
+        // NOTE 2: Results were taken after a minute to allow the numbers to settle in
+        //
+        // NOTE 3: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
+        //
+        // Below is the code that has now already been used to calculate the ideal stack size:
+        //
+
+        // Configured task stack; rerun this measurement after changing sync or recovery handling.
+        const size_t allocated_bytes = GPS_Time_Sync_Task_Stack_Size;
+
+        // high watermark is returned in words
+        UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
+        size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
+
+        // compute peak usage and suggested size (25% margin)
+        size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
+
+        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
+
+        ESP_LOGI("gps_time_sync_task",
+                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
+                 (unsigned)allocated_bytes,
+                 (unsigned)high_watermark_bytes,
+                 (unsigned)peak_usage_bytes,
+                 (unsigned)suggested_bytes);
+
+        // Results of this testing (when a PPS event was underway):
+        // gps_time_sync_task: Stack report: Allocated=22000 bytes, HighWater=20108 bytes unused, PeakUsage=1892 bytes, Suggested=2365 bytes
+
+#endif
     }
 }
 
@@ -3580,11 +4124,15 @@ void setup_the_gps()
     display_line(1, "Getting date & time");
     display_line(2, "");
 
-    xTaskCreatePinnedToCore(gps_time_sync_task, "gps_time_sync", 16384, nullptr, 15, nullptr, tskNO_AFFINITY);
-    xTaskCreatePinnedToCore(pps_discipline_task, "pps_discipline", 19805, nullptr, 14, nullptr, tskNO_AFFINITY);
+    xTaskCreatePinnedToCore(gps_time_sync_task, "gps_time_sync", GPS_Time_Sync_Task_Stack_Size, nullptr, 15, nullptr, tskNO_AFFINITY);
+
+    xTaskCreatePinnedToCore(pps_discipline_task, "pps_discipline", PPS_Discipline_Task_Stack_Size, nullptr, 14, nullptr, tskNO_AFFINITY);
 
     while (!s_time_has_been_set.load())
         vTaskDelay(pdMS_TO_TICKS(100));
+
+    display_line(1, "Time Synchronized");
+    display_line(2, "PPS Disciplined");
 }
 
 static void ntp_server_task(void *parameter)
@@ -3790,60 +4338,48 @@ static void ntp_server_task(void *parameter)
                 ESP_LOGI(TAG, "NTP -> %s", source_address);
 #endif
         }
-        /*
 
-          // The following code is used to determine the ideal stack size for this method (ntp_server_task)
-          // it only needs to be setup and run once
-          //
-          // NOTE 1: specific to ntp_server_task, the Stack report below will only be issued if an NTP request is received.
-          //         accordingly, to generate a NTP request for testing the following can be entered via the Windows powershell command line:
-          //              w32tm /stripchart /computer:192.168.1.24 /samples:5 /dataonly
-          //
-          // NOTE 2: The following is required to have the code directly below compile (build):
-          //         From the ESP-IDF Terminal enter the command
-          //            idf.py menuconfig
-          //            (the menu screen may take 30 seconds or more to load)
-          //         Navigate to:
-          //            Component config → FreeRTOS → Kernel
-          //         use the down arrow key to scroll down to
-          //            configUSE_TRACE_FACILITY
-          //            enable FreeTOS trace facility by pressing the space bar (puts a star in the option [*] to signify it is enabled)
-          //         press 'S' (enter) to save the change
-          //         press the ESC key
-          //         press 'Q' to quit
-          //         code should now build, flash and run ok
-          //
-          //         once the ideal stack size is known, the code can below can be commented out and the configUSE_TRACE_FACILITY disabled to save RAM
-          //
-          // NOTE 3: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
-          //
-          // Below is the code that has now already been used to calculate the ideal stack size:
-          //
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
 
-          // *** Hard‑coded stack size originally used when creating the task (bytes) ***
-          const size_t allocated_bytes = 16384; // <-- set this to the value passed to xTaskCreatePinnedToCore
+        // The following code is used to determine the ideal stack size for this method
+        // it only needs to be setup and run once
+        //
+        // NOTE 1: specific to ntp_server_task, the stack report below will only be issued if an NTP request is received.
+        //
+        // NOTE 2: a NTP stress test should be run when monitoring this task
+        //         for this the open source program (also my me) may be used: https://github.com/roblatour/TimeServerStressTest
+        //         recommended usage: Start a single stress test, for a duration of 5 seconds, with 100 Concurrent requests
+        //         (you may see a higher than normal failure rate, but this will drop when CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED and DEBUG_ENABLED are both disabled)
+        //
+        // NOTE 2: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
+        //
+        // Below is the code that has now already been used to calculate the ideal stack size:
+        //
 
-          // high watermark is returned in words
-          UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
-          size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
+        // *** Hard‑coded stack size originally used when creating the task (bytes) ***
+        const size_t allocated_bytes = 22000; // <-- set this to the value passed to xTaskCreatePinnedToCore
 
-          // compute peak usage and suggested size (25% margin)
-          size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
-          size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
+        // high watermark is returned in words
+        UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
+        size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
 
-          ESP_LOGI("ntp_server_task",
-                   "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
-                   (unsigned)allocated_bytes,
-                   (unsigned)high_watermark_bytes,
-                   (unsigned)peak_usage_bytes,
-                   (unsigned)suggested_bytes);
+        // compute peak usage and suggested size (25% margin)
+        size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
+        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
 
-          vTaskDelay(pdMS_TO_TICKS(50));
+        ESP_LOGI("ntp_server_task",
+                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
+                 (unsigned)allocated_bytes,
+                 (unsigned)high_watermark_bytes,
+                 (unsigned)peak_usage_bytes,
+                 (unsigned)suggested_bytes);
 
-          // Results of this testing:
-          //
-          //  ntp_server_task: Stack report: Allocated=19920 bytes, HighWater=17772 bytes unused, PeakUsage=2148 bytes, Suggested=2685 bytes
-  */
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        // Results of this testing:
+        // ntp_server_task: Stack report: Allocated=22000 bytes, HighWater=19800 bytes unused, PeakUsage=2200 bytes, Suggested=2750 bytes
+
+#endif
     }
 }
 
@@ -3861,7 +4397,7 @@ static void update_display_task(void *parameter)
     {
 
 #if OTE_UPDATES_ENABLED
-        if (render_ota_display())
+        if (render_ote_display())
         {
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
@@ -3882,33 +4418,45 @@ static void update_display_task(void *parameter)
 #endif
 
             sync_state_t sync_snapshot = get_sync_state_snapshot();
-            bool sync_fault_active = s_safe_guard_tripped.load() || sync_snapshot.holdover_mode;
 
             int required_top_line_message = 0;
 
             // Determine message code for the first line:
-            // 0 none;                                               "ESP32 Time Server   "
-            // 1 Time sync underway (normal periodic behaviour);     "ESP32 Time Server * "
-            // 2 MQTT setup failed;                                  "ESP32 Time Server[1]"
-            // 3 MQTT there are queued items;                        "ESP32 Time Server[2]"
-            // 4 Sanity check mismatch;                              "ESP32 Time Server[3]"
-            // 5 PPS missing;                                        "ESP32 Time Server[4]"
-            // 6 GNSS missing or invalid;                            "ESP32 Time Server[5]"
-            // 7 GNSS snyc stale;                                    "ESP32 Time Server[6]"
-            // 8 GNSS unlocked;                                      "ESP32 Time Server[7]"
-            // 10  used for when the button is pressed;              "ESP32 Time Server's "
+            //
+            // Standard 1st line display value .................................... "ESP32 Time Server   "
+            // Ethernet not connected ............................................. "ESP32 Time Server[1]"
+            // MQTT setup failed .................................................. "ESP32 Time Server[2]"
+            // MQTT there are queued items ........................................ "ESP32 Time Server[3]"
+            // Sanity check mismatch .............................................. "ESP32 Time Server[4]"
+            // PPS missing ........................................................ "ESP32 Time Server[5]"
+            // GNSS missing or invalid ............................................ "ESP32 Time Server[6]"
+            // GNSS snyc stale .................................................... "ESP32 Time Server[7]"
+            // GNSS unlocked ...................................................... "ESP32 Time Server[8]"
+
+            // 98 used for when the button is pressed (normal periodic behaviour) . "ESP32 Time Server's "
+            // 99 Time sync underway (normal periodic behaviour)                  . "ESP32 Time Server * "
+
+            // Regarding: sync_snapshot.holdover_mode
+            // In timekeeping terminology, holdover is the state where a time server continues providing time from its internal
+            // oscillator after losing its external reference (in this case, GNSS/GPS). The device is no longer actively
+            // synchronized but is "coasting" on its last-known good time.
+            // Holderover mode is not expressly reported on the LCD's top line as it is implied when
+            // Sanity check mismatch, PPS missing, GNSS missing or invalid, GNSS snyc stale, or GNSS unlocked
+            // are reported.
 
             if (s_time_setting_in_progress.load())
             {
-                required_top_line_message = 1;
+                required_top_line_message = 99;
             }
             else
             {
+                if (!s_ethernet_connected.load())
+                    required_top_line_message = 1;
 #if MQTT_ENABLED
-                if (s_mqtt_setup_failed.load())
-                    required_top_line_message = 2;
                 else if (s_mqtt_queued_messages_count.load() > 0)
                     required_top_line_message = 3;
+                else if (s_mqtt_setup_failed.load() || !s_mqtt_connected.load())
+                    required_top_line_message = 2;
 #endif
                 switch (sync_snapshot.fault)
                 {
@@ -3929,14 +4477,15 @@ static void update_display_task(void *parameter)
                     break;
 
                 default:
-                    required_top_line_message = s_gnss_locked.load() ? 0 : 8;
+                    if (required_top_line_message == 0)
+                        required_top_line_message = s_gnss_locked.load() ? 0 : 8;
                     break;
                 }
             }
 
 #if UPTIME_RESTART_BUTTON_ENABLED
             if (display_uptime_seconds_counter > 0)
-                required_top_line_message = 10;
+                required_top_line_message = 98;
 #endif
 
             // Update top line only if it has changed
@@ -3946,7 +4495,7 @@ static void update_display_task(void *parameter)
                 memset(top_line_message, ' ', sizeof(top_line_message));
                 memcpy(top_line_message, "ESP32 Time Server", 17);
 
-                if (required_top_line_message == 1)
+                if (required_top_line_message == 99)
                 {
                     top_line_message[18] = '*';
                 }
@@ -3985,7 +4534,7 @@ static void update_display_task(void *parameter)
 
                 memcpy(centered + left_pad, uptime_buffer, uptime_len);
 
-                display_line(1, "up time is");
+                display_line(1, "uptime is");
                 display_line(2, centered);
                 display_line(3, " days hrs:mins:secs");
                 display_uptime_seconds_counter--;
@@ -4003,33 +4552,17 @@ static void update_display_task(void *parameter)
         }
         vTaskDelay(pdMS_TO_TICKS(50));
 
-        /*
+#if CALCULATE_UPDATE_DISPLAY_TASK_STACK_SIZE_ENABLED
 
-          // The following code is used to determine the ideal stack size for this method (update_display_task)
-          // it only needs to be setup and run once
-          //
-          // NOTE 1: The following is required to have the code directly below compile (build):
-          //         From the ESP-IDF Terminal enter the command
-          //            idf.py menuconfig
-          //            (the menu screen may take 30 seconds or more to load)
-          //         Navigate to:
-          //            Component config → FreeRTOS → Kernel
-          //         use the down arrow key to scroll down to
-          //            configUSE_TRACE_FACILITY
-          //            enable FreeTOS trace facility by pressing the space bar (puts a star in the option [*] to signify it is enabled)
-          //         press 'S' (enter) to save the change
-          //         press the ESC key
-          //         press 'Q' to quit
-          //         code should now build, flash and run ok
-          //
-          //         once the ideal stack size is known, the code can below can be commented out and the configUSE_TRACE_FACILITY disabled to save RAM
-          //
-          // NOTE 2: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
-          //
-          // Below is the code that has now already been used to calculate the ideal stack size:
+        // The following code is used to determine the ideal stack size for this method
+        // it only needs to be setup and run once
+        //
+        // NOTE 1: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
+        //
+        // Below is the code that has now already been used to calculate the ideal stack size:
 
         // *** Hard‑coded stack size originally used when creating the task (bytes) ***
-        const size_t allocated_bytes = 16384; // <-- set this to the value passed to xTaskCreatePinnedToCore
+        const size_t allocated_bytes = 22000; // <-- set this to the value passed to xTaskCreatePinnedToCore
 
         // high watermark is returned in words
         UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
@@ -4047,9 +4580,9 @@ static void update_display_task(void *parameter)
                  (unsigned)suggested_bytes);
 
         // Results of this testing:
-        //
-        //   update_display_task: Stack report: Allocated=16384 bytes, HighWater=14416 bytes unused, PeakUsage=1968 bytes, Suggested=2460 byte
-        */
+        // update_display_task: Stack report: Allocated=22000 bytes, HighWater=20032 bytes unused, PeakUsage=1968 bytes, Suggested=2460 bytes
+
+#endif
     }
 #else
     for (;;)
@@ -4070,6 +4603,8 @@ extern "C" void app_main()
 
     write_opening_messages_to_the_console();
 
+    setup_mqtt_tf_queue();
+
     setup_NVM_storage();
 
     create_mutexes_and_semaphores();
@@ -4080,13 +4615,13 @@ extern "C" void app_main()
 
     setup_ethernet_connection();
 
-    setup_for_ota_updates();
+    setup_for_ote_updates();
 
     setup_the_gps();
 
     setup_mqtt();
 
-    xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", 2685, nullptr, 20, nullptr, tskNO_AFFINITY);
+    xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", 2750, nullptr, 20, nullptr, tskNO_AFFINITY);
 
-    xTaskCreatePinnedToCore(update_display_task, "display_service", 2460, nullptr, 10, nullptr, tskNO_AFFINITY);
+    xTaskCreatePinnedToCore(update_display_task, "display_service", 2750, nullptr, 10, nullptr, tskNO_AFFINITY);
 }
