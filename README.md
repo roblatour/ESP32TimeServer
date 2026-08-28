@@ -60,7 +60,7 @@ A full write-up of the original (version 1) project is available on
 - **IPv6 support** - (version 2.5) IPv6 support has been added.
 - **MQTT publishing** — (version 2.5) optional MQTT publishing of time server
   stats is now available. For more information see
-  [this document](misc/esp32timeserver_json_doc.md)
+  [misc/esp32timeserver_json_doc.md](misc/esp32timeserver_json_doc.md)
 - **Improved GNSS Satellite lock and PPS discipline tracking and recovery** -
   (version 2.5) with returned results being tagged as Stratum 16 (undefined)
   until a lost lock and/or failed PPS discipline is recovered.
