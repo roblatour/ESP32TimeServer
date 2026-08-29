@@ -132,9 +132,10 @@ static constexpr bool rebootIfSanityCheckFails = true; // Further to the above,
                                                        //   and then will providing the esp32's time, unsynced by the GPS, moving forward.
 
 // (required) GPS support; do not change these unless you know what you are doing
-static constexpr int TXPin = 16;  // note: prior to release 2.4 pin 16 was used for TX
-static constexpr int RXPin = 17;  // note: prior to release 2.4 pin 17 was used for RX
-static constexpr int PPSPin = 18; // note: prior to release 2.4 pin 18 was used for PPS
+static constexpr int TXPin = 22;  // note: prior to release 2.4 pin 16 was used for TX
+static constexpr int RXPin = 21;  // note: prior to release 2.4 pin 17 was used for RX
+static constexpr int PPSPin = 20; // note: prior to release 2.4 pin 18 was used for PPS
+
 
 // (required) pin definitions for the Waveshare ESP32-P4-ETH; if your using this board do not change these
 static constexpr int TFCardCommandPin = 44;
