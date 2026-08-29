@@ -136,7 +136,6 @@ static constexpr int TXPin = 22;  // note: prior to release 2.4 pin 16 was used 
 static constexpr int RXPin = 21;  // note: prior to release 2.4 pin 17 was used for RX
 static constexpr int PPSPin = 20; // note: prior to release 2.4 pin 18 was used for PPS
 
-
 // (required) pin definitions for the Waveshare ESP32-P4-ETH; if your using this board do not change these
 static constexpr int TFCardCommandPin = 44;
 static constexpr int TFCardClockPin = 43;
