@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.6
+// ESP32 Time Server v2.7
 // Copyright Rob Latour, 2026
 //
 // ESP32 Dev Board:     ESP32-P4-ETH https://www.waveshare.com/esp32-p4-eth.htm
@@ -131,6 +131,9 @@ static constexpr gpio_num_t LCD_I2C_SCL_GPIO = GPIO_NUM_7;
 static constexpr uint16_t NTP_PORT = 123;
 static constexpr size_t NTP_PACKET_SIZE = 48;
 static constexpr uint64_t NTP_EPOCH_OFFSET = 2208988800ULL;
+static constexpr int8_t NTP_PRECISION_EXPONENT = -13;
+static constexpr uint32_t NTP_ROOT_DISPERSION = 66;
+static constexpr size_t NTP_SOCKET_BATCH_LIMIT = 16;
 static constexpr EventBits_t ETH_CONNECTED_BIT = BIT0;
 static constexpr EventBits_t ETH_GOT_IP_BIT = BIT1;
 static constexpr EventBits_t ETH_GOT_IP6_BIT = BIT2;
@@ -174,8 +177,8 @@ static char s_ote_error_reason[lcdColumns + 1] = "";
 static std::atomic<bool> s_safe_guard_tripped{false};
 static std::atomic<bool> s_time_setting_in_progress{false};
 static std::atomic<bool> s_time_has_been_set{false};
-static uint64_t s_ntp_reference_time_64 = 0;
-static bool s_ntp_reference_valid = false;
+static std::atomic<uint64_t> s_ntp_reference_time_64{0};
+static std::atomic<bool> s_ntp_reference_valid{false};
 
 static_assert(PreferIPvX == 0 || PreferIPvX == 4 || PreferIPvX == 6, "PreferIPvX must be 0, 4, or 6");
 
@@ -229,6 +232,8 @@ static bool format_socket_address(const struct sockaddr_storage &address, char *
 static constexpr size_t MQTT_REPORT_QUEUE_DEPTH = 4;
 static constexpr size_t MQTT_REPORT_SIZE = 4096;
 static constexpr size_t MQTT_CLIENT_LIMIT = 50;
+static constexpr size_t MQTT_NTP_EVENT_QUEUE_DEPTH = 128;
+static constexpr size_t MQTT_NTP_EVENT_BATCH_LIMIT = 64;
 
 static constexpr size_t MQTT_MAX_REPORT_SIZE = 131072;
 static constexpr uint32_t MQTT_RESTART_PUBLISH_TIMEOUT_MS = 1000;
@@ -249,6 +254,7 @@ struct mqtt_report_t
 };
 
 static SemaphoreHandle_t s_mqtt_stats_mutex = nullptr;
+static QueueHandle_t s_mqtt_ntp_event_queue = nullptr;
 static esp_mqtt_client_handle_t s_mqtt_client = nullptr;
 static std::atomic<bool> s_mqtt_setup_failed{false};
 static std::atomic<bool> s_mqtt_connected{false};
@@ -260,6 +266,7 @@ static std::atomic<uint32_t> s_ntp_invalid_requests{0};
 static std::atomic<uint32_t> s_ntp_responses{0};
 static std::atomic<uint32_t> s_ntp_requests_with_gnss_lock{0};
 static std::atomic<uint32_t> s_ntp_requests_without_gnss_lock{0};
+static std::atomic<uint32_t> s_ntp_telemetry_events_dropped{0};
 static std::atomic<uint8_t> s_satellite_count{0};
 static std::atomic<uint8_t> s_satellite_min{UINT8_MAX};
 static std::atomic<uint8_t> s_satellite_max{0};
@@ -348,6 +355,12 @@ struct sync_candidate_t
 
 static sync_state_t s_sync_state{};
 static sync_state_t get_sync_state_snapshot();
+static std::atomic<uint32_t> s_ntp_sync_state_sequence{0};
+static std::atomic<int64_t> s_ntp_last_successful_sync_us{0};
+static std::atomic<int64_t> s_ntp_last_gnss_valid_us{0};
+static std::atomic<bool> s_ntp_pps_active{false};
+static std::atomic<bool> s_ntp_gnss_timing_valid{false};
+static std::atomic<sync_fault_t> s_ntp_sync_fault{sync_fault_t::none};
 static constexpr int64_t Sync_Stale_After_Us = static_cast<int64_t>(periodicGPSRefreshEveryThisNumberOfMinutes) * 60LL * 1000000LL * 3LL;
 static constexpr int64_t Gnss_Validity_Timeout_Us = 3500000LL;
 static constexpr int64_t Sync_Reboot_After_Us = 30LL * 60LL * 1000000LL;
@@ -388,12 +401,9 @@ struct gps_nvs_data_t
     char id_type[16] = "";
     char id_value[96] = "";
     uint32_t max_baud = 0;
-    bool has_attempt_no_signal_recovery = false;
-    bool attempt_no_signal_recovery = true;
 };
 
 static uint32_t s_gps_target_baud = 0;
-static bool s_attempt_no_signal_recovery = true;
 
 struct nmea_rmc_time_t
 {
@@ -439,12 +449,24 @@ static void refresh_sync_state_locked(sync_state_t *state, int64_t now_us)
     state->holdover_mode = sync_stale || pps_missing || gnss_missing || state->fault != sync_fault_t::none;
 }
 
+static void publish_ntp_sync_state_locked(const sync_state_t &state)
+{
+    s_ntp_sync_state_sequence.fetch_add(1, std::memory_order_release);
+    s_ntp_last_successful_sync_us.store(state.last_successful_sync_us, std::memory_order_relaxed);
+    s_ntp_last_gnss_valid_us.store(state.last_gnss_valid_us, std::memory_order_relaxed);
+    s_ntp_pps_active.store(state.pps_active, std::memory_order_relaxed);
+    s_ntp_gnss_timing_valid.store(state.gnss_timing_valid, std::memory_order_relaxed);
+    s_ntp_sync_fault.store(state.fault, std::memory_order_relaxed);
+    s_ntp_sync_state_sequence.fetch_add(1, std::memory_order_release);
+}
+
 static void sync_state_note_attempt()
 {
     if (xSemaphoreTake(s_sync_state_mutex, portMAX_DELAY) == pdTRUE)
     {
         s_sync_state.last_sync_attempt_us = esp_timer_get_time();
         refresh_sync_state_locked(&s_sync_state, s_sync_state.last_sync_attempt_us);
+        publish_ntp_sync_state_locked(s_sync_state);
         xSemaphoreGive(s_sync_state_mutex);
     }
 }
@@ -456,6 +478,7 @@ static void sync_state_note_pps_edge(int64_t edge_us)
         s_sync_state.last_pps_seen_us = edge_us;
         s_sync_state.pps_active = true;
         refresh_sync_state_locked(&s_sync_state, edge_us);
+        publish_ntp_sync_state_locked(s_sync_state);
         xSemaphoreGive(s_sync_state_mutex);
     }
 }
@@ -466,6 +489,7 @@ static void sync_state_note_pps_timeout(int64_t now_us)
     {
         s_sync_state.pps_active = false;
         refresh_sync_state_locked(&s_sync_state, now_us);
+        publish_ntp_sync_state_locked(s_sync_state);
         xSemaphoreGive(s_sync_state_mutex);
     }
 }
@@ -506,6 +530,7 @@ static void sync_state_note_gnss_validity(bool valid)
         if (valid)
             s_sync_state.last_gnss_valid_us = now_us;
         refresh_sync_state_locked(&s_sync_state, now_us);
+        publish_ntp_sync_state_locked(s_sync_state);
         xSemaphoreGive(s_sync_state_mutex);
     }
 }
@@ -523,6 +548,7 @@ static uint32_t sync_state_note_failure(sync_fault_t fault, time_t update_delta)
         s_sync_state.consecutive_sync_failures++;
         s_sync_state.fault = fault;
         refresh_sync_state_locked(&s_sync_state, esp_timer_get_time());
+        publish_ntp_sync_state_locked(s_sync_state);
         failure_count = s_sync_state.consecutive_sync_failures;
         xSemaphoreGive(s_sync_state_mutex);
     }
@@ -540,6 +566,7 @@ static uint32_t sync_state_note_sanity_retry(time_t update_delta)
         s_sync_state.consecutive_sync_failures++;
         s_sync_state.consecutive_sanity_failures++;
         refresh_sync_state_locked(&s_sync_state, esp_timer_get_time());
+        publish_ntp_sync_state_locked(s_sync_state);
         failure_count = s_sync_state.consecutive_sanity_failures;
         xSemaphoreGive(s_sync_state_mutex);
     }
@@ -553,6 +580,7 @@ static void sync_state_clear_sanity_failures()
     {
         s_sync_state.consecutive_sanity_failures = 0;
         refresh_sync_state_locked(&s_sync_state, esp_timer_get_time());
+        publish_ntp_sync_state_locked(s_sync_state);
         xSemaphoreGive(s_sync_state_mutex);
     }
 }
@@ -564,6 +592,7 @@ static void sync_state_reset_failure_counters()
         s_sync_state.consecutive_sync_failures = 0;
         s_sync_state.consecutive_sanity_failures = 0;
         refresh_sync_state_locked(&s_sync_state, esp_timer_get_time());
+        publish_ntp_sync_state_locked(s_sync_state);
         xSemaphoreGive(s_sync_state_mutex);
     }
 }
@@ -582,6 +611,7 @@ static void sync_state_note_success(time_t update_delta)
         s_sync_state.consecutive_sanity_failures = 0;
         s_sync_state.fault = sync_fault_t::none;
         refresh_sync_state_locked(&s_sync_state, s_sync_state.last_successful_sync_us);
+        publish_ntp_sync_state_locked(s_sync_state);
         xSemaphoreGive(s_sync_state_mutex);
     }
 }
@@ -593,6 +623,7 @@ static sync_state_t get_sync_state_snapshot()
     if (xSemaphoreTake(s_sync_state_mutex, portMAX_DELAY) == pdTRUE)
     {
         refresh_sync_state_locked(&s_sync_state, esp_timer_get_time());
+        publish_ntp_sync_state_locked(s_sync_state);
         snapshot = s_sync_state;
         xSemaphoreGive(s_sync_state_mutex);
     }
@@ -931,14 +962,6 @@ static bool load_gps_nvs_data(gps_nvs_data_t *data)
 
     (void)nvs_get_u32(handle, GPS_NVS_KEY_MAX_BAUD, &data->max_baud);
 
-    uint8_t attempt_no_signal_recovery = 0;
-    err = nvs_get_u8(handle, GPS_NVS_KEY_ATTEMPT_NO_SIGNAL_RECOVERY, &attempt_no_signal_recovery);
-    if (err == ESP_OK)
-    {
-        data->has_attempt_no_signal_recovery = true;
-        data->attempt_no_signal_recovery = attempt_no_signal_recovery != 0;
-    }
-
     nvs_close(handle);
     return true;
 }
@@ -963,29 +986,6 @@ static bool save_gps_nvs_data(const gps_identity_t &identity, uint32_t max_baud)
 
     nvs_close(handle);
     return err == ESP_OK;
-}
-
-static bool save_attempt_no_signal_recovery_setting(bool enabled)
-{
-    nvs_handle_t handle = 0;
-    esp_err_t err = nvs_open(GPS_NVS_NAMESPACE, NVS_READWRITE, &handle);
-    if (err != ESP_OK)
-        return false;
-
-    err = nvs_set_u8(handle, GPS_NVS_KEY_ATTEMPT_NO_SIGNAL_RECOVERY, enabled ? 1U : 0U);
-    if (err == ESP_OK)
-        err = nvs_commit(handle);
-
-    nvs_close(handle);
-    return err == ESP_OK;
-}
-
-static bool resolve_initial_attempt_no_signal_recovery(const gps_nvs_data_t &stored)
-{
-    if (stored.has_attempt_no_signal_recovery)
-        return stored.attempt_no_signal_recovery;
-
-    return !stored.has_id_type;
 }
 
 static void clear_gps_nvs_data()
@@ -1150,8 +1150,8 @@ static uint64_t get_current_time_in_ntp64_format()
     gettimeofday(&now, nullptr);
 
     uint64_t seconds = NTP_EPOCH_OFFSET + static_cast<uint64_t>(now.tv_sec);
-    uint64_t fraction = static_cast<uint64_t>(static_cast<double>(now.tv_usec) * 4294.967296);
-    return (seconds << 32) | (fraction & 0xFFFFFFFFULL);
+    uint64_t fraction = (static_cast<uint64_t>(now.tv_usec) << 32) / 1000000ULL;
+    return (seconds << 32) | fraction;
 }
 
 static void write_ntp_timestamp(uint8_t *reply, size_t offset, uint64_t timestamp)
@@ -1176,37 +1176,57 @@ struct ntp_reply_status_t
 
 static ntp_reply_status_t get_ntp_reply_status()
 {
-    sync_state_t state = get_sync_state_snapshot();
-    int64_t now_us = esp_timer_get_time();
-    bool gnss_recent = state.gnss_timing_valid && state.last_gnss_valid_us > 0 &&
-                       (now_us - state.last_gnss_valid_us) <= Gnss_Validity_Timeout_Us;
-    bool stratum_one = s_time_has_been_set.load() && state.fault == sync_fault_t::none &&
-                       state.pps_active && gnss_recent && s_ntp_reference_valid;
+    for (size_t attempt = 0; attempt < 3; ++attempt)
+    {
+        uint32_t sequence_before = s_ntp_sync_state_sequence.load(std::memory_order_acquire);
+        if ((sequence_before & 1U) != 0)
+            continue;
 
-    if (stratum_one)
-        return {0, 1, "GPS", true};
+        int64_t last_successful_sync_us = s_ntp_last_successful_sync_us.load(std::memory_order_relaxed);
+        int64_t last_gnss_valid_us = s_ntp_last_gnss_valid_us.load(std::memory_order_relaxed);
+        bool pps_active = s_ntp_pps_active.load(std::memory_order_relaxed);
+        bool gnss_timing_valid = s_ntp_gnss_timing_valid.load(std::memory_order_relaxed);
+        sync_fault_t fault = s_ntp_sync_fault.load(std::memory_order_relaxed);
+
+        if (sequence_before != s_ntp_sync_state_sequence.load(std::memory_order_acquire))
+            continue;
+
+        int64_t now_us = esp_timer_get_time();
+        bool gnss_recent = gnss_timing_valid && last_gnss_valid_us > 0 &&
+                           (now_us - last_gnss_valid_us) <= Gnss_Validity_Timeout_Us;
+        bool sync_stale = last_successful_sync_us > 0 &&
+                          (now_us - last_successful_sync_us) > Sync_Stale_After_Us;
+        bool stratum_one = s_time_has_been_set.load(std::memory_order_acquire) &&
+                           !s_time_setting_in_progress.load(std::memory_order_acquire) &&
+                           fault == sync_fault_t::none && pps_active && gnss_recent && !sync_stale &&
+                           s_ntp_reference_valid.load(std::memory_order_acquire);
+
+        if (stratum_one)
+            return {0, 1, "GPS", true};
+        return {};
+    }
 
     return {};
 }
 
-static void build_ntp_reply(const uint8_t *request, uint8_t *reply, uint64_t receive_time, uint64_t transmit_time, const ntp_reply_status_t &status)
-{
-    memset(reply, 0, NTP_PACKET_SIZE);
+static constexpr uint8_t NTP_REPLY_TEMPLATE[NTP_PACKET_SIZE] = {
+    0, 0, 4, static_cast<uint8_t>(NTP_PRECISION_EXPONENT),
+    0, 0, 0, 0,
+    0, 0, 0, static_cast<uint8_t>(NTP_ROOT_DISPERSION)};
 
-    reply[0] = static_cast<uint8_t>((status.leap_indicator << 6) | 0b00100100);
+static void build_ntp_reply(const uint8_t *request, uint8_t *reply, uint8_t version, uint64_t receive_time, const ntp_reply_status_t &status)
+{
+    memcpy(reply, NTP_REPLY_TEMPLATE, sizeof(NTP_REPLY_TEMPLATE));
+
+    reply[0] = static_cast<uint8_t>((status.leap_indicator << 6) | (version << 3) | 4);
     reply[1] = status.stratum;
-    reply[2] = 4;
-    reply[3] = 0xF7;
-    reply[11] = 0x42;
     memcpy(reply + 12, status.reference_id, 4);
 
     if (status.reference_time_valid)
-        write_ntp_timestamp(reply, 16, s_ntp_reference_time_64);
+        write_ntp_timestamp(reply, 16, s_ntp_reference_time_64.load(std::memory_order_acquire));
 
     memcpy(reply + 24, request + 40, 8);
-
     write_ntp_timestamp(reply, 32, receive_time);
-    write_ntp_timestamp(reply, 40, transmit_time);
 }
 
 static const char *fix_type_to_text(uint8_t fix_type)
@@ -1547,6 +1567,31 @@ static bool try_gps_begin(uint32_t baud, bool assume_success, bool *saw_serial_d
     return begin_result;
 }
 
+static bool confirm_saved_gps_baud_rate(uint32_t baud)
+{
+    bool saw_serial_data = false;
+
+    s_detected_gps_baud = 0;
+    s_gps_required_assume_success = false;
+
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
+        bool begin_without_assume = try_gps_begin(baud, false, &saw_serial_data);
+        bool begin_with_assume = false;
+        if (!begin_without_assume)
+            begin_with_assume = try_gps_begin(baud, true, &saw_serial_data);
+
+        if (begin_without_assume || begin_with_assume)
+        {
+            s_detected_gps_baud = baud;
+            s_gps_required_assume_success = begin_with_assume;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static bool set_gps_baud_rate(uint32_t gps_baud, int max_attempts, uint32_t initial_probe_baud = 0)
 {
 
@@ -1710,44 +1755,6 @@ static bool configure_gps_outputs(bool *uart1_output_set_result)
 #endif
 
     return uart1_output_set;
-}
-
-static bool perform_extended_no_signal_recovery()
-{
-#if DEBUG_ENABLED
-    ESP_LOGW(TAG, "Performing GPS extended no-signal recovery: factory-default + GNSS reset + reinitialization.");
-#endif
-
-    bool factory_default_applied = s_gps.factoryDefault();
-#if DEBUG_ENABLED
-    ESP_LOGI(TAG, "GPS factoryDefault() -> %s", factory_default_applied ? "ok" : "failed");
-#endif
-
-    s_gps.hardReset();
-    vTaskDelay(pdMS_TO_TICKS(1500));
-
-    static constexpr int recoveryInitAttempts = 3;
-    uint32_t recovery_target_baud = s_gps_target_baud > 0 ? s_gps_target_baud : get_highest_candidate_gps_baud();
-    if (!set_gps_baud_rate(recovery_target_baud, recoveryInitAttempts))
-    {
-#if DEBUG_ENABLED
-        ESP_LOGW(TAG, "GPS recovery reinitialization failed after reset.");
-#endif
-        return false;
-    }
-
-    bool uart1_output_set = false;
-    bool gps_outputs_configured = configure_gps_outputs(&uart1_output_set);
-    s_use_nmea_fallback = s_gps_required_assume_success || !uart1_output_set;
-
-#if DEBUG_ENABLED
-    ESP_LOGI(TAG, "GPS recovery post-config: outputs=%s, fallback=%s, baud=%lu",
-             gps_outputs_configured ? "ok" : "partial",
-             s_use_nmea_fallback ? "enabled" : "disabled",
-             static_cast<unsigned long>(s_detected_gps_baud));
-#endif
-
-    return true;
 }
 
 static void halt_with_display(const char *line1, const char *line2, const char *line3)
@@ -2003,17 +2010,6 @@ static void setup_gps()
     bool first_time_initial_setup = !stored_gps_data.has_id_type;
     ESP_LOGI(TAG, "Startup mode: %s", first_time_initial_setup ? "First time initial setup" : "Not first time initial setup");
 
-    s_attempt_no_signal_recovery = resolve_initial_attempt_no_signal_recovery(stored_gps_data);
-    if (gps_nvs_load_ok && !stored_gps_data.has_attempt_no_signal_recovery)
-    {
-        bool save_recovery_setting_ok = save_attempt_no_signal_recovery_setting(s_attempt_no_signal_recovery);
-#if DEBUG_ENABLED
-        ESP_LOGI(TAG, "GPS no-signal recovery default initialized to %s (save=%s)",
-                 s_attempt_no_signal_recovery ? "true" : "false",
-                 save_recovery_setting_ok ? "ok" : "failed");
-#endif
-    }
-
     uint32_t highest_candidate_baud = get_highest_candidate_gps_baud();
     uint32_t startup_target_baud = highest_candidate_baud;
 
@@ -2028,13 +2024,28 @@ static void setup_gps()
              static_cast<unsigned long>(startup_target_baud));
 #endif
 
-    s_gps_target_baud = startup_target_baud;
-    uint32_t initial_probe_baud = first_time_initial_setup ? 9600 : s_gps_target_baud;
-
-    if (!set_gps_baud_rate(s_gps_target_baud, maxAttemptsToInitializeGPS, initial_probe_baud))
+    bool gps_communication_confirmed = false;
+    if (known_module_fast_path)
     {
-        ESP_LOGE(TAG, "GPS comms failed - check TX/RX + power");
-        halt_with_display("GPS comms failed", "Check TX/RX + power", "See serial log");
+        s_gps_target_baud = startup_target_baud;
+        gps_communication_confirmed = confirm_saved_gps_baud_rate(s_gps_target_baud);
+#if DEBUG_ENABLED
+        if (!gps_communication_confirmed)
+            ESP_LOGW(TAG, "Saved GPS baud %lu did not confirm communication; starting automatic recovery scan.", static_cast<unsigned long>(s_gps_target_baud));
+#endif
+    }
+
+    if (!gps_communication_confirmed)
+    {
+        s_gps_target_baud = highest_candidate_baud;
+        uint32_t initial_probe_baud = first_time_initial_setup ? 9600 : s_gps_target_baud;
+        if (!set_gps_baud_rate(s_gps_target_baud, maxAttemptsToInitializeGPS, initial_probe_baud))
+        {
+#if DEBUG_ENABLED
+            ESP_LOGE(TAG, "GPS comms failed - check TX/RX + power");
+#endif
+            halt_with_display("GPS comms failed", "Check TX/RX + power", "See serial log");
+        }
     }
 
     gps_identity_t current_identity = query_gps_identity();
@@ -2098,9 +2109,7 @@ static void setup_gps()
     display_line(2, "");
 
     static constexpr uint32_t gpsFixEscalationToNmeaFallbackMs = 120000UL;
-    static constexpr uint32_t gpsNoSignalRecoveryMs = 180000UL;
 
-    bool no_signal_recovery_attempted = false;
     bool nmea_fallback_enabled = s_use_nmea_fallback;
     uint32_t wait_start_ms = millis();
     uint32_t last_status_log_ms = 0;
@@ -2151,18 +2160,6 @@ static void setup_gps()
 #if DEBUG_ENABLED
             ESP_LOGW(TAG, "No UBX fix after %lu ms. Enabling NMEA fallback for additional acquisition path.", static_cast<unsigned long>(now_ms - wait_start_ms));
 #endif
-        }
-
-        if (!ubx_fix_ready && !s_use_nmea_fallback && !no_signal_recovery_attempted && s_attempt_no_signal_recovery && satellites_used == 0 && (now_ms - wait_start_ms) >= gpsNoSignalRecoveryMs)
-        {
-            no_signal_recovery_attempted = true;
-            if (perform_extended_no_signal_recovery())
-            {
-                wait_start_ms = millis();
-                last_status_log_ms = 0;
-                last_long_wait_warning_ms = 0;
-                continue;
-            }
         }
 
         if (!ubx_fix_ready && nmea_fallback_enabled)
@@ -2226,6 +2223,13 @@ static void setup_gps()
 
 #if MQTT_ENABLED
 
+static void mqtt_enqueue_ntp_request(const struct sockaddr_storage &source_address)
+{
+    if (s_mqtt_ntp_event_queue == nullptr ||
+        xQueueSend(s_mqtt_ntp_event_queue, &source_address, 0) != pdTRUE)
+        s_ntp_telemetry_events_dropped.fetch_add(1, std::memory_order_relaxed);
+}
+
 static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
 {
     size_t address_size = 0;
@@ -2243,7 +2247,7 @@ static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
     else
         return;
 
-    if (s_mqtt_stats_mutex == nullptr || xSemaphoreTake(s_mqtt_stats_mutex, 0) != pdTRUE)
+    if (s_mqtt_stats_mutex == nullptr || xSemaphoreTake(s_mqtt_stats_mutex, portMAX_DELAY) != pdTRUE)
         return;
 
     time_t now = time(nullptr);
@@ -2660,6 +2664,7 @@ static void mqtt_build_report(char *payload, size_t payload_size)
     len += snprintf(payload + len, payload_size - len, "\"requests\":{");
     len += snprintf(payload + len, payload_size - len, "\"valid\":%lu,", (unsigned long)s_ntp_valid_requests.exchange(0));
     len += snprintf(payload + len, payload_size - len, "\"invalid\":%lu,", (unsigned long)s_ntp_invalid_requests.exchange(0));
+    len += snprintf(payload + len, payload_size - len, "\"telemetry_dropped\":%lu,", (unsigned long)s_ntp_telemetry_events_dropped.exchange(0));
     len += snprintf(payload + len, payload_size - len, "\"max_per_second\":%lu", (unsigned long)most_requests_per_second);
     len += snprintf(payload + len, payload_size - len, "},");
     len += snprintf(payload + len, payload_size - len, "\"responses\":{");
@@ -2721,6 +2726,12 @@ static void mqtt_service_task(void *parameter)
     TickType_t next_report = xTaskGetTickCount() + pdMS_TO_TICKS(MQTTReportingPeriod * 1000UL);
     for (;;)
     {
+        struct sockaddr_storage source_address{};
+        for (size_t count = 0; count < MQTT_NTP_EVENT_BATCH_LIMIT &&
+                               xQueueReceive(s_mqtt_ntp_event_queue, &source_address, 0) == pdTRUE;
+             ++count)
+            mqtt_note_ntp_request(source_address);
+
         bool connected = s_mqtt_connected.load();
         if (connected && !previously_connected)
             esp_mqtt_client_publish(s_mqtt_client, s_mqtt_status_topic, "online", 0, MQTT_QOS, 1);
@@ -2935,7 +2946,8 @@ static void setup_mqtt()
     }
 
     s_mqtt_stats_mutex = xSemaphoreCreateMutex();
-    if (s_mqtt_stats_mutex == nullptr)
+    s_mqtt_ntp_event_queue = xQueueCreate(MQTT_NTP_EVENT_QUEUE_DEPTH, sizeof(struct sockaddr_storage));
+    if (s_mqtt_stats_mutex == nullptr || s_mqtt_ntp_event_queue == nullptr)
     {
         s_mqtt_setup_failed.store(true);
         return;
@@ -3186,10 +3198,9 @@ void write_opening_messages_to_the_console()
     Serial.begin(serialMonitorSpeed);
     vTaskDelay(pdMS_TO_TICKS(100));
 
-#if DEBUG_ENABLED
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Server v2.6");
+    ESP_LOGI(TAG, "ESP32 Time Server v2.7");
 
 #if UPTIME_RESTART_BUTTON_ENABLED
     ESP_LOGI(TAG, "Uptime / Reset button support is enabled in the settings");
@@ -3234,6 +3245,9 @@ void write_opening_messages_to_the_console()
     ESP_LOGW(TAG, "MQTT support is disabled in the settings");
 #endif
 
+#if DEBUG_ENABLED
+#else
+    ESP_LOGW(TAG, "DEBUG was disabled in the settings. This will be the last console message reported by main.cpp");
 #endif
 }
 
@@ -4014,15 +4028,6 @@ static void gps_time_sync_task(void *parameter)
             first_sync = false;
             sync_state_note_success(update_delta);
 
-            if (s_attempt_no_signal_recovery)
-            {
-                bool save_recovery_setting_ok = save_attempt_no_signal_recovery_setting(false);
-                s_attempt_no_signal_recovery = false;
-#if DEBUG_ENABLED
-                ESP_LOGI(TAG, "GPS time set succeeded; no-signal recovery is now persisted as false (save=%s)", save_recovery_setting_ok ? "ok" : "failed");
-#endif
-            }
-
 #if DEBUG_ENABLED
             char date_string[16] = "";
             char time_string[24] = "";
@@ -4254,89 +4259,80 @@ static void ntp_server_task(void *parameter)
 
         static uint8_t next_socket = 0;
         const int sockets[] = {ipv4_socket, ipv6_socket, ipv6_link_local_socket};
-        int sock = -1;
-        for (size_t offset = 0; offset < sizeof(sockets) / sizeof(sockets[0]); ++offset)
+        const size_t socket_count = sizeof(sockets) / sizeof(sockets[0]);
+        uint8_t start_socket = next_socket;
+        for (size_t offset = 0; offset < socket_count; ++offset)
         {
-            size_t index = (next_socket + offset) % (sizeof(sockets) / sizeof(sockets[0]));
-            if (sockets[index] >= 0 && FD_ISSET(sockets[index], &read_fds))
-            {
-                sock = sockets[index];
-                next_socket = static_cast<uint8_t>((index + 1) % (sizeof(sockets) / sizeof(sockets[0])));
-                break;
-            }
-        }
-        if (sock < 0)
-            continue;
-
-        uint8_t request[NTP_PACKET_SIZE];
-        uint8_t reply[NTP_PACKET_SIZE];
-        struct sockaddr_storage source_addr{};
-        socklen_t source_addr_len = sizeof(source_addr);
-
-        int len = recvfrom(sock, request, sizeof(request), 0, reinterpret_cast<struct sockaddr *>(&source_addr), &source_addr_len);
-        if (len < 0)
-        {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            size_t index = (start_socket + offset) % socket_count;
+            int sock = sockets[index];
+            if (sock < 0 || !FD_ISSET(sock, &read_fds))
                 continue;
+
+            next_socket = static_cast<uint8_t>((index + 1) % socket_count);
+            for (size_t batch_count = 0; batch_count < NTP_SOCKET_BATCH_LIMIT; ++batch_count)
+            {
+                uint8_t request[NTP_PACKET_SIZE + 1];
+                uint8_t reply[NTP_PACKET_SIZE];
+                struct sockaddr_storage source_addr{};
+                socklen_t source_addr_len = sizeof(source_addr);
+                int len = recvfrom(sock, request, sizeof(request), MSG_DONTWAIT,
+                                   reinterpret_cast<struct sockaddr *>(&source_addr), &source_addr_len);
+                if (len < 0)
+                {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK)
+                        break;
 #if DEBUG_ENABLED
-            ESP_LOGW(TAG, "recvfrom failed: errno %d", errno);
+                    ESP_LOGW(TAG, "recvfrom failed: errno %d", errno);
 #endif
-            continue;
-        }
+                    break;
+                }
 
-        if (len != static_cast<int>(NTP_PACKET_SIZE))
-        {
+                uint64_t receive_time = get_current_time_in_ntp64_format();
+                if (len != static_cast<int>(NTP_PACKET_SIZE))
+                {
 #if MQTT_ENABLED
-            s_ntp_invalid_requests.fetch_add(1);
+                    s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
 #endif
-            continue;
-        }
+                    continue;
+                }
 
-        uint8_t ntp_version = (request[0] >> 3) & 0x07;
-        uint8_t ntp_mode = request[0] & 0x07;
-        if (ntp_version < 3 || ntp_version > 4 || ntp_mode != 3)
-        {
+                uint8_t ntp_version = (request[0] >> 3) & 0x07;
+                uint8_t ntp_mode = request[0] & 0x07;
+                if (ntp_version < 3 || ntp_version > 4 || ntp_mode != 3)
+                {
 #if MQTT_ENABLED
-            s_ntp_invalid_requests.fetch_add(1);
+                    s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
 #endif
-            continue;
-        }
+                    continue;
+                }
 
 #if MQTT_ENABLED
-        s_ntp_valid_requests.fetch_add(1);
-        mqtt_note_ntp_request(source_addr);
+                s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
+                mqtt_enqueue_ntp_request(source_addr);
 #endif
-        ntp_reply_status_t status = get_ntp_reply_status();
+                ntp_reply_status_t status = get_ntp_reply_status();
 #if MQTT_ENABLED
-        if (status.stratum == 1)
-            s_ntp_requests_with_gnss_lock.fetch_add(1);
-        else
-            s_ntp_requests_without_gnss_lock.fetch_add(1);
+                if (status.stratum == 1)
+                    s_ntp_requests_with_gnss_lock.fetch_add(1, std::memory_order_relaxed);
+                else
+                    s_ntp_requests_without_gnss_lock.fetch_add(1, std::memory_order_relaxed);
 #endif
-        bool reply_ready = false;
-        if (xSemaphoreTake(s_time_mutex, portMAX_DELAY) == pdTRUE)
-        {
-            uint64_t receive_time = get_current_time_in_ntp64_format();
-            uint64_t transmit_time = get_current_time_in_ntp64_format();
-            build_ntp_reply(request, reply, receive_time, transmit_time, status);
-            xSemaphoreGive(s_time_mutex);
-            reply_ready = true;
-        }
+                build_ntp_reply(request, reply, ntp_version, receive_time, status);
+                write_ntp_timestamp(reply, 40, get_current_time_in_ntp64_format());
 
-        if (reply_ready)
-        {
-            int sent = sendto(sock, reply, sizeof(reply), 0, reinterpret_cast<struct sockaddr *>(&source_addr), source_addr_len);
+                int sent = sendto(sock, reply, sizeof(reply), 0, reinterpret_cast<struct sockaddr *>(&source_addr), source_addr_len);
 #if MQTT_ENABLED
-            if (sent == static_cast<int>(sizeof(reply)))
-                s_ntp_responses.fetch_add(1);
+                if (sent == static_cast<int>(sizeof(reply)))
+                    s_ntp_responses.fetch_add(1, std::memory_order_relaxed);
 #else
-            (void)sent;
+                (void)sent;
 #endif
 #if DEBUG_ENABLED
-            char source_address[IP_ADDRESS_TEXT_SIZE] = "";
-            if (format_socket_address(source_addr, source_address, sizeof(source_address)))
-                ESP_LOGI(TAG, "NTP -> %s", source_address);
+                char source_address[IP_ADDRESS_TEXT_SIZE] = "";
+                if (format_socket_address(source_addr, source_address, sizeof(source_address)))
+                    ESP_LOGI(TAG, "NTP -> %s", source_address);
 #endif
+            }
         }
 
 #if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
@@ -4351,7 +4347,7 @@ static void ntp_server_task(void *parameter)
         //         recommended usage: Start a single stress test, for a duration of 5 seconds, with 100 Concurrent requests
         //         (you may see a higher than normal failure rate, but this will drop when CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED and DEBUG_ENABLED are both disabled)
         //
-        // NOTE 2: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
+        // NOTE 3: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
         //
         // Below is the code that has now already been used to calculate the ideal stack size:
         //
@@ -4365,7 +4361,7 @@ static void ntp_server_task(void *parameter)
 
         // compute peak usage and suggested size (25% margin)
         size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
-        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
+        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.5); // add 50% for safety
 
         ESP_LOGI("ntp_server_task",
                  "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
@@ -4377,7 +4373,7 @@ static void ntp_server_task(void *parameter)
         vTaskDelay(pdMS_TO_TICKS(50));
 
         // Results of this testing:
-        // ntp_server_task: Stack report: Allocated=22000 bytes, HighWater=19800 bytes unused, PeakUsage=2200 bytes, Suggested=2750 bytes
+        // ntp_server_task: Stack report: Allocated=22000 bytes, HighWater=19784 bytes unused, PeakUsage=2216 bytes, Suggested=3324 bytes
 
 #endif
     }
@@ -4621,7 +4617,7 @@ extern "C" void app_main()
 
     setup_mqtt();
 
-    xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", 2750, nullptr, 20, nullptr, tskNO_AFFINITY);
+    xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", 3324, nullptr, 20, nullptr, tskNO_AFFINITY);
 
     xTaskCreatePinnedToCore(update_display_task, "display_service", 2750, nullptr, 10, nullptr, tskNO_AFFINITY);
 }

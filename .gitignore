@@ -86,6 +86,9 @@ Release.bat
 ReleaseNotes.txt
 Releases.md
 
+# personalize settings
+ESP32TimeServerSettings -*.h
+
 # User-specific configuration files
 *.user
 *.workspace # General workspace files, can be from various tools
