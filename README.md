@@ -161,8 +161,8 @@ the [`3D printable case/`](./3D%20printable%20case/) folder. Both `.stl`
 (print-ready) and `.f3z` (Fusion 360 editable source) files are provided so you
 can tweak the design to suit your needs.
 
-> **Note:** the 3D printable enclosure files also include the needed models for
-> version 1 of this project which used the Olimex ESP32-PoE-ISO Rev. B.
+> **Note:** the 3D printable enclosure files also includes the needed models for
+> version 1 (used an Olimex ESP32-PoE-ISO Rev. B dev board).
 
 ---
 
@@ -268,7 +268,7 @@ del sdkconfig
   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_0.defaults" set-target esp32p4 build
   ```
 
-- For older ESP32-P4 modules with revisions prior to version 3.0:
+- For older ESP32-P4 modules with revisions prior to version 3.0 (includes the Waveshare ESP32-P4-ETH):
 
   ```cmd
   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_pre_v3.defaults" set-target esp32p4 build
