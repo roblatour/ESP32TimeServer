@@ -705,7 +705,7 @@ entities:
     name: Invalid requests
     icon: mdi:bookmark-remove-outline
   - entity: sensor.ntp_max_requests_per_second
-    name: Request per second
+    name: Maximum requests / second
     icon: mdi:bookmark-multiple-outline
   - entity: sensor.satellites_current
     name: Satellites
