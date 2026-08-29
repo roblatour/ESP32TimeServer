@@ -326,7 +326,7 @@ stress test your time server:
 ## License
 
 This project is released under the **MIT License** — see the [LICENSE](LICENSE)
-file for details
+file for details.
 
 ---
 
