@@ -540,7 +540,7 @@ Step 4 to reload the configuration.
 
 ### Option A — configuration.yaml with a new mqtt.yaml
 
-Add the following line if it is not already present:
+Add the following line (it should not already be there):
 
 ```yaml
 mqtt: !include mqtt.yaml
@@ -677,8 +677,8 @@ the configuration so Home Assistant picks up the new sensors without requiring a
 full restart.
 
 1. In Home Assistant, click **Settings** in the left sidebar.
-2. Click **Developer Tools**.
-3. Select the **YAML** tab.
+2. Click **Tools**.
+3. The **YAML** tab should already be selected, if not select it.
 4. Under **YAML configuration reloading**, click **All YAML Configuration**.
 
 Home Assistant will reload all YAML files. The ESP32 Time Server sensors will
