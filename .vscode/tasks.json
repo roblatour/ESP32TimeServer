@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "ESP-IDF: OTA Upload over Ethernet",
+      "label": "ESP-IDF: OTE Upload over Ethernet",
       "type": "shell",
       "command": "cmd",
       "args": [
@@ -25,7 +25,7 @@
     {
       "id": "otaDeviceIp",
       "type": "promptString",
-      "description": "ESP32 OTA target IP address",
+      "description": "ESP32 OTE target IP address",
       "default": "192.168.7.25"
     }
   ]
