@@ -1,0 +1,72 @@
+name: Build ESP32TimeServer (ESP-IDF v6.1)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**.c'
+      - '**.cc'
+      - '**.cpp'
+      - '**.h'
+      - '**.hpp'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+      - 'sdkconfig'
+      - 'sdkconfig.*'
+      - 'main/idf_component.yml'
+      - 'dependencies.lock'
+      - '.github/workflows/build-idf-v6-1.yml'
+      - '.github/workflows/build-idf-v6-0-2.yml'
+      - '.github/workflows/build-idf-v5-5-5.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.c'
+      - '**.cc'
+      - '**.cpp'
+      - '**.h'
+      - '**.hpp'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+      - 'sdkconfig'
+      - 'sdkconfig.*'
+      - 'main/idf_component.yml'
+      - 'dependencies.lock'
+      - '.github/workflows/build-idf-v6-1.yml'
+      - '.github/workflows/build-idf-v6-0-2.yml'
+      - '.github/workflows/build-idf-v5-5-5.yml'
+  workflow_dispatch:
+
+jobs:
+  build-v61:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository From Scratch
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+
+    - name: Setup Compiler Cache (ccache)
+      uses: actions/cache@v4
+      with:
+        path: .ccache
+        key: esp32p4-v6.1-ccache-${{ github.run_id }}
+        restore-keys: |
+          esp32p4-v6.1-ccache-
+
+    - name: Clean Compile with ESP-IDF v6.1
+      uses: espressif/esp-idf-ci-action@v1
+      env:
+        CCACHE_DIR: ${{ github.workspace }}/.ccache
+      with:
+        esp_idf_version: v6.1
+        target: esp32p4
+        command: |
+          idf.py --ccache build
+
+    # - name: Upload Binary Artifact
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: ESP32TimeServer_ESP-IDF-v6.1.bin
+    #     path: build/ESP32TimeServer.bin
