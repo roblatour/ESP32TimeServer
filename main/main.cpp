@@ -232,7 +232,7 @@ static bool format_socket_address(const struct sockaddr_storage &address, char *
 static constexpr size_t MQTT_REPORT_SIZE = 4624;
 static constexpr size_t MQTT_CLIENT_LIMIT = 50;
 
-static constexpr size_t MQTT_NTP_EVENT_QUEUE_DEPTH = 1024; 
+static constexpr size_t MQTT_NTP_EVENT_QUEUE_DEPTH = 1024;
 static constexpr size_t MQTT_REPORT_QUEUE_DEPTH = 4;
 static constexpr size_t MQTT_NTP_EVENT_BATCH_LIMIT = 128;
 
@@ -4559,7 +4559,7 @@ static void update_display_task(void *parameter)
                 {
                     top_line_message[18] = '*';
                 }
-                else if (required_top_line_message > 1 && required_top_line_message < 10)
+                else if (required_top_line_message > 0 && required_top_line_message < 10)
                 {
                     top_line_message[17] = '[';
                     top_line_message[18] = '0' + required_top_line_message;
