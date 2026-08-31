@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.7
+// ESP32 Time Server v2.7.1
 // Copyright Rob Latour, 2026
 //
 // ESP32 Dev Board:     ESP32-P4-ETH https://www.waveshare.com/esp32-p4-eth.htm
@@ -229,11 +229,12 @@ static bool format_socket_address(const struct sockaddr_storage &address, char *
 
 #if MQTT_ENABLED
 
-static constexpr size_t MQTT_REPORT_QUEUE_DEPTH = 4;
-static constexpr size_t MQTT_REPORT_SIZE = 4096;
+static constexpr size_t MQTT_REPORT_SIZE = 4624;
 static constexpr size_t MQTT_CLIENT_LIMIT = 50;
-static constexpr size_t MQTT_NTP_EVENT_QUEUE_DEPTH = 128;
-static constexpr size_t MQTT_NTP_EVENT_BATCH_LIMIT = 64;
+
+static constexpr size_t MQTT_NTP_EVENT_QUEUE_DEPTH = 1024; 
+static constexpr size_t MQTT_REPORT_QUEUE_DEPTH = 4;
+static constexpr size_t MQTT_NTP_EVENT_BATCH_LIMIT = 128;
 
 static constexpr size_t MQTT_MAX_REPORT_SIZE = 131072;
 static constexpr uint32_t MQTT_RESTART_PUBLISH_TIMEOUT_MS = 1000;
@@ -264,8 +265,9 @@ static std::atomic<uint32_t> s_pps_pulses{0};
 static std::atomic<uint32_t> s_ntp_valid_requests{0};
 static std::atomic<uint32_t> s_ntp_invalid_requests{0};
 static std::atomic<uint32_t> s_ntp_responses{0};
-static std::atomic<uint32_t> s_ntp_requests_with_gnss_lock{0};
-static std::atomic<uint32_t> s_ntp_requests_without_gnss_lock{0};
+static std::atomic<uint32_t> s_ntp_responses_synchronized_and_disciplined{0};
+static std::atomic<uint32_t> s_ntp_responses_gnss_unsynchronized{0};
+static std::atomic<uint32_t> s_ntp_responses_pps_undisciplined{0};
 static std::atomic<uint32_t> s_ntp_telemetry_events_dropped{0};
 static std::atomic<uint8_t> s_satellite_count{0};
 static std::atomic<uint8_t> s_satellite_min{UINT8_MAX};
@@ -273,8 +275,9 @@ static std::atomic<uint8_t> s_satellite_max{0};
 static std::atomic<int64_t> s_eth_link_connected_us{0};
 static std::atomic<int64_t> s_eth_link_up_total_us{0};
 #if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
-static std::atomic<time_t> s_last_gnss_lock{0};
-static std::atomic<time_t> s_last_gnss_unlock{0};
+static std::atomic<time_t> s_last_synchronized_and_disciplined{0};
+static std::atomic<time_t> s_last_gnss_unsynchronized{0};
+static std::atomic<time_t> s_last_pps_undisciplined{0};
 #endif
 
 #if MQTT_ENABLED && MQTT_CLIENT_REPORTING_ENABLED
@@ -293,9 +296,8 @@ static mqtt_client_request_t s_mqtt_clients[MQTT_TF_Client_Limit]{};
 static std::atomic<bool> s_tf_queue_available{false};
 static sdmmc_card_t *s_tf_card = nullptr;
 static uint64_t s_tf_queue_next_sequence = 0;
-static uint32_t s_ntp_requests_this_second = 0;
-static uint32_t s_ntp_most_requests_per_second = 0;
-static time_t s_ntp_request_second = 0;
+static std::atomic<uint32_t> s_ntp_requests_this_second{0};
+static std::atomic<uint32_t> s_ntp_most_requests_per_second{0};
 static char s_mqtt_uri[64] = "";
 static char s_mqtt_report_topic[128] = "";
 static char s_mqtt_status_topic[128] = "";
@@ -320,14 +322,18 @@ static std::atomic<bool> s_pps_discipline_active{false};
 static std::atomic<bool> s_gps_recovery_in_progress{false};
 static std::atomic<int64_t> s_last_gps_recovery_us{0};
 
-enum class sync_fault_t : uint8_t
+struct sync_faults_t
 {
-    none = 0,
-    pps_missing,
-    gps_invalid,
-    sanity_mismatch,
-    sync_stale
+    bool pps_missing = false;
+    bool gps_invalid = false;
+    bool sanity_mismatch = false;
+    bool sync_stale = false;
 };
+
+static bool has_sync_fault(const sync_faults_t &faults)
+{
+    return faults.pps_missing || faults.gps_invalid || faults.sanity_mismatch || faults.sync_stale;
+}
 
 struct sync_state_t
 {
@@ -341,7 +347,7 @@ struct sync_state_t
     bool pps_active = false;
     bool gnss_timing_valid = false;
     int64_t last_gnss_valid_us = 0;
-    sync_fault_t fault = sync_fault_t::none;
+    sync_faults_t faults{};
 };
 
 struct sync_candidate_t
@@ -350,7 +356,7 @@ struct sync_candidate_t
     bool use_pps_alignment = false;
     bool used_nmea_fallback = false;
     int64_t pps_release_time_us = 0;
-    sync_fault_t failure = sync_fault_t::none;
+    sync_faults_t failures{};
 };
 
 static sync_state_t s_sync_state{};
@@ -360,7 +366,10 @@ static std::atomic<int64_t> s_ntp_last_successful_sync_us{0};
 static std::atomic<int64_t> s_ntp_last_gnss_valid_us{0};
 static std::atomic<bool> s_ntp_pps_active{false};
 static std::atomic<bool> s_ntp_gnss_timing_valid{false};
-static std::atomic<sync_fault_t> s_ntp_sync_fault{sync_fault_t::none};
+static std::atomic<bool> s_ntp_pps_missing{false};
+static std::atomic<bool> s_ntp_gps_invalid{false};
+static std::atomic<bool> s_ntp_sanity_mismatch{false};
+static std::atomic<bool> s_ntp_sync_stale{false};
 static constexpr int64_t Sync_Stale_After_Us = static_cast<int64_t>(periodicGPSRefreshEveryThisNumberOfMinutes) * 60LL * 1000000LL * 3LL;
 static constexpr int64_t Gnss_Validity_Timeout_Us = 3500000LL;
 static constexpr int64_t Sync_Reboot_After_Us = 30LL * 60LL * 1000000LL;
@@ -426,27 +435,16 @@ static void refresh_sync_state_locked(sync_state_t *state, int64_t now_us)
                                                        state->last_gnss_valid_us == 0 ||
                                                        (now_us - state->last_gnss_valid_us) > Gnss_Validity_Timeout_Us);
 
-    if (sync_stale)
-    {
-        state->fault = sync_fault_t::sync_stale;
-    }
-    else if (gnss_missing)
-    {
-        state->fault = sync_fault_t::gps_invalid;
+    state->faults.sync_stale = sync_stale;
+    state->faults.gps_invalid = gnss_missing;
+    state->faults.pps_missing = pps_missing;
+
 #if DEBUG_ENABLED
+    if (gnss_missing)
         ESP_LOGE(TAG, "GNSS invalid - GNSS missing.");
 #endif
-    }
-    else if (pps_missing)
-    {
-        state->fault = sync_fault_t::pps_missing;
-    }
-    else if (state->fault == sync_fault_t::pps_missing || state->fault == sync_fault_t::gps_invalid || state->fault == sync_fault_t::sync_stale)
-    {
-        state->fault = sync_fault_t::none;
-    }
 
-    state->holdover_mode = sync_stale || pps_missing || gnss_missing || state->fault != sync_fault_t::none;
+    state->holdover_mode = has_sync_fault(state->faults);
 }
 
 static void publish_ntp_sync_state_locked(const sync_state_t &state)
@@ -456,7 +454,10 @@ static void publish_ntp_sync_state_locked(const sync_state_t &state)
     s_ntp_last_gnss_valid_us.store(state.last_gnss_valid_us, std::memory_order_relaxed);
     s_ntp_pps_active.store(state.pps_active, std::memory_order_relaxed);
     s_ntp_gnss_timing_valid.store(state.gnss_timing_valid, std::memory_order_relaxed);
-    s_ntp_sync_fault.store(state.fault, std::memory_order_relaxed);
+    s_ntp_pps_missing.store(state.faults.pps_missing, std::memory_order_relaxed);
+    s_ntp_gps_invalid.store(state.faults.gps_invalid, std::memory_order_relaxed);
+    s_ntp_sanity_mismatch.store(state.faults.sanity_mismatch, std::memory_order_relaxed);
+    s_ntp_sync_stale.store(state.faults.sync_stale, std::memory_order_relaxed);
     s_ntp_sync_state_sequence.fetch_add(1, std::memory_order_release);
 }
 
@@ -504,18 +505,12 @@ static void set_gnss_lock_state(bool valid)
     if (valid)
     {
         s_gnss_lock_started_us.store(now_us);
-#if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
-        s_last_gnss_lock.store(time(nullptr));
-#endif
     }
     else
     {
         int64_t lock_started_us = s_gnss_lock_started_us.exchange(0);
         if (lock_started_us > 0 && now_us > lock_started_us)
             s_gnss_locked_total_us.fetch_add(now_us - lock_started_us);
-#if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
-        s_last_gnss_unlock.store(time(nullptr));
-#endif
     }
 }
 
@@ -535,18 +530,21 @@ static void sync_state_note_gnss_validity(bool valid)
     }
 }
 
-static uint32_t sync_state_note_failure(sync_fault_t fault, time_t update_delta)
+static uint32_t sync_state_note_failure(const sync_faults_t &faults, time_t update_delta)
 {
     uint32_t failure_count = 0;
 
-    if (fault == sync_fault_t::gps_invalid)
+    if (faults.gps_invalid)
         set_gnss_lock_state(false);
 
     if (xSemaphoreTake(s_sync_state_mutex, portMAX_DELAY) == pdTRUE)
     {
         s_sync_state.last_sync_delta_seconds = update_delta;
         s_sync_state.consecutive_sync_failures++;
-        s_sync_state.fault = fault;
+        s_sync_state.faults.pps_missing = s_sync_state.faults.pps_missing || faults.pps_missing;
+        s_sync_state.faults.gps_invalid = s_sync_state.faults.gps_invalid || faults.gps_invalid;
+        s_sync_state.faults.sanity_mismatch = s_sync_state.faults.sanity_mismatch || faults.sanity_mismatch;
+        s_sync_state.faults.sync_stale = s_sync_state.faults.sync_stale || faults.sync_stale;
         refresh_sync_state_locked(&s_sync_state, esp_timer_get_time());
         publish_ntp_sync_state_locked(s_sync_state);
         failure_count = s_sync_state.consecutive_sync_failures;
@@ -609,7 +607,7 @@ static void sync_state_note_success(time_t update_delta)
         s_sync_state.last_sync_delta_seconds = update_delta;
         s_sync_state.consecutive_sync_failures = 0;
         s_sync_state.consecutive_sanity_failures = 0;
-        s_sync_state.fault = sync_fault_t::none;
+        s_sync_state.faults = {};
         refresh_sync_state_locked(&s_sync_state, s_sync_state.last_successful_sync_us);
         publish_ntp_sync_state_locked(s_sync_state);
         xSemaphoreGive(s_sync_state_mutex);
@@ -1172,6 +1170,8 @@ struct ntp_reply_status_t
     uint8_t stratum = 16;
     const char *reference_id = "INIT";
     bool reference_time_valid = false;
+    bool gnss_synchronized = false;
+    bool pps_disciplined = false;
 };
 
 static ntp_reply_status_t get_ntp_reply_status()
@@ -1186,7 +1186,11 @@ static ntp_reply_status_t get_ntp_reply_status()
         int64_t last_gnss_valid_us = s_ntp_last_gnss_valid_us.load(std::memory_order_relaxed);
         bool pps_active = s_ntp_pps_active.load(std::memory_order_relaxed);
         bool gnss_timing_valid = s_ntp_gnss_timing_valid.load(std::memory_order_relaxed);
-        sync_fault_t fault = s_ntp_sync_fault.load(std::memory_order_relaxed);
+        sync_faults_t faults{
+            s_ntp_pps_missing.load(std::memory_order_relaxed),
+            s_ntp_gps_invalid.load(std::memory_order_relaxed),
+            s_ntp_sanity_mismatch.load(std::memory_order_relaxed),
+            s_ntp_sync_stale.load(std::memory_order_relaxed)};
 
         if (sequence_before != s_ntp_sync_state_sequence.load(std::memory_order_acquire))
             continue;
@@ -1196,14 +1200,15 @@ static ntp_reply_status_t get_ntp_reply_status()
                            (now_us - last_gnss_valid_us) <= Gnss_Validity_Timeout_Us;
         bool sync_stale = last_successful_sync_us > 0 &&
                           (now_us - last_successful_sync_us) > Sync_Stale_After_Us;
+        bool gnss_synchronized = gnss_recent && !sync_stale && !faults.gps_invalid;
         bool stratum_one = s_time_has_been_set.load(std::memory_order_acquire) &&
                            !s_time_setting_in_progress.load(std::memory_order_acquire) &&
-                           fault == sync_fault_t::none && pps_active && gnss_recent && !sync_stale &&
+                           !has_sync_fault(faults) && pps_active && gnss_synchronized &&
                            s_ntp_reference_valid.load(std::memory_order_acquire);
 
         if (stratum_one)
-            return {0, 1, "GPS", true};
-        return {};
+            return {0, 1, "GPS", true, gnss_synchronized, pps_active};
+        return {3, 16, "INIT", false, gnss_synchronized, pps_active};
     }
 
     return {};
@@ -1802,6 +1807,19 @@ static void clear_pps_events() // to do
     }
 }
 
+#if MQTT_ENABLED
+static void mqtt_finish_ntp_request_rate_second()
+{
+    uint32_t requests_this_second = s_ntp_requests_this_second.exchange(0, std::memory_order_relaxed);
+    uint32_t most_requests_per_second = s_ntp_most_requests_per_second.load(std::memory_order_relaxed);
+    while (most_requests_per_second < requests_this_second &&
+           !s_ntp_most_requests_per_second.compare_exchange_weak(most_requests_per_second, requests_this_second,
+                                                                 std::memory_order_relaxed, std::memory_order_relaxed))
+    {
+    }
+}
+#endif
+
 static void pps_discipline_task(void *parameter)
 {
     static constexpr int64_t ppsTimeoutUs = 3500000;
@@ -1825,6 +1843,11 @@ static void pps_discipline_task(void *parameter)
 
             if (!logged_active)
             {
+
+#if MQTT_ENABLED
+                s_ntp_requests_this_second.exchange(0, std::memory_order_relaxed);
+#endif
+
 #if DEBUG_ENABLED
                 ESP_LOGI(TAG, "PPS discipline active.");
 #endif
@@ -1873,6 +1896,9 @@ static void pps_discipline_task(void *parameter)
             }
 
             xSemaphoreGive(s_time_mutex);
+#if MQTT_ENABLED
+            mqtt_finish_ntp_request_rate_second();
+#endif
         }
         else
         {
@@ -2250,16 +2276,6 @@ static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
     if (s_mqtt_stats_mutex == nullptr || xSemaphoreTake(s_mqtt_stats_mutex, portMAX_DELAY) != pdTRUE)
         return;
 
-    time_t now = time(nullptr);
-    if (s_ntp_request_second != now)
-    {
-        s_ntp_request_second = now;
-        s_ntp_requests_this_second = 0;
-    }
-    s_ntp_requests_this_second++;
-    if (s_ntp_requests_this_second > s_ntp_most_requests_per_second)
-        s_ntp_most_requests_per_second = s_ntp_requests_this_second;
-
 #if MQTT_CLIENT_REPORTING_ENABLED
 
     for (size_t index = 0; index < s_mqtt_client_count; index++)
@@ -2527,7 +2543,7 @@ static void mqtt_build_report(char *payload, size_t payload_size)
     uint32_t queued_messages = static_cast<uint32_t>(s_mqtt_queued_messages_count.load());
     uint32_t queued_messages_discarded = s_mqtt_queued_messages_discarded;
     s_mqtt_queued_messages_discarded = 0;
-    uint32_t most_requests_per_second = 0;
+    uint32_t most_requests_per_second = s_ntp_most_requests_per_second.exchange(0, std::memory_order_relaxed);
 
 #if MQTT_CLIENT_REPORTING_ENABLED
     s_mqtt_clients_json[0] = '\0';
@@ -2535,8 +2551,6 @@ static void mqtt_build_report(char *payload, size_t payload_size)
 
     if (xSemaphoreTake(s_mqtt_stats_mutex, portMAX_DELAY) == pdTRUE)
     {
-        most_requests_per_second = s_ntp_most_requests_per_second;
-        s_ntp_most_requests_per_second = s_ntp_requests_this_second;
         std::sort(s_mqtt_clients, s_mqtt_clients + s_mqtt_client_count,
                   [](const mqtt_client_request_t &left, const mqtt_client_request_t &right)
                   {
@@ -2581,26 +2595,18 @@ static void mqtt_build_report(char *payload, size_t payload_size)
         xSemaphoreGive(s_mqtt_stats_mutex);
     }
 
-#else
-
-    if (xSemaphoreTake(s_mqtt_stats_mutex, portMAX_DELAY) == pdTRUE)
-    {
-        most_requests_per_second = s_ntp_most_requests_per_second;
-        s_ntp_most_requests_per_second = s_ntp_requests_this_second;
-
-        xSemaphoreGive(s_mqtt_stats_mutex);
-    }
-
 #endif
 
     char publishing_date_and_time[25] = "";
     mqtt_format_time(time(nullptr), publishing_date_and_time, sizeof(publishing_date_and_time));
 
 #if MQTT_HISTORICAL_REPORTING_ENABLED
-    char last_lock[25] = "";
-    char last_unlock[25] = "";
-    mqtt_format_time(s_last_gnss_lock.load(), last_lock, sizeof(last_lock));
-    mqtt_format_time(s_last_gnss_unlock.load(), last_unlock, sizeof(last_unlock));
+    char last_synchronized_and_disciplined[25] = "";
+    char last_gnss_unsynchronized[25] = "";
+    char last_pps_undisciplined[25] = "";
+    mqtt_format_time(s_last_synchronized_and_disciplined.load(), last_synchronized_and_disciplined, sizeof(last_synchronized_and_disciplined));
+    mqtt_format_time(s_last_gnss_unsynchronized.load(), last_gnss_unsynchronized, sizeof(last_gnss_unsynchronized));
+    mqtt_format_time(s_last_pps_undisciplined.load(), last_pps_undisciplined, sizeof(last_pps_undisciplined));
 #endif
 
     int64_t link_up_total_us = s_eth_link_up_total_us.load();
@@ -2623,8 +2629,43 @@ static void mqtt_build_report(char *payload, size_t payload_size)
     len += snprintf(payload + len, payload_size - len, "\"time\":\"%s\",", publishing_date_and_time);
     len += snprintf(payload + len, payload_size - len, "\"uptime\":%lu,", (unsigned long)(esp_timer_get_time() / 1000000LL));
     len += snprintf(payload + len, payload_size - len, "\"ethernet_up\":%s,", s_ethernet_connected.load() ? "true" : "false");
-    len += snprintf(payload + len, payload_size - len, "\"pps_active\":%s,", s_pps_discipline_active.load() ? "true" : "false");
-    len += snprintf(payload + len, payload_size - len, "\"gnss_locked\":%s,", s_gnss_locked.load() ? "true" : "false");
+
+    // to make this easy on the user - the following have been simplified for reporting so the user sees true when things are ok and false when they are not
+    bool current_gnss_locked = s_gnss_locked.load();                 // Indicates whether GNSS currently has a satellite lock
+    bool current_gnss_timing_valid = s_ntp_gnss_timing_valid.load(); // Tracks if GNSS timing data is valid
+    bool current_gps_valid = !s_ntp_gps_invalid.load();              // Signals GNSS timing missing, expired, or unusable
+    bool current_sync_fresh = !s_ntp_sync_stale.load();              // Shows if last successful sync is too old
+    bool current_sanity_matched = !s_ntp_sanity_mismatch.load();     // Marks detected mismatch between GNSS time and sanity checks (if the gnss time is outside the timeframe that it should be)
+    bool current_gnss_ok = current_gnss_locked && current_gnss_timing_valid && current_gps_valid && current_sync_fresh && current_sanity_matched;
+
+    len += snprintf(payload + len, payload_size - len, "\"gnss_synchronized\":%s,", current_gnss_ok ? "true" : "false");
+    if (!current_gnss_ok)
+    {
+        len += snprintf(payload + len, payload_size - len, "\"gnss_synchronized_indicators\":{");
+        len += snprintf(payload + len, payload_size - len, "\"locked\":%s,", current_gnss_locked ? "true" : "false");
+        len += snprintf(payload + len, payload_size - len, "\"timing\":%s,", current_gnss_timing_valid ? "true" : "false");
+        len += snprintf(payload + len, payload_size - len, "\"gps_valid\":%s,", current_gps_valid ? "true" : "false");
+        len += snprintf(payload + len, payload_size - len, "\"sync_fresh\":%s,", current_sync_fresh ? "true" : "false");
+        len += snprintf(payload + len, payload_size - len, "\"sanity_check_passed\":%s", current_sanity_matched ? "true" : "false");
+        len += snprintf(payload + len, payload_size - len, "},");
+    }
+
+    // to make this easy on the user - the following have been simplified for reporting so the user sees true when things are ok and false when they are not
+    bool current_pps_active = s_ntp_pps_active.load();                   // Is PPS present right now?
+    bool current_pps_discipline_active = s_pps_discipline_active.load(); // Is the PPS disciplining algorithm engaged?
+    bool current_pps_synchronized = !s_ntp_pps_missing.load();           // Is PPS missing in a way that constitutes a synchronization fault?
+    bool current_pps_ok = current_pps_active && current_pps_discipline_active && current_pps_synchronized;
+
+    len += snprintf(payload + len, payload_size - len, "\"pps_disciplined\":%s,", current_pps_ok ? "true" : "false");
+    if (!current_pps_ok)
+    {
+        len += snprintf(payload + len, payload_size - len, "\"pps_disciplined_indicators\":{");
+        len += snprintf(payload + len, payload_size - len, "\"pps_signals_present\":%s,", current_pps_active ? "true" : "false");
+        len += snprintf(payload + len, payload_size - len, "\"discipline_active\":%s,", current_pps_discipline_active ? "true" : "false");
+        len += snprintf(payload + len, payload_size - len, "\"pps_synchronized\":%s", current_pps_synchronized ? "true" : "false");
+        len += snprintf(payload + len, payload_size - len, "},");
+    }
+
     len += snprintf(payload + len, payload_size - len, "\"satellites\":%u", (unsigned int)s_satellite_count.load());
 
 #if MQTT_MEMORY_REPORTING_ENABLED
@@ -2668,8 +2709,9 @@ static void mqtt_build_report(char *payload, size_t payload_size)
     len += snprintf(payload + len, payload_size - len, "\"max_per_second\":%lu", (unsigned long)most_requests_per_second);
     len += snprintf(payload + len, payload_size - len, "},");
     len += snprintf(payload + len, payload_size - len, "\"responses\":{");
-    len += snprintf(payload + len, payload_size - len, "\"gnss_lock\":%lu,", (unsigned long)s_ntp_requests_with_gnss_lock.exchange(0));
-    len += snprintf(payload + len, payload_size - len, "\"gnss_unlock\":%lu", (unsigned long)s_ntp_requests_without_gnss_lock.exchange(0));
+    len += snprintf(payload + len, payload_size - len, "\"synchronized_and_disciplined\":%lu,", (unsigned long)s_ntp_responses_synchronized_and_disciplined.exchange(0));
+    len += snprintf(payload + len, payload_size - len, "\"gnss_unsynchronized\":%lu,", (unsigned long)s_ntp_responses_gnss_unsynchronized.exchange(0));
+    len += snprintf(payload + len, payload_size - len, "\"pps_undisciplined\":%lu", (unsigned long)s_ntp_responses_pps_undisciplined.exchange(0));
     len += snprintf(payload + len, payload_size - len, "}");
 
 #if MQTT_CLIENT_REPORTING_ENABLED
@@ -2683,9 +2725,10 @@ static void mqtt_build_report(char *payload, size_t payload_size)
 #if MQTT_HISTORICAL_REPORTING_ENABLED
     len += snprintf(payload + len, payload_size - len, "},");
     len += snprintf(payload + len, payload_size - len, "\"historical\":{");
-    len += snprintf(payload + len, payload_size - len, "\"gnss\":{");
-    len += snprintf(payload + len, payload_size - len, "\"last_lock\":\"%s\",", last_lock);
-    len += snprintf(payload + len, payload_size - len, "\"last_unlock\":\"%s\"", last_unlock);
+    len += snprintf(payload + len, payload_size - len, "\"gnss_receiver_last\":{");
+    len += snprintf(payload + len, payload_size - len, "\"synchronized_and_disciplined\":\"%s\",", last_synchronized_and_disciplined);
+    len += snprintf(payload + len, payload_size - len, "\"gnss_unsynchronized\":\"%s\",", last_gnss_unsynchronized);
+    len += snprintf(payload + len, payload_size - len, "\"pps_undisciplined\":\"%s\"", last_pps_undisciplined);
     len += snprintf(payload + len, payload_size - len, "}");
 #endif
 
@@ -2778,7 +2821,7 @@ static void mqtt_service_task(void *parameter)
                  (unsigned)suggested_bytes);
 
         // Results of this testing:
-        // mqtt_service_task: Stack report: Allocated=22000 bytes, HighWater=19976 bytes unused, PeakUsage=2024 bytes, Suggested=2530 bytes
+        // mqtt_service_task: Stack report: Allocated=22000 bytes, HighWater=19896 bytes unused, PeakUsage=2104 bytes, Suggested=2630 bytes
 
 #endif
     }
@@ -2981,7 +3024,7 @@ static void setup_mqtt()
         return;
     }
 
-    if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", 2530, nullptr, 5, nullptr, 0) != pdPASS)
+    if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", 2630, nullptr, 5, nullptr, 0) != pdPASS)
         s_mqtt_setup_failed.store(true);
 
 #endif
@@ -3200,7 +3243,7 @@ void write_opening_messages_to_the_console()
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Server v2.7.0.0");
+    ESP_LOGI(TAG, "ESP32 Time Server v2.7.1");
 
 #if UPTIME_RESTART_BUTTON_ENABLED
     ESP_LOGI(TAG, "Uptime / Reset button support is enabled in the settings");
@@ -3721,7 +3764,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
         nmea_rmc_time_t nmea_time{};
         if (!wait_for_nmea_rmc_time(&nmea_time, 3000UL))
         {
-            candidate->failure = sync_fault_t::gps_invalid;
+            candidate->failures.gps_invalid = true;
 #if DEBUG_ENABLED
             ESP_LOGE(TAG, "GNSS invalid checkpoint 1.");
 #endif
@@ -3744,7 +3787,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
 #endif
             if (!allowFallbackProcessingWithoutPPS)
             {
-                candidate->failure = sync_fault_t::pps_missing;
+                candidate->failures.pps_missing = true;
                 return false;
             }
 
@@ -3760,7 +3803,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
             ESP_LOGE(TAG, "UBX mode is running without PPS.");
 #endif
 
-            candidate->failure = sync_fault_t::pps_missing;
+            candidate->failures.pps_missing = true;
             if (allowFallbackProcessingWithoutPPS)
             {
 #if DEBUG_ENABLED
@@ -3773,7 +3816,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
 
         if (!s_gps.getPVT())
         {
-            candidate->failure = sync_fault_t::gps_invalid;
+            candidate->failures.gps_invalid = true;
 #if DEBUG_ENABLED
             ESP_LOGE(TAG, "GNSS invalid - Position - Velocity - Time");
 #endif
@@ -3783,7 +3826,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
         uint8_t fix_type = s_gps.getFixType();
         if ((fix_type != 3 && fix_type != 4 && fix_type != 5) || !s_gps.getGnssFixOk() || !s_gps.getDateValid() || !s_gps.getTimeValid())
         {
-            candidate->failure = sync_fault_t::gps_invalid;
+            candidate->failures.gps_invalid = true;
 #if DEBUG_ENABLED
             ESP_LOGE(TAG, "GNSS invalid - Fix type.");
 #endif
@@ -3799,7 +3842,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
 
         if (year <= 2025 || month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 60)
         {
-            candidate->failure = sync_fault_t::gps_invalid;
+            candidate->failures.gps_invalid = true;
 #if DEBUG_ENABLED
             ESP_LOGE(TAG, "GNSS invalid - bad date or time.");
 #endif
@@ -3817,7 +3860,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
             ESP_LOGE(TAG, "UBX mode lost PPS alignment pulse.");
 #endif
 
-            candidate->failure = sync_fault_t::pps_missing;
+            candidate->failures.pps_missing = true;
             if (allowFallbackProcessingWithoutPPS)
             {
 #if DEBUG_ENABLED
@@ -3834,7 +3877,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
 
     if ((esp_timer_get_time() - attempt_start_us) > Max_Sync_Attempt_Us)
     {
-        candidate->failure = sync_fault_t::gps_invalid;
+        candidate->failures.gps_invalid = true;
 #if DEBUG_ENABLED
         ESP_LOGE(TAG, "GNSS invalid checkpoint 2.");
 #endif
@@ -3872,9 +3915,9 @@ static void gps_runtime_recovery_task(void *parameter)
     vTaskDelete(nullptr);
 }
 
-static void handle_runtime_sync_failure(sync_fault_t fault, time_t update_delta, uint32_t retry_delay_ms)
+static void handle_runtime_sync_failure(const sync_faults_t &faults, time_t update_delta, uint32_t retry_delay_ms)
 {
-    uint32_t failure_count = sync_state_note_failure(fault, update_delta);
+    uint32_t failure_count = sync_state_note_failure(faults, update_delta);
     sync_state_t snapshot = get_sync_state_snapshot();
 
     s_time_setting_in_progress.store(false);
@@ -3942,7 +3985,7 @@ static void gps_time_sync_task(void *parameter)
         sync_candidate_t candidate{};
         if (!acquire_sync_candidate(&candidate))
         {
-            handle_runtime_sync_failure(candidate.failure, 0, 1000);
+            handle_runtime_sync_failure(candidate.failures, 0, 1000);
             continue;
         }
 
@@ -3951,13 +3994,13 @@ static void gps_time_sync_task(void *parameter)
             sync_candidate_t confirmation_candidate{};
             if (!acquire_sync_candidate(&confirmation_candidate))
             {
-                handle_runtime_sync_failure(confirmation_candidate.failure, 0, 1000);
+                handle_runtime_sync_failure(confirmation_candidate.failures, 0, 1000);
                 continue;
             }
 
             if (!first_sync_candidates_are_plausible(candidate, confirmation_candidate))
             {
-                handle_runtime_sync_failure(sync_fault_t::gps_invalid, 0, 1000);
+                handle_runtime_sync_failure({false, true, false, false}, 0, 1000);
                 continue;
             }
 
@@ -3986,7 +4029,7 @@ static void gps_time_sync_task(void *parameter)
                 }
 
                 s_safe_guard_tripped.store(true);
-                sync_state_note_failure(sync_fault_t::sanity_mismatch, update_delta);
+                sync_state_note_failure({false, false, true, false}, update_delta);
 
                 if (rebootIfSanityCheckFails)
                 {
@@ -4308,14 +4351,33 @@ static void ntp_server_task(void *parameter)
 
 #if MQTT_ENABLED
                 s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
+                s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
                 mqtt_enqueue_ntp_request(source_addr);
 #endif
                 ntp_reply_status_t status = get_ntp_reply_status();
 #if MQTT_ENABLED
-                if (status.stratum == 1)
-                    s_ntp_requests_with_gnss_lock.fetch_add(1, std::memory_order_relaxed);
-                else
-                    s_ntp_requests_without_gnss_lock.fetch_add(1, std::memory_order_relaxed);
+                time_t response_time = time(nullptr);
+                if (status.gnss_synchronized && status.pps_disciplined)
+                {
+                    s_ntp_responses_synchronized_and_disciplined.fetch_add(1, std::memory_order_relaxed);
+#if MQTT_HISTORICAL_REPORTING_ENABLED
+                    s_last_synchronized_and_disciplined.store(response_time);
+#endif
+                }
+                if (!status.gnss_synchronized)
+                {
+                    s_ntp_responses_gnss_unsynchronized.fetch_add(1, std::memory_order_relaxed);
+#if MQTT_HISTORICAL_REPORTING_ENABLED
+                    s_last_gnss_unsynchronized.store(response_time);
+#endif
+                }
+                if (!status.pps_disciplined)
+                {
+                    s_ntp_responses_pps_undisciplined.fetch_add(1, std::memory_order_relaxed);
+#if MQTT_HISTORICAL_REPORTING_ENABLED
+                    s_last_pps_undisciplined.store(response_time);
+#endif
+                }
 #endif
                 build_ntp_reply(request, reply, ntp_version, receive_time, status);
                 write_ntp_timestamp(reply, 40, get_current_time_in_ntp64_format());
@@ -4432,11 +4494,16 @@ static void update_display_task(void *parameter)
             // 98 used for when the button is pressed (normal periodic behaviour) . "ESP32 Time Server's "
             // 99 Time sync underway (normal periodic behaviour)                  . "ESP32 Time Server * "
 
+            // Regarding statuses [6], [7] and [8], each condition represents a distinct failure mode:
+            // [6] - GNSS timing is unusable. This is a hard fault.
+            // [7] - The system hasn’t synced with GNSS as expected due to processing delays or blockages
+            // [8] - GNSS module lost satellite lock. This is a raw GNSS status, not a sync fault.
+
             // Regarding: sync_snapshot.holdover_mode
             // In timekeeping terminology, holdover is the state where a time server continues providing time from its internal
             // oscillator after losing its external reference (in this case, GNSS/GPS). The device is no longer actively
             // synchronized but is "coasting" on its last-known good time.
-            // Holderover mode is not expressly reported on the LCD's top line as it is implied when
+            // Holdover mode is not expressly reported on the LCD's top line as it is implied when
             // Sanity check mismatch, PPS missing, GNSS missing or invalid, GNSS snyc stale, or GNSS unlocked
             // are reported.
 
@@ -4454,28 +4521,25 @@ static void update_display_task(void *parameter)
                 else if (s_mqtt_setup_failed.load() || !s_mqtt_connected.load())
                     required_top_line_message = 2;
 #endif
-                switch (sync_snapshot.fault)
+                if (sync_snapshot.faults.sanity_mismatch)
                 {
-                case sync_fault_t::sanity_mismatch:
                     required_top_line_message = 4;
-                    break;
-
-                case sync_fault_t::pps_missing:
+                }
+                else if (sync_snapshot.faults.pps_missing)
+                {
                     required_top_line_message = 5;
-                    break;
-
-                case sync_fault_t::gps_invalid:
+                }
+                else if (sync_snapshot.faults.gps_invalid)
+                {
                     required_top_line_message = 6;
-                    break;
-
-                case sync_fault_t::sync_stale:
+                }
+                else if (sync_snapshot.faults.sync_stale)
+                {
                     required_top_line_message = 7;
-                    break;
-
-                default:
-                    if (required_top_line_message == 0)
-                        required_top_line_message = s_gnss_locked.load() ? 0 : 8;
-                    break;
+                }
+                else if (required_top_line_message == 0)
+                {
+                    required_top_line_message = s_gnss_locked.load() ? 0 : 8;
                 }
             }
 

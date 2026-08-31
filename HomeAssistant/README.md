@@ -58,152 +58,203 @@ Use this option if you do **not** already have an `mqtt.yaml` file.
 <!-- markdownlint-disable MD013 -->
 
 ```yaml
-sensor:
-  # ============================
-  # NTP — CURRENT
-  # ============================
-  - name: "NTP Time"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.time }}"
 
-  - name: "NTP Uptime"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.uptime }}"
-    unit_of_measurement: "s"
+  sensor:
+    # ============================
+    # CURRENT
+    # ============================
+    - name: "NTP Time"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.time }}"
 
-  - name: "Ethernet Up"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.ethernet_up }}"
+    - name: "NTP Uptime"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.uptime }}"
+      unit_of_measurement: "s"
 
-  - name: "PPS Active"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.pps_active }}"
+    - name: "Ethernet Up"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.ethernet_up }}"
 
-  - name: "GNSS Locked"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.gnss_locked }}"
+    - name: "GNSS Synchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized }}"
 
-  - name: "Satellites Current"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.satellites }}"
+    - name: "GNSS Locked"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.locked }}"
 
-  # ============================
-  # NTP — MEMORY
-  # ============================
-  - name: "Malloc 8-bit"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.memory.malloc_cap_8bit }}"
+    - name: "GNSS Timing Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.timing }}"
 
-  - name: "Malloc 32-bit"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.memory.malloc_cap_32bit }}"
+    - name: "GNSS GPS Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.gps_valid }}"
 
-  - name: "Malloc Internal"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.memory.malloc_cap_internal }}"
+    - name: "GNSS Sync Fresh"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.sync_fresh }}"
 
-  - name: "Malloc DMA"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.memory.malloc_cap_dma }}"
+    - name: "GNSS Sanity Check Passed"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.sanity_check_passed }}"
 
-  - name: "Malloc SPIRAM"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.memory.malloc_cap_spiram }}"
+    - name: "PPS Disciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined }}"
 
-  - name: "Malloc Default"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.memory.malloc_cap_default }}"
+    - name: "PPS Signals Present"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined_indicators.pps_signals_present }}"
 
-  - name: "Free Heap"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.memory.free_heap }}"
+    - name: "PPS Discipline Active"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined_indicators.discipline_active }}"
 
-  - name: "Minimum Free Heap"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.memory.minimum_free_heap }}"
+    - name: "PPS Synchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined_indicators.pps_synchronized }}"
 
-  - name: "Largest Free 8-bit Block"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.current.memory.largest_free_8bit_block }}"
+    - name: "Satellites Current"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.satellites }}"
 
-  # ============================
-  # NTP — QUEUED MESSAGES
-  # ============================
-  - name: "Queued Held"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.queued_messages.held }}"
+    # ============================
+    # MEMORY
+    # ============================
+    - name: "Malloc 8-bit"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_8bit }}"
 
-  - name: "Queued Discarded"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.queued_messages.discarded }}"
+    - name: "Malloc 32-bit"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_32bit }}"
 
-  # ============================
-  # NTP — THIS PERIOD
-  # ============================
-  - name: "Ethernet Up Seconds"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.ethernet_up_secs }}"
-    unit_of_measurement: "s"
+    - name: "Malloc Internal"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_internal }}"
 
-  - name: "PPS Pulses"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.pps_pulses }}"
+    - name: "Malloc DMA"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_dma }}"
 
-  - name: "GNSS Locked Seconds"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.gnss_locked_secs }}"
-    unit_of_measurement: "s"
+    - name: "Malloc SPIRAM"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_spiram }}"
 
-  - name: "Satellites Min"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.satellites.min }}"
+    - name: "Malloc Default"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_default }}"
 
-  - name: "Satellites Max"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.satellites.max }}"
+    - name: "Free Heap"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.free_heap }}"
 
-  - name: "NTP Requests Valid"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.ntp.requests.valid }}"
+    - name: "Minimum Free Heap"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.minimum_free_heap }}"
 
-  - name: "NTP Requests Invalid"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.ntp.requests.invalid }}"
+    - name: "Largest Free 8-bit Block"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.largest_free_8bit_block }}"
 
-  - name: "NTP Max Requests Per Second"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.ntp.requests.max_per_second }}"
+    # ============================
+    # QUEUED MESSAGES
+    # ============================
+    - name: "Queued Held"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.queued_messages.held }}"
 
-  - name: "NTP Responses GNSS Lock"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.ntp.responses.gnss_lock }}"
+    - name: "Queued Discarded"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.queued_messages.discarded }}"
 
-  - name: "NTP Responses GNSS Unlock"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.ntp.responses.gnss_unlock }}"
+    # ============================
+    # THIS PERIOD
+    # ============================
+    - name: "Ethernet Up Seconds"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ethernet_up_secs }}"
+      unit_of_measurement: "s"
 
-  - name: "NTP Client 1 Address"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.clients[0].address }}"
+    - name: "PPS Pulses"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.pps_pulses }}"
 
-  - name: "NTP Client 1 Requests"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.clients[0].requests }}"
+    - name: "GNSS Locked Seconds"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.gnss_locked_secs }}"
+      unit_of_measurement: "s"
 
-  - name: "Clients Overflown"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.this_period.clients_overflown }}"
+    - name: "Satellites Min"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.satellites.min }}"
 
-  # ============================
-  # NTP — HISTORICAL
-  # ============================
-  - name: "GNSS Last Lock"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.historical.gnss.last_lock }}"
+    - name: "Satellites Max"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.satellites.max }}"
 
-  - name: "GNSS Last Unlock"
-    state_topic: "ESP32TimeServer/report"
-    value_template: "{{ value_json.historical.gnss.last_unlock }}"
+    - name: "NTP Requests Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.valid }}"
+
+    - name: "NTP Requests Invalid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.invalid }}"
+
+    - name: "NTP Telemetry Dropped"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.telemetry_dropped }}"
+
+    - name: "NTP Max Requests Per Second"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.max_per_second }}"
+
+    - name: "NTP Responses Synchronized & Disciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.responses.synchronized_and_disciplined }}"
+
+    - name: "NTP Responses GNSS Unsynchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.responses.gnss_unsynchronized }}"
+
+    - name: "NTP Responses PPS Undisciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.responses.pps_undisciplined }}"
+
+    # ============================
+    # CLIENTS
+    # ============================
+    - name: "Clients Overflown"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.clients_overflown }}"
+
+    # Example for client 0 (you can add more if desired)
+    - name: "Client 0 Address"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.clients[0].address }}"
+
+    - name: "Client 0 Requests"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.clients[0].requests }}"
+
+    # ============================
+    # HISTORICAL
+    # ============================
+    - name: "Last Synchronized & Disciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.historical.gnss_receiver_last.synchronized_and_disciplined }}"
+
+    - name: "Last GNSS Unsynchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.historical.gnss_receiver_last.gnss_unsynchronized }}"
+
+    - name: "Last PPS Undisciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.historical.gnss_receiver_last.pps_undisciplined }}"
+
+
 ```
 
 <!-- markdownlint-enable MD013 -->
@@ -222,151 +273,204 @@ Use this option if you already have an `mqtt.yaml` file that contains a
 <!-- markdownlint-disable MD013 -->
 
 ```yaml
-# ============================
-# NTP — CURRENT
-# ============================
-- name: "NTP Time"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.time }}"
+  
+  # only add the sensor key line below if your existing file currently doesn't already have a sensor key line
+  sensor:
 
-- name: "NTP Uptime"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.uptime }}"
-  unit_of_measurement: "s"
+    # ============================
+    # CURRENT
+    # ============================
+    - name: "NTP Time"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.time }}"
 
-- name: "Ethernet Up"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.ethernet_up }}"
+    - name: "NTP Uptime"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.uptime }}"
+      unit_of_measurement: "s"
 
-- name: "PPS Active"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.pps_active }}"
+    - name: "Ethernet Up"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.ethernet_up }}"
 
-- name: "GNSS Locked"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.gnss_locked }}"
+    - name: "GNSS Synchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized }}"
 
-- name: "Satellites Current"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.satellites }}"
+    - name: "GNSS Locked"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.locked }}"
 
-# ============================
-# NTP — MEMORY
-# ============================
-- name: "Malloc 8-bit"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_8bit }}"
+    - name: "GNSS Timing Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.timing }}"
 
-- name: "Malloc 32-bit"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_32bit }}"
+    - name: "GNSS GPS Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.gps_valid }}"
 
-- name: "Malloc Internal"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_internal }}"
+    - name: "GNSS Sync Fresh"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.sync_fresh }}"
 
-- name: "Malloc DMA"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_dma }}"
+    - name: "GNSS Sanity Check Passed"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.sanity_check_passed }}"
 
-- name: "Malloc SPIRAM"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_spiram }}"
+    - name: "PPS Disciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined }}"
 
-- name: "Malloc Default"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_default }}"
+    - name: "PPS Signals Present"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined_indicators.pps_signals_present }}"
 
-- name: "Free Heap"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.free_heap }}"
+    - name: "PPS Discipline Active"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined_indicators.discipline_active }}"
 
-- name: "Minimum Free Heap"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.minimum_free_heap }}"
+    - name: "PPS Synchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined_indicators.pps_synchronized }}"
 
-- name: "Largest Free 8-bit Block"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.largest_free_8bit_block }}"
+    - name: "Satellites Current"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.satellites }}"
 
-# ============================
-# NTP — QUEUED MESSAGES
-# ============================
-- name: "Queued Held"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.queued_messages.held }}"
+    # ============================
+    # MEMORY
+    # ============================
+    - name: "Malloc 8-bit"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_8bit }}"
 
-- name: "Queued Discarded"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.queued_messages.discarded }}"
+    - name: "Malloc 32-bit"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_32bit }}"
 
-# ============================
-# NTP — THIS PERIOD
-# ============================
-- name: "Ethernet Up Seconds"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ethernet_up_secs }}"
-  unit_of_measurement: "s"
+    - name: "Malloc Internal"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_internal }}"
 
-- name: "PPS Pulses"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.pps_pulses }}"
+    - name: "Malloc DMA"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_dma }}"
 
-- name: "GNSS Locked Seconds"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.gnss_locked_secs }}"
-  unit_of_measurement: "s"
+    - name: "Malloc SPIRAM"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_spiram }}"
 
-- name: "Satellites Min"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.satellites.min }}"
+    - name: "Malloc Default"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_default }}"
 
-- name: "Satellites Max"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.satellites.max }}"
+    - name: "Free Heap"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.free_heap }}"
 
-- name: "NTP Requests Valid"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ntp.requests.valid }}"
+    - name: "Minimum Free Heap"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.minimum_free_heap }}"
 
-- name: "NTP Requests Invalid"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ntp.requests.invalid }}"
+    - name: "Largest Free 8-bit Block"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.largest_free_8bit_block }}"
 
-- name: "NTP Max Requests Per Second"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ntp.requests.max_per_second }}"
+    # ============================
+    # QUEUED MESSAGES
+    # ============================
+    - name: "Queued Held"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.queued_messages.held }}"
 
-- name: "NTP Responses GNSS Lock"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ntp.responses.gnss_lock }}"
+    - name: "Queued Discarded"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.queued_messages.discarded }}"
 
-- name: "NTP Responses GNSS Unlock"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ntp.responses.gnss_unlock }}"
+    # ============================
+    # THIS PERIOD
+    # ============================
+    - name: "Ethernet Up Seconds"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ethernet_up_secs }}"
+      unit_of_measurement: "s"
 
-- name: "NTP Client 1 Address"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.clients[0].address }}"
+    - name: "PPS Pulses"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.pps_pulses }}"
 
-- name: "NTP Client 1 Requests"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.clients[0].requests }}"
+    - name: "GNSS Locked Seconds"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.gnss_locked_secs }}"
+      unit_of_measurement: "s"
 
-- name: "Clients Overflown"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.clients_overflown }}"
+    - name: "Satellites Min"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.satellites.min }}"
 
-# ============================
-# NTP — HISTORICAL
-# ============================
-- name: "GNSS Last Lock"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.historical.gnss.last_lock }}"
+    - name: "Satellites Max"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.satellites.max }}"
 
-- name: "GNSS Last Unlock"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.historical.gnss.last_unlock }}"
+    - name: "NTP Requests Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.valid }}"
+
+    - name: "NTP Requests Invalid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.invalid }}"
+
+    - name: "NTP Telemetry Dropped"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.telemetry_dropped }}"
+
+    - name: "NTP Max Requests Per Second"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.max_per_second }}"
+
+    - name: "NTP Responses Synchronized & Disciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.responses.synchronized_and_disciplined }}"
+
+    - name: "NTP Responses GNSS Unsynchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.responses.gnss_unsynchronized }}"
+
+    - name: "NTP Responses PPS Undisciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.responses.pps_undisciplined }}"
+
+    # ============================
+    # CLIENTS
+    # ============================
+    - name: "Clients Overflown"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.clients_overflown }}"
+
+    # Example for client 0 (you can add more if desired)
+    - name: "Client 0 Address"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.clients[0].address }}"
+
+    - name: "Client 0 Requests"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.clients[0].requests }}"
+
+    # ============================
+    # HISTORICAL
+    # ============================
+    - name: "GNSS Last Synchronized & Disciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.historical.gnss_receiver_last.synchronized_and_disciplined }}"
+
+    - name: "GNSS Last Unsynchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.historical.gnss_receiver_last.gnss_unsynchronized }}"
+
+    - name: "PPS Last Undisciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.historical.gnss_receiver_last.pps_undisciplined }}"
+
 ```
 
 <!-- markdownlint-enable MD013 -->
@@ -392,136 +496,201 @@ lists (no top-level `sensor:` key).
 <!-- markdownlint-disable MD013 -->
 
 ```yaml
-- name: "NTP Time"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.time }}"
+ 
+    # ============================
+    # CURRENT
+    # ============================
+    - name: "NTP Time"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.time }}"
 
-- name: "NTP Uptime"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.uptime }}"
-  unit_of_measurement: "s"
+    - name: "NTP Uptime"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.uptime }}"
+      unit_of_measurement: "s"
 
-- name: "Ethernet Up"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.ethernet_up }}"
+    - name: "Ethernet Up"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.ethernet_up }}"
 
-- name: "PPS Active"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.pps_active }}"
+    - name: "GNSS Synchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized }}"
 
-- name: "GNSS Locked"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.gnss_locked }}"
+    - name: "GNSS Locked"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.locked }}"
 
-- name: "Satellites Current"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.satellites }}"
+    - name: "GNSS Timing Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.timing }}"
 
-- name: "Malloc 8-bit"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_8bit }}"
+    - name: "GNSS GPS Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.gps_valid }}"
 
-- name: "Malloc 32-bit"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_32bit }}"
+    - name: "GNSS Sync Fresh"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.sync_fresh }}"
 
-- name: "Malloc Internal"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_internal }}"
+    - name: "GNSS Sanity Check Passed"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.gnss_synchronized_indicators.sanity_check_passed }}"
 
-- name: "Malloc DMA"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_dma }}"
+    - name: "PPS Disciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined }}"
 
-- name: "Malloc SPIRAM"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_spiram }}"
+    - name: "PPS Signals Present"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined_indicators.pps_signals_present }}"
 
-- name: "Malloc Default"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.malloc_cap_default }}"
+    - name: "PPS Discipline Active"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined_indicators.discipline_active }}"
 
-- name: "Free Heap"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.free_heap }}"
+    - name: "PPS Synchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.pps_disciplined_indicators.pps_synchronized }}"
 
-- name: "Minimum Free Heap"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.minimum_free_heap }}"
+    - name: "Satellites Current"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.satellites }}"
 
-- name: "Largest Free 8-bit Block"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.current.memory.largest_free_8bit_block }}"
+    # ============================
+    # MEMORY
+    # ============================
+    - name: "Malloc 8-bit"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_8bit }}"
 
-- name: "Queued Held"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.queued_messages.held }}"
+    - name: "Malloc 32-bit"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_32bit }}"
 
-- name: "Queued Discarded"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.queued_messages.discarded }}"
+    - name: "Malloc Internal"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_internal }}"
 
-- name: "Ethernet Up Seconds"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ethernet_up_secs }}"
-  unit_of_measurement: "s"
+    - name: "Malloc DMA"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_dma }}"
 
-- name: "PPS Pulses"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.pps_pulses }}"
+    - name: "Malloc SPIRAM"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_spiram }}"
 
-- name: "GNSS Locked Seconds"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.gnss_locked_secs }}"
-  unit_of_measurement: "s"
+    - name: "Malloc Default"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.malloc_cap_default }}"
 
-- name: "Satellites Min"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.satellites.min }}"
+    - name: "Free Heap"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.free_heap }}"
 
-- name: "Satellites Max"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.satellites.max }}"
+    - name: "Minimum Free Heap"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.minimum_free_heap }}"
 
-- name: "NTP Requests Valid"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ntp.requests.valid }}"
+    - name: "Largest Free 8-bit Block"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.current.memory.largest_free_8bit_block }}"
 
-- name: "NTP Requests Invalid"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ntp.requests.invalid }}"
+    # ============================
+    # QUEUED MESSAGES
+    # ============================
+    - name: "Queued Held"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.queued_messages.held }}"
 
-- name: "NTP Max Requests Per Second"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ntp.requests.max_per_second }}"
+    - name: "Queued Discarded"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.queued_messages.discarded }}"
 
-- name: "NTP Responses GNSS Lock"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ntp.responses.gnss_lock }}"
+    # ============================
+    # THIS PERIOD
+    # ============================
+    - name: "Ethernet Up Seconds"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ethernet_up_secs }}"
+      unit_of_measurement: "s"
 
-- name: "NTP Responses GNSS Unlock"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.ntp.responses.gnss_unlock }}"
+    - name: "PPS Pulses"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.pps_pulses }}"
 
-- name: "NTP Client 1 Address"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.clients[0].address }}"
+    - name: "GNSS Locked Seconds"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.gnss_locked_secs }}"
+      unit_of_measurement: "s"
 
-- name: "NTP Client 1 Requests"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.clients[0].requests }}"
+    - name: "Satellites Min"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.satellites.min }}"
 
-- name: "Clients Overflown"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.this_period.clients_overflown }}"
+    - name: "Satellites Max"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.satellites.max }}"
 
-- name: "GNSS Last Lock"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.historical.gnss.last_lock }}"
+    - name: "NTP Requests Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.valid }}"
 
-- name: "GNSS Last Unlock"
-  state_topic: "ESP32TimeServer/report"
-  value_template: "{{ value_json.historical.gnss.last_unlock }}"
+    - name: "NTP Requests Invalid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.invalid }}"
+
+    - name: "NTP Telemetry Dropped"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.telemetry_dropped }}"
+
+    - name: "NTP Max Requests Per Second"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.max_per_second }}"
+
+    - name: "NTP Responses Synchronized & Disciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.responses.synchronized_and_disciplined }}"
+
+    - name: "NTP Responses GNSS Unsynchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.responses.gnss_unsynchronized }}"
+
+    - name: "NTP Responses PPS Undisciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.responses.pps_undisciplined }}"
+
+    # ============================
+    # CLIENTS
+    # ============================
+    - name: "Clients Overflown"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.clients_overflown }}"
+
+    # Example for client 0 (you can add more if desired)
+    - name: "Client 0 Address"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.clients[0].address }}"
+
+    - name: "Client 0 Requests"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.clients[0].requests }}"
+
+    # ============================
+    # HISTORICAL
+    # ============================
+    - name: "Last Synchronized & Disciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.historical.gnss_receiver_last.synchronized_and_disciplined }}"
+
+    - name: "Last GNSS Unsynchronized"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.historical.gnss_receiver_last.gnss_unsynchronized }}"
+
+    - name: "Last PPS Undisciplined"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.historical.gnss_receiver_last.pps_undisciplined }}"
+
 ```
 
 <!-- markdownlint-enable MD013 -->
@@ -553,61 +722,20 @@ complete block shown:
 <!-- markdownlint-disable MD013 -->
 
 ```yaml
+  # only add the template key line below if your existing file currently doesn't already have a template key line
 template:
-  - sensor:
-      - name: "GNSS Last Lock (Formatted)"
-        state: >
-          {% set raw = states('sensor.gnss_last_lock') | string %} {% if raw in
-          ['', 'None', 'unknown', 'unavailable', 'Unknown', 'Unavailable'] %}
-            {{ 'None' }}
-          {% else %}
-            {% set formatted = as_timestamp(strptime(raw,
-          '%Y-%m-%dT%H:%M:%S%z'))
-              | timestamp_custom('%Y-%m-%d %I:%M:%S %p') %}
 
-            {# Extract hour (positions 11–13) #}
-            {% set hour = formatted[11:13] %}
-
-            {# Remove leading zero if present #}
-            {% if hour.startswith('0') %}
-              {% set hour = ' ' ~ hour[1] %}
-            {% endif %}
-
-            {# Reassemble final string #}
-            {{ formatted[:11] ~ hour ~ formatted[13:] }}
-          {% endif %}
-
-  - sensor:
-      - name: "GNSS Last Unlock (Formatted)"
-        availability: >
-          {{ true }}
-        state: >
-          {% set raw = states('sensor.gnss_last_unlock') | string %} {% if raw
-          in ['', 'None', 'none', 'unknown', 'unavailable', 'Unknown',
-          'Unavailable'] %}
-            {{ 'None' }}
-          {% else %}
-            {% set formatted = as_timestamp(strptime(raw,
-          '%Y-%m-%dT%H:%M:%S%z'))
-              | timestamp_custom('%Y-%m-%d %I:%M:%S %p') %}
-
-            {% set hour = formatted[11:13] %}
-            {% if hour.startswith('0') %}
-              {% set hour = ' ' ~ hour[1:] %}
-            {% endif %}
-
-            {{ formatted[:11] ~ hour ~ formatted[13:] }}
-          {% endif %}
-
+# ******************************************************************************************
+# ESP32TimeServer                                                                          *   
+# ******************************************************************************************
   - sensor:
       - name: "NTP Time (Formatted)"
         state: >
-          {% set raw = states('sensor.ntp_time') | string %} {% if raw in ['',
-          'None', 'unknown', 'unavailable', 'Unknown', 'Unavailable'] %}
+          {% set raw = states('sensor.ntp_time') | string %}
+          {% if raw in ['', 'None', 'unknown', 'unavailable', 'Unknown', 'Unavailable'] %}
             None
           {% else %}
-            {% set formatted = as_timestamp(strptime(raw,
-          '%Y-%m-%dT%H:%M:%S%z'))
+            {% set formatted = as_timestamp(strptime(raw, '%Y-%m-%dT%H:%M:%S%z'))
               | timestamp_custom('%Y-%m-%d %I:%M:%S %p') %}
 
             {# Extract hour (positions 11–13) #}
@@ -625,14 +753,82 @@ template:
   - sensor:
       - name: "NTP uptime (Formatted)"
         state: >
-          {% set uptime = states('sensor.ntp_uptime') | int(0) %} {% set days =
-          uptime // 86400 %} {% set hours = (uptime % 86400) // 3600 %} {% set
-          minutes = (uptime % 3600) // 60 %} {% set seconds = uptime % 60 %} {%
-          if days > 0 %} {{ days }}d {{ hours }}:{{ "%02d"|format(minutes) }}:{{
-          "%02d"|format(seconds) }} {% elif hours > 0 %} {{ hours }}:{{
-          "%02d"|format(minutes) }}:{{ "%02d"|format(seconds) }} {% elif minutes
-          > 0 %} {{ minutes }}:{{ "%02d"|format(seconds) }} {% else %} {{
-          seconds }} {% endif %}
+          {% set uptime = states('sensor.ntp_uptime') | int(0) %}
+          {% set days = uptime // 86400 %}
+          {% set hours = (uptime % 86400) // 3600 %}
+          {% set minutes = (uptime % 3600) // 60 %}
+          {% set seconds = uptime % 60 %}
+          {% if days > 0 %}
+          {{ days }}d {{ hours }}:{{ "%02d"|format(minutes) }}:{{ "%02d"|format(seconds) }}
+          {% elif hours > 0 %}
+          {{ hours }}:{{ "%02d"|format(minutes) }}:{{ "%02d"|format(seconds) }}
+          {% elif minutes > 0 %}
+          {{ minutes }}:{{ "%02d"|format(seconds) }}
+          {% else %}
+          {{ seconds }}
+          {% endif %}
+
+  - sensor:
+      - name: "GNSS Last Sync and Disciplined (Formatted)"
+        availability: >
+          {{ true }}
+        state: >
+          {% set raw = states('sensor.last_synchronized_disciplined') | string %}
+          {% if raw in ['', 'None', 'none', 'unknown', 'unavailable', 'Unknown', 'Unavailable'] %}
+            {{ 'None' }}
+          {% else %}
+            {% set formatted = as_timestamp(strptime(raw, '%Y-%m-%dT%H:%M:%S%z'))
+              | timestamp_custom('%Y-%m-%d %I:%M:%S %p') %}
+
+            {% set hour = formatted[11:13] %}
+            {% if hour.startswith('0') %}
+              {% set hour = ' ' ~ hour[1:] %}
+            {% endif %}
+
+            {{ formatted[:11] ~ hour ~ formatted[13:] }}
+          {% endif %}
+ 
+  - sensor:
+      - name: "Last GNSS Unsynchronized (Formatted)"
+        availability: >
+          {{ true }}
+        state: >
+          {% set raw = states('sensor.last_gnss_unsynchronized') | string %}
+          {% if raw in ['', 'None', 'none', 'unknown', 'unavailable', 'Unknown', 'Unavailable'] %}
+            {{ 'None' }}
+          {% else %}
+            {% set formatted = as_timestamp(strptime(raw, '%Y-%m-%dT%H:%M:%S%z'))
+              | timestamp_custom('%Y-%m-%d %I:%M:%S %p') %}
+
+            {% set hour = formatted[11:13] %}
+            {% if hour.startswith('0') %}
+              {% set hour = ' ' ~ hour[1:] %}
+            {% endif %}
+
+            {{ formatted[:11] ~ hour ~ formatted[13:] }}
+          {% endif %}
+
+  - sensor:
+      - name: "Last PPS Undisciplined (Formatted)"
+        state: >
+          {% set raw = states('sensor.last_pps_undisciplined') | string %}
+          {% if raw in ['', 'None', 'unknown', 'unavailable', 'Unknown', 'Unavailable'] %}
+            None
+          {% else %}
+            {% set formatted = as_timestamp(strptime(raw, '%Y-%m-%dT%H:%M:%S%z'))
+              | timestamp_custom('%Y-%m-%d %I:%M:%S %p') %}
+
+            {# Extract hour (positions 11–13) #}
+            {% set hour = formatted[11:13] %}
+
+            {# Remove leading zero if present #}
+            {% if hour.startswith('0') %}
+              {% set hour = ' ' ~ hour[1] %}
+            {% endif %}
+
+            {# Reassemble final string #}
+            {{ formatted[:11] ~ hour ~ formatted[13:] }}
+          {% endif %}
 ```
 
 <!-- markdownlint-enable MD013 -->
@@ -697,6 +893,7 @@ become available once the reload completes.
 
 ```yaml
 type: entities
+title: ESP32 Time Server
 entities:
   - entity: sensor.ntp_requests_valid
     name: Valid requests
@@ -706,23 +903,34 @@ entities:
     icon: mdi:bookmark-remove-outline
   - entity: sensor.ntp_max_requests_per_second
     name: Maximum requests / second
-    icon: mdi:bookmark-multiple-outline
+    icon: mdi:rabbit
+  - entity: sensor.ntp_responses_synchronized_disciplined
+    name: Synchronized & disciplined responses
+    icon: mdi:bookmark-check-outline
+  - entity: sensor.ntp_responses_gnss_unsynchronized
+    name: GNSS unsynchronized responses
+    icon: mdi:bookmark-remove-outline
+  - entity: sensor.ntp_responses_pps_undisciplined
+    name: PPS undisciplined responses
+    icon: mdi:bookmark-remove-outline
   - entity: sensor.satellites_current
     name: Satellites
     icon: mdi:satellite-uplink
-  - entity: sensor.gnss_last_lock_formatted
-    name: Last GNSS lock
-    icon: mdi:shield-lock-outline
-  - entity: sensor.gnss_last_unlock_formatted
-    name: Last GNSS unlock
-    icon: mdi:shield-lock-open-outline
   - entity: sensor.ntp_uptime_formatted
     name: Uptime
     icon: mdi:clock-check-outline
+  - entity: sensor.gnss_last_sync_and_disciplined_formatted
+    name: Last synchronized & disciplined
+    icon: mdi:update
+  - entity: sensor.last_gnss_unsynchronized_formatted
+    name: last gnss unsynchronized
+    icon: mdi:update
+  - entity: sensor.last_pps_undisciplined_formatted
+    name: Last PPS undisciplined
+    icon: mdi:update
   - entity: sensor.ntp_time_formatted
     name: Last update
     icon: mdi:update
-title: ESP32 Time Server
 ```
 
 <!-- markdownlint-disable MD029 -->
