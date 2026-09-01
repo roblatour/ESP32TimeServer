@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.7.1
+// ESP32 Time Server v2.7.2
 // Copyright Rob Latour, 2026
 //
 // ESP32 Dev Board:     ESP32-P4-ETH https://www.waveshare.com/esp32-p4-eth.htm
@@ -68,6 +68,7 @@ extern "C"
 #include "esp_timer.h"
 #include "esp_vfs_fat.h"
 #include "nvs.h"
+#include "driver/mcpwm_cap.h"
 #include "driver/sdmmc_host.h"
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
 #include "sdmmc_cmd.h"
@@ -154,10 +155,20 @@ static bool s_lcd_line_cached[lcdRows] = {};
 #define display_line(...)
 #endif
 
+struct PpsCaptureEvent
+{
+    uint64_t ticks;
+    int64_t approximate_edge_us;
+};
+
+static constexpr uint32_t PPS_CAPTURE_RESOLUTION_HZ = 80000000;
+
 static EventGroupHandle_t s_net_event_group = nullptr;
 static SemaphoreHandle_t s_time_mutex = nullptr;
 static SemaphoreHandle_t s_pps_semaphore = nullptr;
 static QueueHandle_t s_pps_timestamp_queue = nullptr;
+static mcpwm_cap_timer_handle_t s_pps_capture_timer = nullptr;
+static mcpwm_cap_channel_handle_t s_pps_capture_channel = nullptr;
 static SemaphoreHandle_t s_ote_mutex = nullptr;
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
 static SemaphoreHandle_t s_lcd_mutex = nullptr;
@@ -1771,33 +1782,56 @@ static void halt_with_display(const char *line1, const char *line2, const char *
         vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
-static void IRAM_ATTR pps_isr_handler(void *arg)
+static bool IRAM_ATTR pps_capture_callback(mcpwm_cap_channel_handle_t,
+                                           const mcpwm_capture_event_data_t *event_data,
+                                           void *)
 {
-    int64_t edge_us = esp_timer_get_time();
+    static bool capture_initialized = false;
+    static uint32_t previous_capture_ticks = 0;
+    static uint64_t total_capture_ticks = 0;
+
+    uint32_t capture_ticks = event_data->cap_value;
+    if (capture_initialized)
+        total_capture_ticks += static_cast<uint32_t>(capture_ticks - previous_capture_ticks);
+    else
+    {
+        capture_initialized = true;
+        total_capture_ticks = 0;
+    }
+    previous_capture_ticks = capture_ticks;
+
+    PpsCaptureEvent event{};
+    event.ticks = total_capture_ticks;
+    event.approximate_edge_us = esp_timer_get_time();
+
     BaseType_t higher_priority_task_woken = pdFALSE;
     if (s_pps_semaphore != nullptr)
         xSemaphoreGiveFromISR(s_pps_semaphore, &higher_priority_task_woken);
     if (s_pps_timestamp_queue != nullptr)
-        xQueueOverwriteFromISR(s_pps_timestamp_queue, &edge_us, &higher_priority_task_woken);
-    if (higher_priority_task_woken == pdTRUE)
-        portYIELD_FROM_ISR();
+        xQueueOverwriteFromISR(s_pps_timestamp_queue, &event, &higher_priority_task_woken);
+    return higher_priority_task_woken == pdTRUE;
 }
 
 static void setup_pps_input()
 {
-    gpio_config_t config{};
-    config.pin_bit_mask = 1ULL << PPSPin;
-    config.mode = GPIO_MODE_INPUT;
-    config.pull_up_en = GPIO_PULLUP_DISABLE;
-    config.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    config.intr_type = GPIO_INTR_POSEDGE;
-    ESP_ERROR_CHECK(gpio_config(&config));
+    mcpwm_capture_timer_config_t timer_config{};
+    timer_config.group_id = 0;
+    timer_config.clk_src = MCPWM_CAPTURE_CLK_SRC_DEFAULT;
+    timer_config.resolution_hz = PPS_CAPTURE_RESOLUTION_HZ;
+    ESP_ERROR_CHECK(mcpwm_new_capture_timer(&timer_config, &s_pps_capture_timer));
 
-    esp_err_t err = gpio_install_isr_service(0);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
-        ESP_ERROR_CHECK(err);
+    mcpwm_capture_channel_config_t channel_config{};
+    channel_config.gpio_num = PPSPin;
+    channel_config.prescale = 1;
+    channel_config.flags.pos_edge = true;
+    ESP_ERROR_CHECK(mcpwm_new_capture_channel(s_pps_capture_timer, &channel_config, &s_pps_capture_channel));
 
-    ESP_ERROR_CHECK(gpio_isr_handler_add(static_cast<gpio_num_t>(PPSPin), pps_isr_handler, nullptr));
+    mcpwm_capture_event_callbacks_t callbacks{};
+    callbacks.on_cap = pps_capture_callback;
+    ESP_ERROR_CHECK(mcpwm_capture_channel_register_event_callbacks(s_pps_capture_channel, &callbacks, nullptr));
+    ESP_ERROR_CHECK(mcpwm_capture_channel_enable(s_pps_capture_channel));
+    ESP_ERROR_CHECK(mcpwm_capture_timer_enable(s_pps_capture_timer));
+    ESP_ERROR_CHECK(mcpwm_capture_timer_start(s_pps_capture_timer));
 }
 
 static void clear_pps_events() // to do
@@ -1827,13 +1861,26 @@ static void pps_discipline_task(void *parameter)
     static constexpr int64_t minCorrectionMagnitudeUs = 2;
 
     int64_t last_pps_us = esp_timer_get_time();
+    uint64_t last_capture_ticks = 0;
+    bool capture_time_initialized = false;
     bool logged_active = false;
 
     for (;;)
     {
-        int64_t edge_us = 0;
-        if (xQueueReceive(s_pps_timestamp_queue, &edge_us, pdMS_TO_TICKS(1000)) == pdTRUE)
+        PpsCaptureEvent capture_event{};
+        if (xQueueReceive(s_pps_timestamp_queue, &capture_event, pdMS_TO_TICKS(1000)) == pdTRUE)
         {
+            int64_t edge_us = capture_event.approximate_edge_us;
+            if (capture_time_initialized)
+            {
+                uint64_t elapsed_ticks = capture_event.ticks - last_capture_ticks;
+                edge_us = last_pps_us + static_cast<int64_t>((elapsed_ticks * 1000000ULL) / PPS_CAPTURE_RESOLUTION_HZ);
+            }
+            else
+            {
+                capture_time_initialized = true;
+            }
+            last_capture_ticks = capture_event.ticks;
             last_pps_us = edge_us;
             s_pps_discipline_active.store(true);
 #if MQTT_ENABLED
@@ -3243,7 +3290,7 @@ void write_opening_messages_to_the_console()
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Server v2.7.1");
+    ESP_LOGI(TAG, "ESP32 Time Server v2.7.2");
 
 #if UPTIME_RESTART_BUTTON_ENABLED
     ESP_LOGI(TAG, "Uptime / Reset button support is enabled in the settings");
@@ -3309,7 +3356,7 @@ void create_mutexes_and_semaphores(void)
 #endif
     s_time_mutex = xSemaphoreCreateMutex();
     s_pps_semaphore = xSemaphoreCreateBinary();
-    s_pps_timestamp_queue = xQueueCreate(1, sizeof(int64_t));
+    s_pps_timestamp_queue = xQueueCreate(1, sizeof(PpsCaptureEvent));
     s_ote_mutex = xSemaphoreCreateMutex();
     s_sync_state_mutex = xSemaphoreCreateMutex();
 }

@@ -131,7 +131,17 @@ static constexpr bool rebootIfSanityCheckFails = true; // Further to the above,
                                                        // - display double asterisks'**' on the LCD screen to indicate an issue with the GPS
                                                        //   and then will providing the esp32's time, unsynced by the GPS, moving forward.
 
-// (required) GPS support; do not change these unless you know what you are doing
+// (required) GNSS support; do not change these unless you know what you are doing
+
+// IMPORTANT NOTES: ***************************************************************************************
+// Some GNSS receivers and breakout boards provide a 3.3v PPS (Pulse-Per-Second) output pin               *
+// while others provide a 5v PPS output pin.                                                              *
+// 1. Only connect a 3.3v PPS pin to an ESP32 GPIO pin, never connect a 5v PPS pin to an ESP32 GPIO pin   *
+// 2. For the wire between the ESP32-P4's GPIO pin and the GNSS Receiver's PPS pin                        *
+//    use as short and as well connect wire as possible; a standard copper Dupont wire                    *
+//    will be fine assuming its gauge is between 24 AWG and 28AWG                                         *
+// 3. The GNSS GND must be connected to the ESP32 GND                                                     *
+// ********************************************************************************************************
 static constexpr int TXPin = 22;  // note: prior to release 2.4 pin 16 was used for TX
 static constexpr int RXPin = 21;  // note: prior to release 2.4 pin 17 was used for RX
 static constexpr int PPSPin = 20; // note: prior to release 2.4 pin 18 was used for PPS

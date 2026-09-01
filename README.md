@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 2.7.1)
+# ESP32 NTP Stratum 1 Time Server (version 2.7.2)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -125,7 +125,21 @@ that folder for more information.
 | TXD     | GPIO 21 (RX)     |
 | RXD     | GPIO 22 (TX)     |
 
-> **Important:** the above pin selections have changed in version 2.4 for better
+> **Important:** 
+> 
+> Some GNSS receivers and breakout boards provide a 3.3v PPS (Pulse-Per-Second) output pin
+while others provide a 5v PPS output pin.
+>
+>  1. Only connect a 3.3v PPS pin to an ESP32 GPIO pin, never connect a 5v PPS pin to an ESP32 GPIO pin
+>
+>  2. For the wire between the ESP32-P4's GPIO pin and the GNSS Receiver's PPS pin
+use as short and as well connect wire as possible; a standard copper Dupont wire
+will be fine assuming its gauge is between 24 AWG and 28 AWG
+>
+>  3. The GNSS GND must be connected to the ESP32 GND
+> 
+> 
+> Also of note, the above PPS, TX, and RX pin selections were changed in version 2.4 for better
 > forward and backward compatibility between revisions of the ESP32-P4 chip.
 > However, if an earlier version of the software has been working fine for you
 > then you may be able to use the old pin specifications if you want to avoid
