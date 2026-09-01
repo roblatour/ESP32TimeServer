@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.7.2
+// ESP32 Time Server v2.7.3
 // Copyright Rob Latour, 2026
 //
 // ESP32 Dev Board:     ESP32-P4-ETH https://www.waveshare.com/esp32-p4-eth.htm
@@ -497,6 +497,11 @@ static void sync_state_note_pps_edge(int64_t edge_us)
 
 static void sync_state_note_pps_timeout(int64_t now_us)
 {
+#if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
+    if (s_time_has_been_set.load())
+        s_last_pps_undisciplined.store(time(nullptr));
+#endif
+
     if (xSemaphoreTake(s_sync_state_mutex, portMAX_DELAY) == pdTRUE)
     {
         s_sync_state.pps_active = false;
@@ -529,6 +534,11 @@ static void sync_state_note_gnss_validity(bool valid)
 {
     set_gnss_lock_state(valid);
 
+#if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
+    if (!valid && s_time_has_been_set.load())
+        s_last_gnss_unsynchronized.store(time(nullptr));
+#endif
+
     if (xSemaphoreTake(s_sync_state_mutex, portMAX_DELAY) == pdTRUE)
     {
         int64_t now_us = esp_timer_get_time();
@@ -547,6 +557,16 @@ static uint32_t sync_state_note_failure(const sync_faults_t &faults, time_t upda
 
     if (faults.gps_invalid)
         set_gnss_lock_state(false);
+
+#if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
+    if (s_time_has_been_set.load())
+    {
+        if (faults.gps_invalid)
+            s_last_gnss_unsynchronized.store(time(nullptr));
+        if (faults.pps_missing)
+            s_last_pps_undisciplined.store(time(nullptr));
+    }
+#endif
 
     if (xSemaphoreTake(s_sync_state_mutex, portMAX_DELAY) == pdTRUE)
     {
@@ -609,6 +629,10 @@ static void sync_state_reset_failure_counters()
 static void sync_state_note_success(time_t update_delta)
 {
     set_gnss_lock_state(true);
+
+#if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
+    s_last_synchronized_and_disciplined.store(time(nullptr));
+#endif
 
     if (xSemaphoreTake(s_sync_state_mutex, portMAX_DELAY) == pdTRUE)
     {
@@ -3290,7 +3314,7 @@ void write_opening_messages_to_the_console()
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Server v2.7.2");
+    ESP_LOGI(TAG, "ESP32 Time Server v2.7.3");
 
 #if UPTIME_RESTART_BUTTON_ENABLED
     ESP_LOGI(TAG, "Uptime / Reset button support is enabled in the settings.");
