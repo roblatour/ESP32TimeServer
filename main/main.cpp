@@ -3293,46 +3293,46 @@ void write_opening_messages_to_the_console()
     ESP_LOGI(TAG, "ESP32 Time Server v2.7.2");
 
 #if UPTIME_RESTART_BUTTON_ENABLED
-    ESP_LOGI(TAG, "Uptime / Reset button support is enabled in the settings");
+    ESP_LOGI(TAG, "Uptime / Reset button support is enabled in the settings.");
 #else
-    ESP_LOGW(TAG, "Uptime / Reset button support is disabled in the settings");
+    ESP_LOGW(TAG, "Uptime / Reset button support is disabled in the settings.");
 #endif
 
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
-    ESP_LOGI(TAG, "LCD support is enabled in the settings");
+    ESP_LOGI(TAG, "LCD support is enabled in the settings.");
 #else
-    ESP_LOGW(TAG, "LCD support is disabled in the settings");
+    ESP_LOGW(TAG, "LCD support is disabled in the settings.");
 #endif
 
 #if OTE_UPDATES_ENABLED
-    ESP_LOGI(TAG, "Over the Ethernet update support is enabled in the settings");
+    ESP_LOGI(TAG, "Over the Ethernet update support is enabled in the settings.");
 #else
-    ESP_LOGW(TAG, "Over the Ethernet update support is disabled in the settings");
+    ESP_LOGW(TAG, "Over the Ethernet update support is disabled in the settings.");
 #endif
 
 #if MQTT_ENABLED
-    ESP_LOGI(TAG, "MQTT is enabled in the settings");
+    ESP_LOGI(TAG, "MQTT is enabled in the settings.");
 
 #if MQTT_CLIENT_REPORTING_ENABLED
-    ESP_LOGI(TAG, "MQTT client reporting is enabled in the settings");
+    ESP_LOGI(TAG, "MQTT client reporting is enabled in the settings.");
 #else
-    ESP_LOGW(TAG, "MQTT client reporting is disabled in the settings");
+    ESP_LOGW(TAG, "MQTT client reporting is disabled in the settings.");
 #endif
 
 #if MQTT_MEMORY_REPORTING_ENABLED
-    ESP_LOGI(TAG, "MQTT memory reporting is enabled in the settings");
+    ESP_LOGI(TAG, "MQTT memory reporting is enabled in the settings.");
 #else
-    ESP_LOGW(TAG, "MQTT memory reporting is disabled in the settings");
+    ESP_LOGW(TAG, "MQTT memory reporting is disabled in the settings.");
 #endif
 
 #if MQTT_HISTORICAL_REPORTING_ENABLED
-    ESP_LOGI(TAG, "MQTT historical reporting is enabled in the settings");
+    ESP_LOGI(TAG, "MQTT historical reporting is enabled in the settings.");
 #else
-    ESP_LOGW(TAG, "MQTT historical reporting is disabled in the settings");
+    ESP_LOGW(TAG, "MQTT historical reporting is disabled in the settings.");
 #endif
 
 #else
-    ESP_LOGW(TAG, "MQTT support is disabled in the settings");
+    ESP_LOGW(TAG, "MQTT support is disabled in the settings.");
 #endif
 
 #if DEBUG_ENABLED
