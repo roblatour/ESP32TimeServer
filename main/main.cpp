@@ -289,6 +289,8 @@ static std::atomic<int64_t> s_eth_link_up_total_us{0};
 static std::atomic<time_t> s_last_synchronized_and_disciplined{0};
 static std::atomic<time_t> s_last_gnss_unsynchronized{0};
 static std::atomic<time_t> s_last_pps_undisciplined{0};
+static std::atomic<bool> s_historical_gnss_fault_active{false};
+static std::atomic<bool> s_historical_pps_fault_active{false};
 #endif
 
 #if MQTT_ENABLED && MQTT_CLIENT_REPORTING_ENABLED
@@ -498,7 +500,7 @@ static void sync_state_note_pps_edge(int64_t edge_us)
 static void sync_state_note_pps_timeout(int64_t now_us)
 {
 #if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
-    if (s_time_has_been_set.load())
+    if (s_time_has_been_set.load() && !s_historical_pps_fault_active.exchange(true))
         s_last_pps_undisciplined.store(time(nullptr));
 #endif
 
@@ -535,7 +537,7 @@ static void sync_state_note_gnss_validity(bool valid)
     set_gnss_lock_state(valid);
 
 #if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
-    if (!valid && s_time_has_been_set.load())
+    if (!valid && s_time_has_been_set.load() && !s_historical_gnss_fault_active.exchange(true))
         s_last_gnss_unsynchronized.store(time(nullptr));
 #endif
 
@@ -561,9 +563,9 @@ static uint32_t sync_state_note_failure(const sync_faults_t &faults, time_t upda
 #if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
     if (s_time_has_been_set.load())
     {
-        if (faults.gps_invalid)
+        if (faults.gps_invalid && !s_historical_gnss_fault_active.exchange(true))
             s_last_gnss_unsynchronized.store(time(nullptr));
-        if (faults.pps_missing)
+        if (faults.pps_missing && !s_historical_pps_fault_active.exchange(true))
             s_last_pps_undisciplined.store(time(nullptr));
     }
 #endif
@@ -631,7 +633,10 @@ static void sync_state_note_success(time_t update_delta)
     set_gnss_lock_state(true);
 
 #if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
-    s_last_synchronized_and_disciplined.store(time(nullptr));
+    bool recovery_completed = s_historical_gnss_fault_active.exchange(false) ||
+                              s_historical_pps_fault_active.exchange(false);
+    if (s_last_synchronized_and_disciplined.load() == 0 || recovery_completed)
+        s_last_synchronized_and_disciplined.store(time(nullptr));
 #endif
 
     if (xSemaphoreTake(s_sync_state_mutex, portMAX_DELAY) == pdTRUE)
@@ -4427,28 +4432,12 @@ static void ntp_server_task(void *parameter)
 #endif
                 ntp_reply_status_t status = get_ntp_reply_status();
 #if MQTT_ENABLED
-                time_t response_time = time(nullptr);
                 if (status.gnss_synchronized && status.pps_disciplined)
-                {
                     s_ntp_responses_synchronized_and_disciplined.fetch_add(1, std::memory_order_relaxed);
-#if MQTT_HISTORICAL_REPORTING_ENABLED
-                    s_last_synchronized_and_disciplined.store(response_time);
-#endif
-                }
                 if (!status.gnss_synchronized)
-                {
                     s_ntp_responses_gnss_unsynchronized.fetch_add(1, std::memory_order_relaxed);
-#if MQTT_HISTORICAL_REPORTING_ENABLED
-                    s_last_gnss_unsynchronized.store(response_time);
-#endif
-                }
                 if (!status.pps_disciplined)
-                {
                     s_ntp_responses_pps_undisciplined.fetch_add(1, std::memory_order_relaxed);
-#if MQTT_HISTORICAL_REPORTING_ENABLED
-                    s_last_pps_undisciplined.store(response_time);
-#endif
-                }
 #endif
                 build_ntp_reply(request, reply, ntp_version, receive_time, status);
                 write_ntp_timestamp(reply, 40, get_current_time_in_ntp64_format());
