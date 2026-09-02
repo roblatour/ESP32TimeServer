@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.7.4
+// ESP32 Time Server v2.7.5
 // Copyright Rob Latour, 2026
 //
 // ESP32 Dev Board:     ESP32-P4-ETH https://www.waveshare.com/esp32-p4-eth.htm
@@ -157,7 +157,6 @@ static bool s_lcd_line_cached[lcdRows] = {};
 
 struct PpsCaptureEvent
 {
-    uint64_t ticks;
     int64_t approximate_edge_us;
 };
 
@@ -411,6 +410,10 @@ static constexpr char GPS_ID_TYPE_MODULE_FP[] = "module_fp";
 static constexpr char GPS_ID_TYPE_GENERIC[] = "generic";
 static constexpr char GPS_ID_VALUE_UNDETERMINED[] = "undetermined_gps_board";
 
+/* pre-release code - commented out
+static constexpr bool reduceGNSSUART1OutputToTimeMessages = true;
+static constexpr bool saveReducedGNSSUART1OutputPermanently = false;
+*/
 struct gps_identity_t
 {
     bool valid = false;
@@ -1803,6 +1806,43 @@ static bool configure_gps_outputs(bool *uart1_output_set_result)
     return uart1_output_set;
 }
 
+/* pre-release code - commented out
+
+static bool configure_gps_time_only_uart1_output()
+{
+    if (!reduceGNSSUART1OutputToTimeMessages)
+        return true;
+
+    uint8_t layer = saveReducedGNSSUART1OutputPermanently ? VAL_LAYER_ALL : VAL_LAYER_RAM_BBR;
+    auto set_message_rate = [layer](uint32_t key, uint8_t rate, const char *message_name)
+    {
+        bool command_worked = s_gps.setVal8(key, rate, layer);
+#if DEBUG_ENABLED
+        ESP_LOGI(TAG, "GPS UART1 %s: %s", message_name, command_worked ? "ok" : "failed");
+#endif
+        return command_worked;
+    };
+
+    bool configured = true;
+    configured = set_message_rate(UBLOX_CFG_MSGOUT_NMEA_ID_RMC_UART1, 1, "RMC enabled") && configured;
+    configured = set_message_rate(UBLOX_CFG_MSGOUT_NMEA_ID_GGA_UART1, 0, "GGA disabled") && configured;
+    configured = set_message_rate(UBLOX_CFG_MSGOUT_NMEA_ID_GLL_UART1, 0, "GLL disabled") && configured;
+    configured = set_message_rate(UBLOX_CFG_MSGOUT_NMEA_ID_GSA_UART1, 0, "GSA disabled") && configured;
+    configured = set_message_rate(UBLOX_CFG_MSGOUT_NMEA_ID_GSV_UART1, 0, "GSV disabled") && configured;
+    configured = set_message_rate(UBLOX_CFG_MSGOUT_NMEA_ID_VTG_UART1, 0, "VTG disabled") && configured;
+
+#if DEBUG_ENABLED
+    ESP_LOGI(TAG,
+             "GPS time-only UART1 message configuration: %s (%s)",
+             configured ? "ok" : "partially applied; continuing with available output",
+             saveReducedGNSSUART1OutputPermanently ? "saved to receiver flash" : "RAM/BBR only");
+#endif
+
+    return configured;
+}
+
+end of pre-release code */
+
 static void halt_with_display(const char *line1, const char *line2, const char *line3)
 {
     display_line(1, line1);
@@ -1813,25 +1853,10 @@ static void halt_with_display(const char *line1, const char *line2, const char *
 }
 
 static bool IRAM_ATTR pps_capture_callback(mcpwm_cap_channel_handle_t,
-                                           const mcpwm_capture_event_data_t *event_data,
+                                           const mcpwm_capture_event_data_t *,
                                            void *)
 {
-    static bool capture_initialized = false;
-    static uint32_t previous_capture_ticks = 0;
-    static uint64_t total_capture_ticks = 0;
-
-    uint32_t capture_ticks = event_data->cap_value;
-    if (capture_initialized)
-        total_capture_ticks += static_cast<uint32_t>(capture_ticks - previous_capture_ticks);
-    else
-    {
-        capture_initialized = true;
-        total_capture_ticks = 0;
-    }
-    previous_capture_ticks = capture_ticks;
-
     PpsCaptureEvent event{};
-    event.ticks = total_capture_ticks;
     event.approximate_edge_us = esp_timer_get_time();
 
     BaseType_t higher_priority_task_woken = pdFALSE;
@@ -1903,8 +1928,6 @@ static void pps_discipline_task(void *parameter)
     static constexpr int64_t minCorrectionMagnitudeUs = 2;
 
     int64_t last_pps_us = esp_timer_get_time();
-    uint64_t last_capture_ticks = 0;
-    bool capture_time_initialized = false;
     bool logged_active = false;
 
     for (;;)
@@ -1913,16 +1936,6 @@ static void pps_discipline_task(void *parameter)
         if (xQueueReceive(s_pps_timestamp_queue, &capture_event, pdMS_TO_TICKS(1000)) == pdTRUE)
         {
             int64_t edge_us = capture_event.approximate_edge_us;
-            if (capture_time_initialized)
-            {
-                uint64_t elapsed_ticks = capture_event.ticks - last_capture_ticks;
-                edge_us = last_pps_us + static_cast<int64_t>((elapsed_ticks * 1000000ULL) / PPS_CAPTURE_RESOLUTION_HZ);
-            }
-            else
-            {
-                capture_time_initialized = true;
-            }
-            last_capture_ticks = capture_event.ticks;
             last_pps_us = edge_us;
             s_pps_discipline_active.store(true);
 #if MQTT_ENABLED
@@ -2205,6 +2218,9 @@ static void setup_gps()
 
     bool uart1_output_set = false;
     configure_gps_outputs(&uart1_output_set);
+    /* pre-release code - commented out
+    configure_gps_time_only_uart1_output();
+    end of pre-release code */
 #if DEBUG_ENABLED
     if (!uart1_output_set)
         ESP_LOGW(TAG, "GPS UART1 output configuration failed. Continuing with the module's current output settings.");
@@ -3337,7 +3353,7 @@ void write_opening_messages_to_the_console()
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Server v2.7.4");
+    ESP_LOGI(TAG, "ESP32 Time Server v2.7.5");
 
 #if UPTIME_RESTART_BUTTON_ENABLED
     ESP_LOGI(TAG, "Uptime / Reset button support is enabled in the settings.");
@@ -4079,12 +4095,46 @@ static void gps_time_sync_task(void *parameter)
         s_time_setting_in_progress.store(true);
         sync_state_note_attempt();
 
+        /*  pre-release code - commented out
+        sync_candidate_t candidate{};
+
+        // Start stopwatch
+        int64_t start_us = esp_timer_get_time();
+
+        bool ok = acquire_sync_candidate(&candidate);
+
+        // Stop stopwatch
+        int64_t end_us = esp_timer_get_time();
+
+        // Calculate time to sync
+        int64_t elapsed_us = end_us - start_us;
+
+        if (!ok)
+        {
+            // Display elapsed time even on failure
+            ESP_LOGE(TAG, "acquire_sync_candidate() failed after %lld us\n", elapsed_us);
+
+            handle_runtime_sync_failure(candidate.failures, 0, 1000);
+            continue;
+        }
+
+        // Success path
+        ESP_LOGI(TAG, "acquire_sync_candidate() succeeded in %lld us\n", elapsed_us);
+
+        // end of performance test code *************************
+
+        end of pre-release code */
+
+        // start of code block to be replaced with the above when released
+
         sync_candidate_t candidate{};
         if (!acquire_sync_candidate(&candidate))
         {
             handle_runtime_sync_failure(candidate.failures, 0, 1000);
             continue;
         }
+
+        // end of code block to be replaced with the above when released
 
         if (first_sync)
         {
