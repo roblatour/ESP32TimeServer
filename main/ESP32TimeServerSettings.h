@@ -41,7 +41,7 @@ static constexpr char MQTTPassword[] = "";
 static constexpr char MQTTTopic[] = "ESP32TimeServer";
 static constexpr uint16_t MQTTBrokerRetain = 1;                 // 0 = tell the broker not to retain the most current message; 1 = tell the broker to retain the most current message
 static constexpr uint32_t MQTTReportingPeriod = 900;            // in seconds - 900 for production
-static constexpr uint32_t MQTTFrequencyOfKeepAliveRequest = 60; // in seconds
+static constexpr uint32_t MQTTFrequencyOfKeepAliveRequest = 30; // in seconds
 // QoS 0 delivers at most once and does not retain reports while disconnected
 // QoS 1 delivers at least once and queues reports while disconnected
 // QoS 2 delivers exactly once and queues reports while disconnected

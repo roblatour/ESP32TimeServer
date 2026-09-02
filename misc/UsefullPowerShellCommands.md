@@ -48,7 +48,7 @@ ntpdate -q ESP32TimeServer.local
 or
 
 ```cmd
-ntpdate -q .x.x.x.x
+ntpdate -q x.x.x.x
 ```
 
 With the output showing, for example:

@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.7.3
+// ESP32 Time Server v2.7.4
 // Copyright Rob Latour, 2026
 //
 // ESP32 Dev Board:     ESP32-P4-ETH https://www.waveshare.com/esp32-p4-eth.htm
@@ -167,6 +167,7 @@ static EventGroupHandle_t s_net_event_group = nullptr;
 static SemaphoreHandle_t s_time_mutex = nullptr;
 static SemaphoreHandle_t s_pps_semaphore = nullptr;
 static QueueHandle_t s_pps_timestamp_queue = nullptr;
+static QueueHandle_t s_pps_sync_timestamp_queue = nullptr;
 static mcpwm_cap_timer_handle_t s_pps_capture_timer = nullptr;
 static mcpwm_cap_channel_handle_t s_pps_capture_channel = nullptr;
 static SemaphoreHandle_t s_ote_mutex = nullptr;
@@ -1838,6 +1839,8 @@ static bool IRAM_ATTR pps_capture_callback(mcpwm_cap_channel_handle_t,
         xSemaphoreGiveFromISR(s_pps_semaphore, &higher_priority_task_woken);
     if (s_pps_timestamp_queue != nullptr)
         xQueueOverwriteFromISR(s_pps_timestamp_queue, &event, &higher_priority_task_woken);
+    if (s_pps_sync_timestamp_queue != nullptr)
+        xQueueOverwriteFromISR(s_pps_sync_timestamp_queue, &event, &higher_priority_task_woken);
     return higher_priority_task_woken == pdTRUE;
 }
 
@@ -1868,6 +1871,16 @@ static void clear_pps_events() // to do
     while (xSemaphoreTake(s_pps_semaphore, 0) == pdTRUE)
     {
     }
+
+    PpsCaptureEvent event{};
+    while (xQueueReceive(s_pps_sync_timestamp_queue, &event, 0) == pdTRUE)
+    {
+    }
+}
+
+static bool wait_for_pps_capture_event(PpsCaptureEvent *event, TickType_t timeout)
+{
+    return xQueueReceive(s_pps_sync_timestamp_queue, event, timeout) == pdTRUE;
 }
 
 #if MQTT_ENABLED
@@ -2110,8 +2123,9 @@ static void setup_gps()
     bool gps_nvs_load_ok = load_gps_nvs_data(&stored_gps_data);
 
     bool first_time_initial_setup = !stored_gps_data.has_id_type;
+#if DEBUG_ENABLED
     ESP_LOGI(TAG, "Startup mode: %s", first_time_initial_setup ? "First time initial setup" : "Not first time initial setup");
-
+#endif
     uint32_t highest_candidate_baud = get_highest_candidate_gps_baud();
     uint32_t startup_target_baud = highest_candidate_baud;
 
@@ -3100,6 +3114,10 @@ static void setup_mqtt()
         return;
     }
 
+#if DEBUG_ENABLED
+    ESP_LOGI(TAG, "MQTT setup. Keep alive set at %u seconds", MQTTFrequencyOfKeepAliveRequest);
+#endif
+
     if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", 2630, nullptr, 5, nullptr, 0) != pdPASS)
         s_mqtt_setup_failed.store(true);
 
@@ -3319,7 +3337,7 @@ void write_opening_messages_to_the_console()
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Server v2.7.3");
+    ESP_LOGI(TAG, "ESP32 Time Server v2.7.4");
 
 #if UPTIME_RESTART_BUTTON_ENABLED
     ESP_LOGI(TAG, "Uptime / Reset button support is enabled in the settings.");
@@ -3386,6 +3404,7 @@ void create_mutexes_and_semaphores(void)
     s_time_mutex = xSemaphoreCreateMutex();
     s_pps_semaphore = xSemaphoreCreateBinary();
     s_pps_timestamp_queue = xQueueCreate(1, sizeof(PpsCaptureEvent));
+    s_pps_sync_timestamp_queue = xQueueCreate(1, sizeof(PpsCaptureEvent));
     s_ote_mutex = xSemaphoreCreateMutex();
     s_sync_state_mutex = xSemaphoreCreateMutex();
 }
@@ -3850,10 +3869,11 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
         candidate->candidate_time = epoch_from_utc(nmea_time.year, nmea_time.month, nmea_time.day, nmea_time.hour, nmea_time.minute, nmea_time.second);
 
         clear_pps_events();
-        if (xSemaphoreTake(s_pps_semaphore, pdMS_TO_TICKS(1500)) == pdTRUE)
+        PpsCaptureEvent capture_event{};
+        if (wait_for_pps_capture_event(&capture_event, pdMS_TO_TICKS(1500)))
         {
             candidate->use_pps_alignment = true;
-            candidate->pps_release_time_us = esp_timer_get_time();
+            candidate->pps_release_time_us = capture_event.approximate_edge_us;
             candidate->candidate_time += 1;
         }
         else
@@ -3873,7 +3893,8 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
     else
     {
         clear_pps_events();
-        if (xSemaphoreTake(s_pps_semaphore, pdMS_TO_TICKS(1500)) != pdTRUE)
+        PpsCaptureEvent capture_event{};
+        if (!wait_for_pps_capture_event(&capture_event, pdMS_TO_TICKS(1500)))
         {
 #if DEBUG_ENABLED
             ESP_LOGE(TAG, "UBX mode is running without PPS.");
@@ -3930,7 +3951,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
         vTaskDelay(pdMS_TO_TICKS(200));
 
         clear_pps_events();
-        if (xSemaphoreTake(s_pps_semaphore, pdMS_TO_TICKS(1500)) != pdTRUE)
+        if (!wait_for_pps_capture_event(&capture_event, pdMS_TO_TICKS(1500)))
         {
 #if DEBUG_ENABLED
             ESP_LOGE(TAG, "UBX mode lost PPS alignment pulse.");
@@ -3947,7 +3968,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
             return false;
         }
 
-        candidate->pps_release_time_us = esp_timer_get_time();
+        candidate->pps_release_time_us = capture_event.approximate_edge_us;
         candidate->use_pps_alignment = true;
     }
 

@@ -11,85 +11,85 @@ the reporting content as described in more detail below.
 
 ```json
 {
-  "current": {
-    "time": "2026-08-30T13:49:53-0400",
-    "uptime": 2187,
-    "ethernet_up": true,
-    "gnss_synchronized": true,
-    "gnss_synchronized_indicators": {
-      "locked": true,
-      "timing": true,
-      "gps_valid": true,
-      "sync_fresh": true,
-      "sanity_check_passed": true
+    "current": {
+        "time": "2026-08-30T13:49:53-0400",
+        "uptime": 2187,
+        "ethernet_up": true,
+        "gnss_synchronized": true,
+        "gnss_synchronized_indicators": {
+            "locked": true,
+            "timing": true,
+            "gps_valid": true,
+            "sync_fresh": true,
+            "sanity_check_passed": true
+        },
+        "pps_disciplined": true,
+        "pps_disciplined_indicators": {
+            "pps_signals_present": true,
+            "discipline_active": true,
+            "pps_synchronized": true
+        },
+        "satellites": 21,
+        "memory": {
+            "malloc_cap_8bit": 154668,
+            "malloc_cap_32bit": 154668,
+            "malloc_cap_internal": 154668,
+            "malloc_cap_dma": 115088,
+            "malloc_cap_spiram": 0,
+            "malloc_cap_default": 154668,
+            "free_heap": 154668,
+            "minimum_free_heap": 148520,
+            "largest_free_8bit_block": 106496
+        }
     },
-    "pps_disciplined": true,
-    "pps_disciplined_indicators": {
-      "pps_signals_present": true,
-      "discipline_active": true,
-      "pps_synchronized": true
+    "queued_messages": {
+        "held": 0,
+        "discarded": 0
     },
-    "satellites": 21,
-    "memory": {
-      "malloc_cap_8bit": 154668,
-      "malloc_cap_32bit": 154668,
-      "malloc_cap_internal": 154668,
-      "malloc_cap_dma": 115088,
-      "malloc_cap_spiram": 0,
-      "malloc_cap_default": 154668,
-      "free_heap": 154668,
-      "minimum_free_heap": 148520,
-      "largest_free_8bit_block": 106496
+    "this_period": {
+        "ethernet_up_secs": 120,
+        "pps_pulses": 120,
+        "gnss_locked_secs": 120,
+        "satellites": {
+            "min": 15,
+            "max": 23
+        },
+        "ntp": {
+            "requests": {
+                "valid": 4,
+                "invalid": 0,
+                "telemetry_dropped": 0,
+                "max_per_second": 1
+            },
+            "responses": {
+                "synchronized_and_disciplined": 4,
+                "gnss_unsynchronized": 0,
+                "pps_undisciplined": 0
+            }
+        },
+        "clients": [
+            {
+                "address": "192.168.1.1",
+                "requests": 2
+            },
+            {
+                "address": "192.168.1.10",
+                "requests": 1
+            },
+            {
+                "address": "192.168.1.15",
+                "requests": 1
+            }
+        ],
+        "clients_overflown": false
+    },
+    "historical": {
+        "gnss_receiver_last": {
+            "synchronized_and_disciplined": "2026-08-30T13:49:33-0400",
+            "gnss_unsynchronized": "",
+            "pps_undisciplined": ""
+        }
     }
-  },
-  "queued_messages": {
-    "held": 0,
-    "discarded": 0
-  },
-  "this_period": {
-    "ethernet_up_secs": 120,
-    "pps_pulses": 120,
-    "gnss_locked_secs": 120,
-    "satellites": {
-      "min": 15,
-      "max": 23
-    },
-    "ntp": {
-      "requests": {
-        "valid": 4,
-        "invalid": 0,
-        "telemetry_dropped": 0,
-        "max_per_second": 1
-      },
-      "responses": {
-        "synchronized_and_disciplined": 4,
-        "gnss_unsynchronized": 0,
-        "pps_undisciplined": 0
-      }
-    },
-    "clients": [
-      {
-        "address": "192.168.1.1",
-        "requests": 2
-      },
-      {
-        "address": "192.168.1.10",
-        "requests": 1
-      },
-      {
-        "address": "192.168.1.15",
-        "requests": 1
-      }
-    ],
-    "clients_overflown": false
-  },
-  "historical": {
-    "gnss_receiver_last": {
-      "synchronized_and_disciplined": "2026-08-30T13:49:33-0400",
-      "gnss_unsynchronized": "",
-      "pps_undisciplined": ""
-    }
-  }
 }
 ```
 
