@@ -1,5 +1,7 @@
-// ESP32 Time Server v2.7.5
+// ESP32 Time Server v2.8
 // Copyright Rob Latour, 2026
+// License: MIT
+// Website: https://github.com/roblatour/ESP32TimeServer
 //
 // ESP32 Dev Board:     ESP32-P4-ETH https://www.waveshare.com/esp32-p4-eth.htm
 //                                   https://www.waveshare.com/wiki/ESP32-P4-ETH?srsltid=AfmBOoo6nZm5hsPAhtpzT6lWSHd2zhWNPM_mqgbNvyoESbjvbO7uykcH
@@ -53,10 +55,15 @@
 #include "ETH.h"
 #include "SparkFun_u-blox_GNSS_v3.h"
 #include "ESP32TimeServerSettings.h"
+#include "app_metadata.h"
+#include "ntp_cache.h"
 
 extern "C"
 {
 #include "esp_event.h"
+#include "esp_eth_clock.h"
+#include "esp_eth_driver.h"
+#include "esp_eth_mac_esp.h"
 #include "esp_log.h"
 #include "ff.h"
 #include "esp_mac.h"
@@ -190,6 +197,7 @@ static std::atomic<bool> s_time_setting_in_progress{false};
 static std::atomic<bool> s_time_has_been_set{false};
 static std::atomic<uint64_t> s_ntp_reference_time_64{0};
 static std::atomic<bool> s_ntp_reference_valid{false};
+static std::atomic<bool> s_ptp_clock_ready{false};
 
 static_assert(PreferIPvX == 0 || PreferIPvX == 4 || PreferIPvX == 6, "PreferIPvX must be 0, 4, or 6");
 
@@ -218,6 +226,9 @@ static void update_selected_ip_address()
 }
 
 static std::atomic<bool> s_ethernet_connected{false};
+static std::atomic<bool> s_hardware_ntp_accepting{false};
+static std::atomic<int64_t> s_last_hardware_ntp_response_us{0};
+static SemaphoreHandle_t s_hardware_ntp_transmit_mutex = nullptr;
 
 static bool format_socket_address(const struct sockaddr_storage &address, char *buffer, size_t buffer_size)
 {
@@ -270,9 +281,12 @@ static QueueHandle_t s_mqtt_ntp_event_queue = nullptr;
 static esp_mqtt_client_handle_t s_mqtt_client = nullptr;
 static std::atomic<bool> s_mqtt_setup_failed{false};
 static std::atomic<bool> s_mqtt_connected{false};
+static std::atomic<bool> s_mqtt_has_connected{false};
+static std::atomic<int64_t> s_mqtt_disconnected_since_us{0};
 static std::atomic<int> s_mqtt_restart_publish_id{-1};
 static std::atomic<bool> s_mqtt_restart_publish_completed{false};
 static std::atomic<uint32_t> s_pps_pulses{0};
+static std::atomic<uint32_t> s_ntp_requests_this_second{0};
 static std::atomic<uint32_t> s_ntp_valid_requests{0};
 static std::atomic<uint32_t> s_ntp_invalid_requests{0};
 static std::atomic<uint32_t> s_ntp_responses{0};
@@ -309,13 +323,17 @@ static mqtt_client_request_t s_mqtt_clients[MQTT_TF_Client_Limit]{};
 static std::atomic<bool> s_tf_queue_available{false};
 static sdmmc_card_t *s_tf_card = nullptr;
 static uint64_t s_tf_queue_next_sequence = 0;
-static std::atomic<uint32_t> s_ntp_requests_this_second{0};
 static std::atomic<uint32_t> s_ntp_most_requests_per_second{0};
 static char s_mqtt_uri[64] = "";
 static char s_mqtt_report_topic[128] = "";
 static char s_mqtt_status_topic[128] = "";
 
 static void mqtt_publish_final_report();
+static void mqtt_enqueue_ntp_request(const struct sockaddr_storage &source_address);
+#endif
+
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+static std::atomic<uint32_t> s_ntp_stack_report_requests{0};
 #endif
 
 static HardwareSerial s_gps_serial(1);
@@ -1196,6 +1214,17 @@ static uint64_t get_current_time_in_ntp64_format()
     return (seconds << 32) | fraction;
 }
 
+static void synchronize_hardware_clock()
+{
+    if (!s_ptp_clock_ready.load(std::memory_order_acquire))
+        return;
+
+    struct timeval now{};
+    gettimeofday(&now, nullptr);
+    const struct timespec hardware_time{now.tv_sec, static_cast<long>(now.tv_usec) * 1000L};
+    clock_settime(CLOCK_PTP_SYSTEM, &hardware_time);
+}
+
 static void write_ntp_timestamp(uint8_t *reply, size_t offset, uint64_t timestamp)
 {
     reply[offset + 0] = static_cast<uint8_t>((timestamp >> 56) & 0xFF);
@@ -1276,6 +1305,347 @@ static void build_ntp_reply(const uint8_t *request, uint8_t *reply, uint8_t vers
 
     memcpy(reply + 24, request + 40, 8);
     write_ntp_timestamp(reply, 32, receive_time);
+}
+
+static constexpr size_t ETH_HEADER_SIZE = 14;
+static constexpr size_t IPV4_HEADER_SIZE = 20;
+static constexpr size_t UDP_HEADER_SIZE = 8;
+static constexpr size_t RAW_NTP_FRAME_SIZE = ETH_HEADER_SIZE + IPV4_HEADER_SIZE + UDP_HEADER_SIZE + NTP_PACKET_SIZE;
+static constexpr size_t HARDWARE_NTP_REQUEST_QUEUE_DEPTH = 64;
+static constexpr uint32_t ETHERNET_RECOVERY_DELAY_MS = 100;
+static constexpr uint32_t ETHERNET_RECOVERY_STOP_TIMEOUT_MS = 1000;
+static constexpr int64_t MQTT_TRANSPORT_STALL_TIMEOUT_US = 35000000LL;
+
+struct hardware_ntp_request_t
+{
+    esp_eth_handle_t handle;
+    uint8_t *frame;
+    uint32_t length;
+    esp_netif_t *netif;
+    eth_mac_time_t rx_timestamp;
+};
+
+static QueueHandle_t s_hardware_ntp_request_queue = nullptr;
+
+static uint16_t internet_checksum(const uint8_t *data, size_t length)
+{
+    uint32_t sum = 0;
+    while (length >= 2)
+    {
+        sum += static_cast<uint16_t>((data[0] << 8) | data[1]);
+        data += 2;
+        length -= 2;
+    }
+    if (length != 0)
+        sum += static_cast<uint16_t>(data[0] << 8);
+    while ((sum >> 16) != 0)
+        sum = (sum & 0xFFFFU) + (sum >> 16);
+    return static_cast<uint16_t>(~sum);
+}
+
+static uint64_t ntp64_from_hardware_timestamp(const eth_mac_time_t &timestamp)
+{
+    const uint64_t seconds = NTP_EPOCH_OFFSET + timestamp.seconds;
+    const uint64_t fraction = (static_cast<uint64_t>(timestamp.nanoseconds) << 32) / 1000000000ULL;
+    return (seconds << 32) | fraction;
+}
+
+static bool timestamp_is_valid(const eth_mac_time_t *timestamp)
+{
+    return timestamp != nullptr && (timestamp->seconds != 0 || timestamp->nanoseconds != 0);
+}
+
+static bool is_ipv4_ntp_request(const uint8_t *frame, uint32_t length, size_t *ip_offset, size_t *udp_offset)
+{
+    if (frame == nullptr || length < RAW_NTP_FRAME_SIZE || frame[12] != 0x08 || frame[13] != 0x00)
+        return false;
+
+    const size_t ipv4_offset = ETH_HEADER_SIZE;
+    const uint8_t version_ihl = frame[ipv4_offset];
+    const size_t header_length = static_cast<size_t>(version_ihl & 0x0F) * 4;
+    if ((version_ihl >> 4) != 4 || header_length < IPV4_HEADER_SIZE || length < ETH_HEADER_SIZE + header_length + UDP_HEADER_SIZE + NTP_PACKET_SIZE)
+        return false;
+    if (frame[ipv4_offset + 9] != IPPROTO_UDP)
+        return false;
+
+    const size_t udp_header_offset = ipv4_offset + header_length;
+    const uint16_t udp_length = static_cast<uint16_t>((frame[udp_header_offset + 4] << 8) | frame[udp_header_offset + 5]);
+    const uint16_t destination_port = static_cast<uint16_t>((frame[udp_header_offset + 2] << 8) | frame[udp_header_offset + 3]);
+    if (destination_port != NTP_PORT || udp_length != UDP_HEADER_SIZE + NTP_PACKET_SIZE)
+        return false;
+
+    *ip_offset = ipv4_offset;
+    *udp_offset = udp_header_offset;
+    return true;
+}
+
+static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *frame, uint32_t length, void *netif, void *info)
+{
+    size_t ip_offset = 0;
+    size_t udp_offset = 0;
+    const eth_mac_time_t *rx_timestamp = static_cast<const eth_mac_time_t *>(info);
+    if (!is_ipv4_ntp_request(frame, length, &ip_offset, &udp_offset) || !timestamp_is_valid(rx_timestamp))
+        return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
+
+    const eth_mac_time_t receive_timestamp = *rx_timestamp;
+    const uint8_t *request = frame + udp_offset + UDP_HEADER_SIZE;
+    const uint8_t version = (request[0] >> 3) & 0x07;
+    const uint8_t mode = request[0] & 0x07;
+    if (version < 3 || version > 4 || mode != 3)
+        return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
+
+    const uint32_t client_ip = (static_cast<uint32_t>(frame[ip_offset + 16]) << 24) |
+                               (static_cast<uint32_t>(frame[ip_offset + 17]) << 16) |
+                               (static_cast<uint32_t>(frame[ip_offset + 18]) << 8) |
+                               frame[ip_offset + 19];
+    const uint16_t client_port = static_cast<uint16_t>((frame[udp_offset] << 8) | frame[udp_offset + 1]);
+    ntp_client_record_t client_record{};
+    if (!ntp_cache_find_or_create(client_ip, client_port, &client_record))
+        return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
+
+    const uint64_t receive_time = ntp64_from_hardware_timestamp(receive_timestamp);
+#if MQTT_ENABLED
+    struct sockaddr_storage source_address{};
+    auto *source_ipv4_address = reinterpret_cast<struct sockaddr_in *>(&source_address);
+    source_ipv4_address->sin_family = AF_INET;
+    source_ipv4_address->sin_port = htons(client_port);
+    memcpy(&source_ipv4_address->sin_addr, frame + ip_offset + 12, sizeof(source_ipv4_address->sin_addr));
+    s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
+    mqtt_enqueue_ntp_request(source_address);
+#endif
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+    s_ntp_stack_report_requests.fetch_add(1, std::memory_order_relaxed);
+#endif
+    uint8_t reply[NTP_PACKET_SIZE] = {};
+    const ntp_reply_status_t status = get_ntp_reply_status();
+#if MQTT_ENABLED
+    if (status.gnss_synchronized && status.pps_disciplined)
+        s_ntp_responses_synchronized_and_disciplined.fetch_add(1, std::memory_order_relaxed);
+    if (!status.gnss_synchronized)
+        s_ntp_responses_gnss_unsynchronized.fetch_add(1, std::memory_order_relaxed);
+    if (!status.pps_disciplined)
+        s_ntp_responses_pps_undisciplined.fetch_add(1, std::memory_order_relaxed);
+#endif
+    build_ntp_reply(request, reply, version, receive_time, status);
+
+    const uint64_t client_receive_timestamp =
+        (static_cast<uint64_t>(request[32]) << 56) | (static_cast<uint64_t>(request[33]) << 48) |
+        (static_cast<uint64_t>(request[34]) << 40) | (static_cast<uint64_t>(request[35]) << 32) |
+        (static_cast<uint64_t>(request[36]) << 24) | (static_cast<uint64_t>(request[37]) << 16) |
+        (static_cast<uint64_t>(request[38]) << 8) | request[39];
+    const uint64_t client_origin_timestamp =
+        (static_cast<uint64_t>(request[24]) << 56) | (static_cast<uint64_t>(request[25]) << 48) |
+        (static_cast<uint64_t>(request[26]) << 40) | (static_cast<uint64_t>(request[27]) << 32) |
+        (static_cast<uint64_t>(request[28]) << 24) | (static_cast<uint64_t>(request[29]) << 16) |
+        (static_cast<uint64_t>(request[30]) << 8) | request[31];
+    const uint64_t client_transmit_timestamp =
+        (static_cast<uint64_t>(request[40]) << 56) | (static_cast<uint64_t>(request[41]) << 48) |
+        (static_cast<uint64_t>(request[42]) << 40) | (static_cast<uint64_t>(request[43]) << 32) |
+        (static_cast<uint64_t>(request[44]) << 24) | (static_cast<uint64_t>(request[45]) << 16) |
+        (static_cast<uint64_t>(request[46]) << 8) | request[47];
+    const uint64_t previous_t2 = ((NTP_EPOCH_OFFSET + static_cast<uint64_t>(client_record.prev_t2_sec)) << 32) |
+                                 ((static_cast<uint64_t>(client_record.prev_t2_ns) << 32) / 1000000000ULL);
+    const uint64_t previous_t3 = ((NTP_EPOCH_OFFSET + static_cast<uint64_t>(client_record.prev_t3_sec)) << 32) |
+                                 ((static_cast<uint64_t>(client_record.prev_t3_ns) << 32) / 1000000000ULL);
+    const bool interleaved_reply = client_record.prev_t2_sec != 0 &&
+                                   client_receive_timestamp != client_transmit_timestamp &&
+                                   client_origin_timestamp == previous_t2;
+    if (interleaved_reply)
+    {
+        write_ntp_timestamp(reply, 24, client_receive_timestamp);
+        write_ntp_timestamp(reply, 40, previous_t3);
+    }
+    else
+    {
+        write_ntp_timestamp(reply, 40, get_current_time_in_ntp64_format());
+    }
+
+    uint8_t response_frame[RAW_NTP_FRAME_SIZE] = {};
+    memcpy(response_frame, frame + 6, 6);
+    memcpy(response_frame + 6, frame, 6);
+    response_frame[12] = 0x08;
+    response_frame[13] = 0x00;
+    uint8_t *ip = response_frame + ETH_HEADER_SIZE;
+    ip[0] = 0x45;
+    ip[2] = 0;
+    ip[3] = IPV4_HEADER_SIZE + UDP_HEADER_SIZE + NTP_PACKET_SIZE;
+    ip[8] = 64;
+    ip[9] = IPPROTO_UDP;
+    memcpy(ip + 12, frame + ip_offset + 16, 4);
+    memcpy(ip + 16, frame + ip_offset + 12, 4);
+    const uint16_t checksum = internet_checksum(ip, IPV4_HEADER_SIZE);
+    ip[10] = static_cast<uint8_t>(checksum >> 8);
+    ip[11] = static_cast<uint8_t>(checksum);
+    uint8_t *udp = ip + IPV4_HEADER_SIZE;
+    udp[0] = 0;
+    udp[1] = static_cast<uint8_t>(NTP_PORT);
+    udp[2] = frame[udp_offset];
+    udp[3] = frame[udp_offset + 1];
+    udp[4] = 0;
+    udp[5] = UDP_HEADER_SIZE + NTP_PACKET_SIZE;
+    memcpy(udp + UDP_HEADER_SIZE, reply, sizeof(reply));
+
+    eth_mac_time_t tx_timestamp{};
+    bool tx_timestamp_valid = false;
+    esp_err_t result = ESP_ERR_INVALID_STATE;
+    if (s_hardware_ntp_accepting.load(std::memory_order_acquire) &&
+        s_hardware_ntp_transmit_mutex != nullptr &&
+        xSemaphoreTake(s_hardware_ntp_transmit_mutex, portMAX_DELAY) == pdTRUE)
+    {
+        if (s_hardware_ntp_accepting.load(std::memory_order_acquire))
+        {
+            result = esp_eth_transmit_ctrl_vargs(handle, &tx_timestamp, 2, response_frame, sizeof(response_frame));
+            tx_timestamp_valid = timestamp_is_valid(&tx_timestamp);
+        }
+        xSemaphoreGive(s_hardware_ntp_transmit_mutex);
+    }
+    if (result == ESP_OK && tx_timestamp_valid)
+    {
+        ntp_cache_update(client_ip, client_port, receive_timestamp.seconds, receive_timestamp.nanoseconds,
+                         tx_timestamp.seconds, tx_timestamp.nanoseconds);
+        s_last_hardware_ntp_response_us.store(esp_timer_get_time(), std::memory_order_release);
+#if MQTT_ENABLED
+        s_ntp_responses.fetch_add(1, std::memory_order_relaxed);
+#endif
+    }
+
+    free(frame);
+    return result;
+}
+
+static esp_err_t ntp_ethernet_input(esp_eth_handle_t handle, uint8_t *frame, uint32_t length, void *netif, void *info)
+{
+    size_t ip_offset = 0;
+    size_t udp_offset = 0;
+    const eth_mac_time_t *rx_timestamp = static_cast<const eth_mac_time_t *>(info);
+    if (!is_ipv4_ntp_request(frame, length, &ip_offset, &udp_offset))
+        return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
+
+    const uint8_t *request = frame + udp_offset + UDP_HEADER_SIZE;
+    const uint8_t version = (request[0] >> 3) & 0x07;
+    const uint8_t mode = request[0] & 0x07;
+    if (version < 3 || version > 4 || mode != 3)
+        return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
+
+    if (!timestamp_is_valid(rx_timestamp))
+    {
+        free(frame);
+        return ESP_OK;
+    }
+
+#if MQTT_ENABLED
+    s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
+#endif
+    const eth_mac_time_t receive_timestamp = *rx_timestamp;
+    const hardware_ntp_request_t ntp_request{handle, frame, length, static_cast<esp_netif_t *>(netif), receive_timestamp};
+    if (!s_hardware_ntp_accepting.load(std::memory_order_acquire) ||
+        s_hardware_ntp_request_queue == nullptr ||
+        xQueueSend(s_hardware_ntp_request_queue, &ntp_request, 0) != pdTRUE)
+    {
+        free(frame);
+    }
+    return ESP_OK;
+}
+
+static void hardware_ntp_server_task(void *parameter)
+{
+    (void)parameter;
+    hardware_ntp_request_t ntp_request{};
+    for (;;)
+    {
+        if (xQueueReceive(s_hardware_ntp_request_queue, &ntp_request, portMAX_DELAY) == pdTRUE)
+            process_hardware_ntp_request(ntp_request.handle, ntp_request.frame, ntp_request.length,
+                                         ntp_request.netif, &ntp_request.rx_timestamp);
+    }
+}
+
+#if MQTT_ENABLED
+static void recover_ethernet_transport()
+{
+    const esp_eth_handle_t handle = ETH.handle();
+    if (handle == nullptr || s_hardware_ntp_transmit_mutex == nullptr ||
+        xSemaphoreTake(s_hardware_ntp_transmit_mutex, portMAX_DELAY) != pdTRUE)
+        return;
+
+    ESP_LOGW(TAG, "MQTT and NTP transport stalled; restarting Ethernet");
+    s_hardware_ntp_accepting.store(false, std::memory_order_release);
+    hardware_ntp_request_t request{};
+    while (xQueueReceive(s_hardware_ntp_request_queue, &request, 0) == pdTRUE)
+        free(request.frame);
+
+    bool recovery_succeeded = false;
+    s_ptp_clock_ready.store(false, std::memory_order_release);
+    if (esp_eth_stop(handle) == ESP_OK)
+    {
+        const int64_t stop_deadline_us = esp_timer_get_time() +
+                                         static_cast<int64_t>(ETHERNET_RECOVERY_STOP_TIMEOUT_MS) * 1000;
+        while (s_ethernet_connected.load(std::memory_order_acquire) && esp_timer_get_time() < stop_deadline_us)
+            vTaskDelay(pdMS_TO_TICKS(10));
+
+        if (!s_ethernet_connected.load(std::memory_order_acquire))
+        {
+            vTaskDelay(pdMS_TO_TICKS(ETHERNET_RECOVERY_DELAY_MS));
+            if (esp_eth_start(handle) == ESP_OK)
+            {
+                esp_eth_mac_t *mac = nullptr;
+                if (esp_eth_get_mac_instance(handle, &mac) == ESP_OK &&
+                    esp_eth_mac_enable_ts4all(mac, true) == ESP_OK)
+                {
+                    s_ptp_clock_ready.store(true, std::memory_order_release);
+                    synchronize_hardware_clock();
+                    recovery_succeeded = true;
+                }
+            }
+        }
+    }
+    if (!recovery_succeeded)
+        ESP_LOGE(TAG, "Ethernet transport recovery failed");
+    s_hardware_ntp_accepting.store(recovery_succeeded, std::memory_order_release);
+    xSemaphoreGive(s_hardware_ntp_transmit_mutex);
+}
+
+static void ethernet_transport_recovery_task(void *parameter)
+{
+    (void)parameter;
+    for (;;)
+    {
+        const int64_t now_us = esp_timer_get_time();
+        const int64_t disconnected_since_us = s_mqtt_disconnected_since_us.load(std::memory_order_acquire);
+        const int64_t last_ntp_response_us = s_last_hardware_ntp_response_us.load(std::memory_order_acquire);
+        if (s_mqtt_has_connected.load(std::memory_order_acquire) &&
+            !s_mqtt_connected.load(std::memory_order_acquire) && disconnected_since_us > 0 &&
+            now_us - disconnected_since_us >= MQTT_TRANSPORT_STALL_TIMEOUT_US &&
+            last_ntp_response_us > 0 && now_us - last_ntp_response_us >= MQTT_TRANSPORT_STALL_TIMEOUT_US)
+        {
+            recover_ethernet_transport();
+            s_mqtt_disconnected_since_us.store(esp_timer_get_time(), std::memory_order_release);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+#endif
+
+static bool configure_hardware_timestamps()
+{
+    const esp_eth_handle_t handle = ETH.handle();
+    if (handle == nullptr)
+        return false;
+
+    const esp_eth_clock_cfg_t clock_config{CLOCK_PTP_SYSTEM};
+    if (esp_eth_clock_init(handle, &clock_config) != ESP_OK)
+        return false;
+
+    esp_eth_mac_t *mac = nullptr;
+    if (esp_eth_get_mac_instance(handle, &mac) != ESP_OK ||
+        esp_eth_mac_enable_ts4all(mac, true) != ESP_OK)
+        return false;
+
+    s_ptp_clock_ready.store(true, std::memory_order_release);
+    synchronize_hardware_clock();
+
+    const bool input_path_updated = esp_eth_update_input_path_info(handle, ntp_ethernet_input, ETH.netif()) == ESP_OK;
+    s_hardware_ntp_accepting.store(input_path_updated, std::memory_order_release);
+    return input_path_updated;
 }
 
 static const char *fix_type_to_text(uint8_t fix_type)
@@ -1908,18 +2278,18 @@ static bool wait_for_pps_capture_event(PpsCaptureEvent *event, TickType_t timeou
     return xQueueReceive(s_pps_sync_timestamp_queue, event, timeout) == pdTRUE;
 }
 
-#if MQTT_ENABLED
-static void mqtt_finish_ntp_request_rate_second()
+static void finish_ntp_request_rate_second()
 {
-    uint32_t requests_this_second = s_ntp_requests_this_second.exchange(0, std::memory_order_relaxed);
+#if MQTT_ENABLED
+    const uint32_t requests_this_second = s_ntp_requests_this_second.exchange(0, std::memory_order_relaxed);
     uint32_t most_requests_per_second = s_ntp_most_requests_per_second.load(std::memory_order_relaxed);
     while (most_requests_per_second < requests_this_second &&
            !s_ntp_most_requests_per_second.compare_exchange_weak(most_requests_per_second, requests_this_second,
                                                                  std::memory_order_relaxed, std::memory_order_relaxed))
     {
     }
-}
 #endif
+}
 
 static void pps_discipline_task(void *parameter)
 {
@@ -1942,14 +2312,10 @@ static void pps_discipline_task(void *parameter)
             s_pps_pulses.fetch_add(1);
 #endif
             sync_state_note_pps_edge(edge_us);
+            finish_ntp_request_rate_second();
 
             if (!logged_active)
             {
-
-#if MQTT_ENABLED
-                s_ntp_requests_this_second.exchange(0, std::memory_order_relaxed);
-#endif
-
 #if DEBUG_ENABLED
                 ESP_LOGI(TAG, "PPS discipline active.");
 #endif
@@ -1992,15 +2358,13 @@ static void pps_discipline_task(void *parameter)
 
                 if (adjtime(&delta, nullptr) == 0)
                 {
+                    synchronize_hardware_clock();
                     s_ntp_reference_time_64 = get_current_time_in_ntp64_format();
                     s_ntp_reference_valid = true;
                 }
             }
 
             xSemaphoreGive(s_time_mutex);
-#if MQTT_ENABLED
-            mqtt_finish_ntp_request_rate_second();
-#endif
         }
         else
         {
@@ -2353,6 +2717,25 @@ static void setup_gps()
     }
 }
 
+static void format_time_to_ISO8601(time_t value, char *output, size_t output_size)
+{
+    // Returns local time using the ISO-8601 time format = for example 2026-08-25T21:57:14-0400
+    // ISO 8601 is an international standard for formatting dates and times from largest to smallest unit
+    // concluding with an offset indicating how many hours and minutes that specific time is ahead of or behind GMT/UTC.
+    // YYYY-MM-DDTHH:mm:ss—Z
+
+    if (value <= 0)
+    {
+        if (output_size > 0)
+            output[0] = '\0';
+        return;
+    }
+
+    struct tm local_tm{};
+    localtime_r(&value, &local_tm);
+    strftime(output, output_size, "%Y-%m-%dT%H:%M:%S%z", &local_tm);
+}
+
 #if MQTT_ENABLED
 
 static void mqtt_enqueue_ntp_request(const struct sockaddr_storage &source_address)
@@ -2422,25 +2805,6 @@ static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
     xSemaphoreGive(s_mqtt_stats_mutex);
 }
 
-static void mqtt_format_time(time_t value, char *output, size_t output_size)
-{
-    // Returns local time using the ISO-8601 time format = for example 2026-08-25T21:57:14-0400
-    // ISO 8601 is an international standard for formatting dates and times from largest to smallest unit
-    // concluding with an offset indicating how many hours and minutes that specific time is ahead of or behind GMT/UTC.
-    // YYYY-MM-DDTHH:mm:ss—Z
-
-    if (value <= 0)
-    {
-        if (output_size > 0)
-            output[0] = '\0';
-        return;
-    }
-
-    struct tm local_tm{};
-    localtime_r(&value, &local_tm);
-    strftime(output, output_size, "%Y-%m-%dT%H:%M:%S%z", &local_tm);
-}
-
 static void mqtt_note_ethernet_disconnected()
 {
     int64_t connected_since_us = s_eth_link_connected_us.exchange(0);
@@ -2453,9 +2817,17 @@ static void mqtt_event_handler(void *arguments, esp_event_base_t base, int32_t e
     (void)arguments;
     (void)base;
     if (event_id == MQTT_EVENT_CONNECTED)
+    {
         s_mqtt_connected.store(true);
+        s_mqtt_has_connected.store(true);
+        s_mqtt_disconnected_since_us.store(0);
+    }
     else if (event_id == MQTT_EVENT_DISCONNECTED || event_id == MQTT_EVENT_ERROR)
+    {
         s_mqtt_connected.store(false);
+        if (s_mqtt_has_connected.load() && s_mqtt_disconnected_since_us.load() == 0)
+            s_mqtt_disconnected_since_us.store(esp_timer_get_time());
+    }
     else if (event_id == MQTT_EVENT_PUBLISHED)
     {
         auto *event = static_cast<esp_mqtt_event_t *>(event_data);
@@ -2704,15 +3076,15 @@ static void mqtt_build_report(char *payload, size_t payload_size)
 #endif
 
     char publishing_date_and_time[25] = "";
-    mqtt_format_time(time(nullptr), publishing_date_and_time, sizeof(publishing_date_and_time));
+    format_time_to_ISO8601(time(nullptr), publishing_date_and_time, sizeof(publishing_date_and_time));
 
 #if MQTT_HISTORICAL_REPORTING_ENABLED
     char last_synchronized_and_disciplined[25] = "";
     char last_gnss_unsynchronized[25] = "";
     char last_pps_undisciplined[25] = "";
-    mqtt_format_time(s_last_synchronized_and_disciplined.load(), last_synchronized_and_disciplined, sizeof(last_synchronized_and_disciplined));
-    mqtt_format_time(s_last_gnss_unsynchronized.load(), last_gnss_unsynchronized, sizeof(last_gnss_unsynchronized));
-    mqtt_format_time(s_last_pps_undisciplined.load(), last_pps_undisciplined, sizeof(last_pps_undisciplined));
+    format_time_to_ISO8601(s_last_synchronized_and_disciplined.load(), last_synchronized_and_disciplined, sizeof(last_synchronized_and_disciplined));
+    format_time_to_ISO8601(s_last_gnss_unsynchronized.load(), last_gnss_unsynchronized, sizeof(last_gnss_unsynchronized));
+    format_time_to_ISO8601(s_last_pps_undisciplined.load(), last_pps_undisciplined, sizeof(last_pps_undisciplined));
 #endif
 
     int64_t link_up_total_us = s_eth_link_up_total_us.load();
@@ -2844,6 +3216,7 @@ static void mqtt_build_report(char *payload, size_t payload_size)
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "Published: \n\r%s", payload);
 #endif
+    // ESP_LOGI(TAG, "Published: \n\r%s", payload); // testing add or remove this as needed
 }
 
 static void mqtt_publish_final_report()
@@ -3113,6 +3486,7 @@ static void setup_mqtt()
     config.session.last_will.msg = "offline";
     config.session.last_will.qos = MQTT_QOS;
     config.session.last_will.retain = 1;
+    config.task.priority = 23;
     s_mqtt_client = esp_mqtt_client_init(&config);
     if (s_mqtt_client == nullptr)
     {
@@ -3133,10 +3507,9 @@ static void setup_mqtt()
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "MQTT setup. Keep alive set at %u seconds", MQTTFrequencyOfKeepAliveRequest);
 #endif
-
-    if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", 2630, nullptr, 5, nullptr, 0) != pdPASS)
+    if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", 2630, nullptr, 5, nullptr, 0) != pdPASS ||
+        xTaskCreatePinnedToCore(ethernet_transport_recovery_task, "eth_recovery", 3072, nullptr, 6, nullptr, 0) != pdPASS)
         s_mqtt_setup_failed.store(true);
-
 #endif
 }
 
@@ -3322,12 +3695,25 @@ static void setup_ethernet()
                    static_cast<int>(ETH_MDC_GPIO),
                    static_cast<int>(ETH_MDIO_GPIO),
                    static_cast<int>(ETH_PHY_RST_GPIO),
-                   EMAC_CLK_EXT_IN))
+                   EMAC_CLK_EXT_IN)) // needed for hardware time stamping
     {
 #if DEBUG_ENABLED
         ESP_LOGE(TAG, "ETH.begin() failed");
 #endif
         return;
+    }
+
+    if (!ntp_cache_init() ||
+        (s_hardware_ntp_transmit_mutex = xSemaphoreCreateMutex()) == nullptr ||
+        xTaskCreatePinnedToCore(ntp_cache_purge_task, "ntp_cache_purge", 2048, nullptr, 5, nullptr, tskNO_AFFINITY) != pdPASS ||
+        (s_hardware_ntp_request_queue = xQueueCreate(HARDWARE_NTP_REQUEST_QUEUE_DEPTH, sizeof(hardware_ntp_request_t))) == nullptr ||
+        xTaskCreatePinnedToCore(hardware_ntp_server_task, "hardware_ntp", 4096, nullptr, 20, nullptr, 1) != pdPASS)
+    {
+        ESP_LOGE(TAG, "Unable to initialize hardware NTP serving");
+    }
+    else if (!configure_hardware_timestamps())
+    {
+        ESP_LOGE(TAG, "Unable to configure Ethernet hardware timestamping");
     }
 
     // Apply the optional static IP address (if configured). When StaticIPAddress is
@@ -3348,59 +3734,78 @@ static void setup_ethernet()
 void write_opening_messages_to_the_console()
 {
 
+    // Note: the console writes in the routine are purposefully not guarded by a DEBUG_ENABLE check - they should always be written
+
     Serial.begin(serialMonitorSpeed);
     vTaskDelay(pdMS_TO_TICKS(100));
 
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "******************* Application Startup *******************");
-    ESP_LOGI(TAG, "ESP32 Time Server v2.7.5");
+
+    // the values below are drawn from the CMakeLists.txt files (one in the root folder and one in the /main folder)
+    const app_metadata_t *meta = get_app_metadata();
+    ESP_LOGI(TAG, "%s v%s", meta->project_name, meta->version);
+    ESP_LOGI(TAG, "%s", meta->copyright);
+    ESP_LOGI(TAG, "License: %s", meta->license);
+    ESP_LOGI(TAG, "Website: %s", meta->homepage);
+    ESP_LOGI(TAG, " ");
 
 #if UPTIME_RESTART_BUTTON_ENABLED
-    ESP_LOGI(TAG, "Uptime / Reset button support is enabled in the settings.");
+    ESP_LOGI(TAG, "Uptime / Reset button support: Enabled");
 #else
-    ESP_LOGW(TAG, "Uptime / Reset button support is disabled in the settings.");
+    ESP_LOGW(TAG, "Uptime / Reset button support: Disabled");
 #endif
 
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
-    ESP_LOGI(TAG, "LCD support is enabled in the settings.");
+    ESP_LOGI(TAG, "LCD support: Enabled");
 #else
-    ESP_LOGW(TAG, "LCD support is disabled in the settings.");
+    ESP_LOGW(TAG, "LCD support: Disabled");
 #endif
 
 #if OTE_UPDATES_ENABLED
-    ESP_LOGI(TAG, "Over the Ethernet update support is enabled in the settings.");
+    ESP_LOGI(TAG, "Over the Ethernet update support: Enabled");
 #else
-    ESP_LOGW(TAG, "Over the Ethernet update support is disabled in the settings.");
+    ESP_LOGW(TAG, "Over the Ethernet update support: Disabled");
 #endif
 
 #if MQTT_ENABLED
-    ESP_LOGI(TAG, "MQTT is enabled in the settings.");
+    ESP_LOGI(TAG, "MQTT support: Enabled");
 
 #if MQTT_CLIENT_REPORTING_ENABLED
-    ESP_LOGI(TAG, "MQTT client reporting is enabled in the settings.");
+    ESP_LOGI(TAG, "MQTT client reporting: Enabled");
 #else
-    ESP_LOGW(TAG, "MQTT client reporting is disabled in the settings.");
+    ESP_LOGW(TAG, "MQTT client reporting: Disabled");
 #endif
 
 #if MQTT_MEMORY_REPORTING_ENABLED
-    ESP_LOGI(TAG, "MQTT memory reporting is enabled in the settings.");
+    ESP_LOGI(TAG, "MQTT memory reporting: Enabled");
 #else
-    ESP_LOGW(TAG, "MQTT memory reporting is disabled in the settings.");
+    ESP_LOGW(TAG, "MQTT memory reporting: Disabled");
 #endif
 
 #if MQTT_HISTORICAL_REPORTING_ENABLED
-    ESP_LOGI(TAG, "MQTT historical reporting is enabled in the settings.");
+    ESP_LOGI(TAG, "MQTT historical reporting: Enabled");
 #else
-    ESP_LOGW(TAG, "MQTT historical reporting is disabled in the settings.");
+    ESP_LOGW(TAG, "MQTT historical reporting: Disabled");
 #endif
 
 #else
-    ESP_LOGW(TAG, "MQTT support is disabled in the settings.");
+    ESP_LOGW(TAG, "MQTT support: Disabled");
 #endif
+}
+
+void write_open_for_business_messages_to_the_console()
+{
+
+    char s_open_for_business_date_and_time[25] = "";
+    format_time_to_ISO8601(time(nullptr), s_open_for_business_date_and_time, sizeof(s_open_for_business_date_and_time));
+
+    // Note: the console write below is purposefully not guarded by a DEBUG_ENABLE check - it should always be written
+    ESP_LOGI(TAG, "Open for business: %s", s_open_for_business_date_and_time);
 
 #if DEBUG_ENABLED
 #else
-    ESP_LOGW(TAG, "DEBUG was disabled in the settings. This will be the last console message reported by main.cpp");
+    ESP_LOGW(TAG, "DEBUG_ENABLED is disabled in the settings file; this will be the last console message from main_cpp");
 #endif
 }
 
@@ -3459,12 +3864,10 @@ static void setup_up_time_button()
 
 #endif
 }
-
-static void configure_mac_address()
+static std::string configure_mac_address()
 {
-
     uint8_t real_mac_address[6];
-    char real_mac_address_str[18];
+    char real_mac_address_str[18] = {0};
 
     esp_err_t ret = esp_efuse_mac_get_default(real_mac_address);
 
@@ -3474,10 +3877,12 @@ static void configure_mac_address()
                       "%02x:%02x:%02x:%02x:%02x:%02x",
                       real_mac_address[0], real_mac_address[1], real_mac_address[2],
                       real_mac_address[3], real_mac_address[4], real_mac_address[5]);
+
 #if DEBUG_ENABLED
         ESP_LOGI(TAG, "Real MAC address for this ESP32 is: %s", real_mac_address_str);
 #endif
     }
+
 #if DEBUG_ENABLED
     else
     {
@@ -3485,40 +3890,47 @@ static void configure_mac_address()
     }
 #endif
 
+    // If MACAddress is empty or matches the real MAC, do nothing
     if ((MACAddress[0] == '\0') || (std::strcmp(real_mac_address_str, MACAddress) == 0))
     {
 #if DEBUG_ENABLED
         ESP_LOGI(TAG, "No need to change the MAC address.");
 #endif
-        return;
+        return std::string(real_mac_address_str);
     }
 
+    // Parse the desired MAC
     uint8_t mac[6] = {};
     if (!parse_mac_id_string(MACAddress, mac))
     {
 #if DEBUG_ENABLED
-        ESP_LOGE(TAG, "The MAC address is settings is invalid: %s - the MAC ID will not be changed", MACAddress);
+        ESP_LOGE(TAG, "The MAC address in settings is invalid: %s - the MAC ID will not be changed", MACAddress);
 #endif
-        return;
+        return std::string(real_mac_address_str);
     }
 
+    // Apply the new MAC
     esp_err_t err = esp_base_mac_addr_set(mac);
     if (err != ESP_OK)
     {
 #if DEBUG_ENABLED
         ESP_LOGE(TAG, "Failed to set MAC address to %s: %s", MACAddress, esp_err_to_name(err));
 #endif
-        return;
+        return std::string(real_mac_address_str);
     }
+
 #if DEBUG_ENABLED
-    ESP_LOGI(TAG, "MAC address changed to : %s", MACAddress);
+    ESP_LOGI(TAG, "MAC address changed to: %s", MACAddress);
 #endif
+
+    return std::string(MACAddress);
 }
 
 void setup_ethernet_connection()
 {
 
-    configure_mac_address();
+    std::string MACToBeUsed = configure_mac_address();
+    ESP_LOGI(TAG, "The MAC address that will be used for this device is: %s", MACToBeUsed.c_str());
 
     display_line(1, "Connecting Ethernet");
     display_line(2, "");
@@ -4207,6 +4619,7 @@ static void gps_time_sync_task(void *parameter)
             tv.tv_sec = candidate.candidate_time + static_cast<time_t>(elapsed_us / 1000000LL);
             tv.tv_usec = static_cast<suseconds_t>(elapsed_us % 1000000LL);
             settimeofday(&tv, nullptr);
+            synchronize_hardware_clock();
             s_ntp_reference_time_64 = get_current_time_in_ntp64_format();
             s_ntp_reference_valid = true;
 
@@ -4423,6 +4836,9 @@ static void ntp_server_task(void *parameter)
 
     for (;;)
     {
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+        uint32_t raw_ntp_requests = 0;
+#endif
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(ipv4_socket, &read_fds);
@@ -4445,7 +4861,15 @@ static void ntp_server_task(void *parameter)
             continue;
         }
         if (ready == 0)
+        {
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+            raw_ntp_requests = s_ntp_stack_report_requests.exchange(0, std::memory_order_acq_rel);
+            if (raw_ntp_requests == 0)
+                continue;
+#else
             continue;
+#endif
+        }
 
         static uint8_t next_socket = 0;
         const int sockets[] = {ipv4_socket, ipv6_socket, ipv6_link_local_socket};
@@ -4497,8 +4921,8 @@ static void ntp_server_task(void *parameter)
                 }
 
 #if MQTT_ENABLED
-                s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
                 s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
+                s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
                 mqtt_enqueue_ntp_request(source_addr);
 #endif
                 ntp_reply_status_t status = get_ntp_reply_status();
@@ -4557,7 +4981,8 @@ static void ntp_server_task(void *parameter)
         size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.5); // add 50% for safety
 
         ESP_LOGI("ntp_server_task",
-                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
+                 "Stack report: RawRequests=%lu, Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
+                 static_cast<unsigned long>(raw_ntp_requests),
                  (unsigned)allocated_bytes,
                  (unsigned)high_watermark_bytes,
                  (unsigned)peak_usage_bytes,
@@ -4567,6 +4992,7 @@ static void ntp_server_task(void *parameter)
 
         // Results of this testing:
         // ntp_server_task: Stack report: Allocated=22000 bytes, HighWater=19784 bytes unused, PeakUsage=2216 bytes, Suggested=3324 bytes
+        // ntp_server_task: Stack report: Allocated=22000 bytes, HighWater=19932 bytes unused, PeakUsage=2068 bytes, Suggested=3102 byte
 
 #endif
     }
@@ -4812,7 +5238,9 @@ extern "C" void app_main()
 
     setup_mqtt();
 
-    xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", 3324, nullptr, 20, nullptr, tskNO_AFFINITY);
+    xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", 3102, nullptr, 20, nullptr, tskNO_AFFINITY);
 
     xTaskCreatePinnedToCore(update_display_task, "display_service", 2750, nullptr, 10, nullptr, tskNO_AFFINITY);
+
+    write_open_for_business_messages_to_the_console();
 }

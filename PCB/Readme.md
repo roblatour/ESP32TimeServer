@@ -33,7 +33,7 @@ Time Server's PCB.
 The BOM components part numbers needed to order this board via JLCPBC are as
 follows:
 
-<!-- markdownlint-disable no-bare-urls line-length -->
+
 
 | Item                           | Qty | JLCPCB Part Number | Url                                                                |
 | ------------------------------ | --- | ------------------ | ------------------------------------------------------------------ |
@@ -42,7 +42,7 @@ follows:
 | connector for LCD:             | 1   | C566011            | https://jlcpcb.com/partdetail/JST-B4B_PH_K_SGW/C566011             |
 | connector for button:          | 1   | C5251182           | https://jlcpcb.com/partdetail/JST-B2B_PH_K_SGW/C5251182            |
 
-<!-- markdownlint-enable no-bare-urls line-length -->
+
 
 Note: When I designed the board I didn't think to label the pins for the LCD
 connector on the board.

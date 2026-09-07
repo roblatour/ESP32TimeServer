@@ -55,7 +55,7 @@ Use this option if you do **not** already have an `mqtt.yaml` file.
    directory (the same folder that contains `configuration.yaml`).
 2. Add the following content:
 
-<!-- markdownlint-disable MD013 -->
+
 
 ```yaml
 
@@ -257,7 +257,7 @@ Use this option if you do **not** already have an `mqtt.yaml` file.
 
 ```
 
-<!-- markdownlint-enable MD013 -->
+
 
 ### B — Append to an existing mqtt.yaml
 
@@ -270,7 +270,7 @@ Use this option if you already have an `mqtt.yaml` file that contains a
    your file does not yet have a `sensor:` key, add `sensor:` on its own line
    first, then paste the entries beneath it.
 
-<!-- markdownlint-disable MD013 -->
+
 
 ```yaml
   
@@ -473,7 +473,7 @@ Use this option if you already have an `mqtt.yaml` file that contains a
 
 ```
 
-<!-- markdownlint-enable MD013 -->
+
 
 ### C — Keep a separate mqtt_esp32timeserver.yaml file
 
@@ -493,7 +493,7 @@ lists (no top-level `sensor:` key).
 3. Create `mqtt_sensors/mqtt_esp32timeserver.yaml` with the content below (also
    a plain list — no `sensor:` header):
 
-<!-- markdownlint-disable MD013 -->
+
 
 ```yaml
  
@@ -693,7 +693,7 @@ lists (no top-level `sensor:` key).
 
 ```
 
-<!-- markdownlint-enable MD013 -->
+
 
 ---
 
@@ -719,7 +719,7 @@ Then add the template sensors below. If `configuration.yaml` already has a
 `template:` key, only add the `- sensor:` blocks under it. Otherwise add the
 complete block shown:
 
-<!-- markdownlint-disable MD013 -->
+
 
 ```yaml
   # only add the template key line below if your existing file currently doesn't already have a template key line
@@ -831,7 +831,7 @@ template:
           {% endif %}
 ```
 
-<!-- markdownlint-enable MD013 -->
+
 
 ### Option B — configuration.yaml with an existing mqtt.yaml
 
@@ -933,9 +933,9 @@ entities:
     icon: mdi:update
 ```
 
-<!-- markdownlint-disable MD029 -->
+
 
 4. Click **Save**. The card will appear on your dashboard displaying last
    published report from the ESP32 Time Server.
 
-<!-- markdownlint-enable MD029 -->
+

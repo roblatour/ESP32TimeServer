@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 2.7.5)
+# ESP32 NTP Stratum 1 Time Server (version 2.8)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -56,7 +56,7 @@ A full write-up of the original (version 1) project is available on
 - **Ability to set a Static IP Address** — (version 2.3) allows the use of a
   DHCP assigned or static IP address.
 - **Handles greater throughput and number of concurrent requests** (version
-  2.4.1).
+  2.4).
 - **IPv6 support** - (version 2.5) IPv6 support has been added.
 - **MQTT publishing** — (version 2.5) optional MQTT publishing of time server
   stats is now available. For more information see
@@ -64,17 +64,27 @@ A full write-up of the original (version 1) project is available on
 - **Improved GNSS Satellite lock and PPS discipline tracking and recovery** -
   (version 2.5) with returned results being tagged as Stratum 16 (undefined)
   until a lost lock and/or failed PPS discipline is recovered.
-- **Conditional compilation** - (version 2.5) when optional features are
-  disabled in the settings their associated code will now be excluded from the
-  executable.
 - **TF card support** — (version 2.6) enabling queueing of vastly greater
   amounts of MQTT reporting data should broker communications be lost
-- **Home Assistant** - (version 2.6) dashboard card setup documentation added
+- **Home Assistant** - (version 2.6) dashboard card setup documentation 
+  included.
+- **Improved accuracy** - (version 2.7) greater accuracy setting the 
+  precise time every second.
+- **Improved throughput** - (versions 2.7 & 2.8) increased maximum 
+  requests per second.
+- **Support for RFC 9769-compatible interleaved responses** - (version 2.8)
+  including hardware level time stamping. This drastically reduces jitter
+  (the variation in successive clock offset measurements) between a client
+  and server using RFC 9769-compliant NTP requests.
 
-<!-- markdownlint-disable MD059 -->
+- **Testing instructions, tools, and links added** - (versions 2.8) added
+  instructions, tools, and links for determining / testing: jitter,
+  drift, RFC 9769 compliance, memory, and server performance under stress.
+
+
 
 [here](./Homeassistant/README.md)
-<!-- markdownlint-disable MD059 -->
+
 
 > The source code for **Version 1** (Arduino / PlatformIO) remains available at:
 > [https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0)
@@ -83,7 +93,7 @@ A full write-up of the original (version 1) project is available on
 
 ## Hardware
 
-<!-- markdownlint-disable line-length table-column-style -->
+
 
 | Qty | Item                                                                                                                                                                                                                                                                                                                                                                         |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -97,7 +107,7 @@ A full write-up of the original (version 1) project is available on
 | —   | Miscellaneous: Ethernet cable, female dupont connection wires, small 4" .1" zip ties, solder <sup>2</sup>                                                                                                                                                                                                                                                                    |
 | —   | A PoE-capable switch, PoE injector, **or** USB-C power supply and USB-C cable                                                                                                                                                                                                                                                                                                |
 
-<!-- markdownlint-enable line-length table-column-style -->
+
 
 > ⚠️ **WARNING — Do NOT power the ESP32-P4-ETH via both its USB-C connector and
 > a PoE powered Ethernet cable at the same time.** Powering from both
@@ -182,23 +192,42 @@ can tweak the design to suit your needs.
 
 ## Software
 
-### Development Environment
+### Build and development Environment
 
-This release is built using:
+
+**To build and flash ESP32TimeServer** you will need **Espressif's ESP-IDF v6.1** or above. 
+If you don't already have this software installed, just follow the install instructions
+directly below:
+
+https://docs.espressif.com/projects/esp-idf/en/stable/esp32/get-started/index.html
+
+which include these links to get it:
+
+[Installation of ESP-IDF and Tools on Windows](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/get-started/windows-setup.html)
+
+[Installation of ESP-IDF and Tools on Linux](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/get-started/linux-setup.html)
+
+[Installation of ESP-IDF and Tools on macOS](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/get-started/macos-setup.html)
+
+
+If you want to further develop the project, Visual Studio Code with the ESP-IDF extension is recommended.
+However, they are not needed to build and flash the project - the instructions for that are below.
+
+Both Visual Studio Code (Community Edition) and the ESP-IDF extension are free to download and use.
+Here is where you can find more information about them and get your copies:
 
 - **[Visual Studio Code](https://code.visualstudio.com/)**
 - **[Espressif ESP-IDF Extension for VS Code](https://marketplace.visualstudio.com/items?itemName=espressif.esp-idf-extension)**
 
-(It has been tested to compile on 5.5.3+ and 6.0.2+)
 
 ### Dependencies
 
 The
 [`SparkFun u-blox GNSS Arduino Library v3`](https://github.com/sparkfun/SparkFun_u-blox_GNSS_v3)
 (v3.1.14) is included as a **git submodule** in
-[`3rdparty/SparkFun_u-blox_GNSS_v3`](./3rdparty/SparkFun_u-blox_GNSS_v3). Since
-it is an Arduino library and is not published to the ESP-IDF Component Registry,
-it is manually created during Setup Step 1.
+[`3rdparty/SparkFun_u-blox_GNSS_v3`](./3rdparty/SparkFun_u-blox_GNSS_v3). The
+local component wrapper in `components/SparkFun_u-blox_GNSS_v3` builds it from
+that checked-out submodule.
 
 The remaining dependencies are managed automatically via the ESP-IDF Component
 Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
@@ -206,6 +235,7 @@ Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
 - `esp-idf-lib/hd44780` — LCD driver
 - `esp-idf-lib/pcf8574` — I²C LCD backpack driver
 - `espressif/arduino-esp32` — Arduino compatibility layer for OTA and serial
+- `espressif/mqtt` — MQTT client used for optional reporting
 
 > **Note:** The ESP-IDF Component Manager resolves these dependencies
 > dynamically at build time. A `dependencies.lock` file is generated locally on
@@ -261,19 +291,27 @@ Edit this file to match your desired hardware setup before building.
 
 ### Setup Step 3 - Build
 
-The ESP32-P4 has different revisions; the build steps are detailed below for
-each.
+Open a Command Prompt, load the ESP-IDF 6.1 environment, and remove any
+existing generated configuration before building. The first build downloads the
+Component Manager dependencies into `managed_components`; this generated folder
+is not part of the repository.
 
 ```cmd
-del sdkconfig
+call C:\esp\v6.1\esp-idf\export.bat
+```
+```cmd
+if exist sdkconfig del sdkconfig
 ```
 
-<!-- markdownlint-disable MD013 -->
+The ESP32-P4 has different revisions; use the command matching your module.
 
-- For current ESP32-P4 modules at revision 3.1 and above:
+
+
+- For older ESP32-P4 modules with revisions prior to version 3.0 (**this includes the
+  Waveshare ESP32-P4-ETH**):
 
   ```cmd
-  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_1.defaults" set-target esp32p4 build
+  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_pre_v3.defaults" set-target esp32p4 build
   ```
 
 - For ESP32-P4 modules at revision 3.0:
@@ -281,21 +319,18 @@ del sdkconfig
   ```cmd
   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_0.defaults" set-target esp32p4 build
   ```
-
-- For older ESP32-P4 modules with revisions prior to version 3.0 (includes the
-  Waveshare ESP32-P4-ETH):
+- For ESP32-P4 modules at revision 3.1 and above:
 
   ```cmd
-  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_pre_v3.defaults" set-target esp32p4 build
+  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_1.defaults" set-target esp32p4 build
   ```
 
-```cmd
-call C:\esp\v5.5.3\esp-idf\export.bat
-```
 
-<!-- markdownlint-enable MD013 -->
+
 
 ### Setup Step 4 - Flash
+
+In the same Command Prompt where ESP-IDF 6.1 was loaded:
 
 ```cmd
 idf.py -p COMx flash monitor

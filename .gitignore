@@ -18,8 +18,6 @@
 
 .vscode/
 
-AGENTS.md
-
 # Build artifacts and directories
 **/build/
 build/
@@ -82,13 +80,19 @@ Desktop.ini
 
 # auto release update files
 Release/
-Release.bat
-ReleaseNotes.txt
-Releases.md
+
+# testing file
+testing/drift/background
+testing/RFC_9769_compliance/background
 
 # personalize settings
 ESP32TimeServerSettings -*.h
-switch*.bat
+_switch*.bat
+
+
+#others
+/misc/doNotPublish
+AGENTS.md
 
 # User-specific configuration files
 *.user

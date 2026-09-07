@@ -1,0 +1,66 @@
+
+Executive Summary
+Overall Result: PASS
+Confidence: High
+
+Test Period: 6 Sep 14:53:06 - 6 Sep 16:38:28
+
+Endpoint Drift Analysis (Primary Section)
+Master Server
+Initial Error: -0.0044955
+Final Error: -0.0027264999999999998
+Net Endpoint Drift: 0.0017690000000000006
+Direction: Ahead
+Assessment: Stable
+
+Reference Server
+Initial Error: -0.0040625
+Final Error: -0.0029635
+Net Endpoint Drift: 0.0010990000000000002
+Direction: Ahead
+Assessment: Stable
+
+Internal Synchronization
+Initial Difference: -0.0004330000000000002
+Final Difference: 0.00023700000000000023
+Net Separation Change: 0.0006700000000000005
+Direction: Master ahead
+Assessment: Synchronized
+
+External Reference Analysis
+Average Consensus Value: 0.0009068750000000001
+Average Disagreement: 0.0009068750000000001
+Maximum Disagreement: 0.0025249999999999995
+Standard Deviation: 0.001372988236085281
+Confidence Assessment: High
+
+Master Analysis
+Average Error: -0.0019809375
+Maximum Error: 0.0088085
+Standard Deviation: 0.004454596674363461
+Trend Slope: 0.00035664880952380936
+Endpoint Drift: 0.0017690000000000006
+Outlier Count: 0
+
+Reference Analysis
+Average Error: -0.0034611875
+Maximum Error: 0.004448
+Standard Deviation: 0.0009628900299730125
+Trend Slope: 0.0001599107142857142
+Endpoint Drift: 0.0010990000000000002
+Outlier Count: 0
+
+Internal Synchronization Analysis
+Average Difference: 0.0014802499999999998
+Maximum Difference: 0.012034
+Standard Deviation: 0.004270824067353479
+Trend Slope: 0.0001967380952380953
+Endpoint Drift: 0.0006700000000000005
+Outlier Count: 0
+
+Outlier Summary
+
+Findings and Conclusions:
+The Master server exhibited no meaningful endpoint drift and remained stable relative to the external consensus reference throughout the test period.
+The Reference server exhibited no meaningful endpoint drift and remained stable relative to the external consensus reference throughout the test period.
+The Master and Reference servers remained synchronized throughout the test period.

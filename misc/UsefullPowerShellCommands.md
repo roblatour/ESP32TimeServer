@@ -23,7 +23,7 @@ Here are a couple example command line commands which may be used, following a
 build, to provide for an Over The Ethernet (OTE) update. The path name which
 precedes `ESP32TimeServer.bin` may vary.
 
-<!-- markdownlint-disable MD013 -->
+
 
 ```cmd
 python tools\espota.py -i ESP32TimeServer.local -p 3232 -P 3232 -a ESP32TimeServerpw -f build-esp32p4-rev-1-3\ESP32TimeServer.bin -r -d
@@ -53,7 +53,7 @@ ntpdate -q x.x.x.x
 
 With the output showing, for example:
 
-<!-- markdownlint-disable MD013 -->
+
 
 ```text
 28 Aug 10:46:21 ntpdate[51120]: Raised to realtime priority class
@@ -61,7 +61,7 @@ server 192.168.7.24, stratum 1, offset +0.006410, delay 0.04124
 28 Aug 10:46:24 ntpdate[51120]: adjust time server 192.168.7.24 offset +0.006410 sec
 ```
 
-<!-- markdownlint-enable MD013 -->
+
 
 The `stratum 1` value indicates that the server is a Stratum 1 time source
 (directly connected to a reference clock, in this case GNSS). The `offset` value
@@ -86,7 +86,7 @@ or
 w32tm /stripchart /computer:x.x.x.x /samples:5 /dataonly
 ```
 
-<!-- markdownlint-enable MD013 -->
+
 
 With the output showing, for example:
 
@@ -122,7 +122,7 @@ sntp -d x.x.x.x
 
 With the output showing, for example:
 
-<!-- markdownlint-disable MD013 -->
+
 
 ```text
 sntp 4.2.8p15@1.37-o
@@ -133,7 +133,7 @@ leap: 0 stratum: 1 rootdelay: 0.000000
 response from ESP32TimeServer.local: offset 0.002154, delay 0.040680
 ```
 
-<!-- markdownlint-enable MD013 -->
+
 
 The offset value shown above is the clock offset between the machine issuing the
 command and the `ESP32TimeServer.local` device (in the case above approximately
@@ -164,10 +164,10 @@ drift file within a few hours.
 Here is an open source Windows app, written by me, which can be used to stress
 test your NTP server.
 
-<!-- markdownlint-disable MD013 -->
+
 
 [TimeServerStressTest](https://github.com/roblatour/TimeServerStressTest)
 
 ![Screenshot](https://raw.githubusercontent.com/roblatour/TimeServerStressTest/main/Misc/screenshot.jpg)
 
-<!-- markdownlint-enable MD013 -->
+
