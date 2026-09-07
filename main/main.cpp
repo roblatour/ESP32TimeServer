@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.8
+// ESP32 Time Server v2.8.1
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -4925,6 +4925,16 @@ static void ntp_server_task(void *parameter)
                 s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
                 mqtt_enqueue_ntp_request(source_addr);
 #endif
+                const struct in6_addr *client_ipv6 = nullptr;
+                ntp_client_record_ipv6_t client_ipv6_record{};
+                if (source_addr.ss_family == AF_INET6)
+                {
+                    client_ipv6 = &reinterpret_cast<const struct sockaddr_in6 *>(&source_addr)->sin6_addr;
+                    ntp_cache_find_or_create_ipv6(client_ipv6,
+                                                  ntohs(reinterpret_cast<const struct sockaddr_in6 *>(&source_addr)->sin6_port),
+                                                  &client_ipv6_record);
+                }
+
                 ntp_reply_status_t status = get_ntp_reply_status();
 #if MQTT_ENABLED
                 if (status.gnss_synchronized && status.pps_disciplined)
@@ -4935,9 +4945,42 @@ static void ntp_server_task(void *parameter)
                     s_ntp_responses_pps_undisciplined.fetch_add(1, std::memory_order_relaxed);
 #endif
                 build_ntp_reply(request, reply, ntp_version, receive_time, status);
-                write_ntp_timestamp(reply, 40, get_current_time_in_ntp64_format());
+                const uint64_t client_receive_timestamp =
+                    (static_cast<uint64_t>(request[32]) << 56) | (static_cast<uint64_t>(request[33]) << 48) |
+                    (static_cast<uint64_t>(request[34]) << 40) | (static_cast<uint64_t>(request[35]) << 32) |
+                    (static_cast<uint64_t>(request[36]) << 24) | (static_cast<uint64_t>(request[37]) << 16) |
+                    (static_cast<uint64_t>(request[38]) << 8) | request[39];
+                const uint64_t client_origin_timestamp =
+                    (static_cast<uint64_t>(request[24]) << 56) | (static_cast<uint64_t>(request[25]) << 48) |
+                    (static_cast<uint64_t>(request[26]) << 40) | (static_cast<uint64_t>(request[27]) << 32) |
+                    (static_cast<uint64_t>(request[28]) << 24) | (static_cast<uint64_t>(request[29]) << 16) |
+                    (static_cast<uint64_t>(request[30]) << 8) | request[31];
+                const uint64_t client_transmit_timestamp =
+                    (static_cast<uint64_t>(request[40]) << 56) | (static_cast<uint64_t>(request[41]) << 48) |
+                    (static_cast<uint64_t>(request[42]) << 40) | (static_cast<uint64_t>(request[43]) << 32) |
+                    (static_cast<uint64_t>(request[44]) << 24) | (static_cast<uint64_t>(request[45]) << 16) |
+                    (static_cast<uint64_t>(request[46]) << 8) | request[47];
+                const bool interleaved_reply = client_ipv6 != nullptr && client_ipv6_record.prev_t2 != 0 &&
+                                               client_receive_timestamp != client_transmit_timestamp &&
+                                               client_origin_timestamp == client_ipv6_record.prev_t2;
+                const uint64_t transmit_time = get_current_time_in_ntp64_format();
+                if (interleaved_reply)
+                {
+                    write_ntp_timestamp(reply, 24, client_receive_timestamp);
+                    write_ntp_timestamp(reply, 40, client_ipv6_record.prev_t3);
+                }
+                else
+                {
+                    write_ntp_timestamp(reply, 40, transmit_time);
+                }
 
                 int sent = sendto(sock, reply, sizeof(reply), 0, reinterpret_cast<struct sockaddr *>(&source_addr), source_addr_len);
+                if (sent == static_cast<int>(sizeof(reply)) && client_ipv6 != nullptr)
+                {
+                    ntp_cache_update_ipv6(client_ipv6,
+                                          ntohs(reinterpret_cast<const struct sockaddr_in6 *>(&source_addr)->sin6_port),
+                                          receive_time, transmit_time);
+                }
 #if MQTT_ENABLED
                 if (sent == static_cast<int>(sizeof(reply)))
                     s_ntp_responses.fetch_add(1, std::memory_order_relaxed);
