@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.8.1
+// ESP32 Time Server v2.8.2
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -3149,16 +3149,28 @@ static void mqtt_build_report(char *payload, size_t payload_size)
 #if MQTT_MEMORY_REPORTING_ENABLED
     len += snprintf(payload + len, payload_size - len, ",");
     len += snprintf(payload + len, payload_size - len, "\"memory\":{");
-    len += snprintf(payload + len, payload_size - len, "\"malloc_cap_8bit\":%lu,", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_8BIT));
-    len += snprintf(payload + len, payload_size - len, "\"malloc_cap_32bit\":%lu,", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_32BIT));
-    len += snprintf(payload + len, payload_size - len, "\"malloc_cap_internal\":%lu,", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    // len += snprintf(payload + len, payload_size - len, "\"malloc_cap_8bit\":%lu,", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_8BIT));
+    // len += snprintf(payload + len, payload_size - len, "\"malloc_cap_32bit\":%lu,", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_32BIT));
+    // len += snprintf(payload + len, payload_size - len, "\"malloc_cap_internal\":%lu,", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     len += snprintf(payload + len, payload_size - len, "\"malloc_cap_dma\":%lu,", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_DMA));
-    len += snprintf(payload + len, payload_size - len, "\"malloc_cap_spiram\":%lu,", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-    len += snprintf(payload + len, payload_size - len, "\"malloc_cap_default\":%lu,", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
+    // len += snprintf(payload + len, payload_size - len, "\"malloc_cap_spiram\":%lu,", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    // len += snprintf(payload + len, payload_size - len, "\"malloc_cap_default\":%lu,", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
     len += snprintf(payload + len, payload_size - len, "\"free_heap\":%lu,", (unsigned long)esp_get_free_heap_size());
     len += snprintf(payload + len, payload_size - len, "\"minimum_free_heap\":%lu,", (unsigned long)esp_get_minimum_free_heap_size());
     len += snprintf(payload + len, payload_size - len, "\"largest_free_8bit_block\":%lu", (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     len += snprintf(payload + len, payload_size - len, "}},");
+
+    // removed in verion 2.9 reporting:
+    //
+    // the following are always the same as esp_get_free_heap_size():
+    //      heap_caps_get_free_size(MALLOC_CAP_8BIT)
+    //      heap_caps_get_free_size(MALLOC_CAP_32BIT)
+    //      heap_caps_get_free_size(MALLOC_CAP_DEFAULT)
+    //      heap_caps_get_free_size(MALLOC_CAP_INTERNAL)
+    //
+    // heap_caps_get_free_size(MALLOC_CAP_SPIRAM) is always zero
+    //
+
 #else
     len += snprintf(payload + len, payload_size - len, "},");
 #endif
@@ -3792,6 +3804,8 @@ void write_opening_messages_to_the_console()
 #else
     ESP_LOGW(TAG, "MQTT support: Disabled");
 #endif
+
+    ESP_LOGI(TAG, "");
 }
 
 void write_open_for_business_messages_to_the_console()

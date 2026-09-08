@@ -31,12 +31,7 @@ the reporting content as described in more detail below.
         },
         "satellites": 21,
         "memory": {
-            "malloc_cap_8bit": 154668,
-            "malloc_cap_32bit": 154668,
-            "malloc_cap_internal": 154668,
             "malloc_cap_dma": 115088,
-            "malloc_cap_spiram": 0,
-            "malloc_cap_default": 154668,
             "free_heap": 154668,
             "minimum_free_heap": 148520,
             "largest_free_8bit_block": 106496
@@ -171,8 +166,8 @@ setting is enabled.
 
 Included when `MQTT_MEMORY_REPORTING_ENABLED` is `1` (Enabled).
 
-All values are byte counts. The `malloc_cap_*` fields report free heap memory
-that matches the named ESP-IDF allocation capability. `free_heap` is the total
+All values are byte counts. `malloc_cap_dma` reports free heap memory that
+matches the ESP-IDF DMA allocation capability. `free_heap` is the total
 currently free heap, `minimum_free_heap` is the lowest total free heap observed
 since boot, and `largest_free_8bit_block` is the largest currently allocatable
 8-bit-capable block.

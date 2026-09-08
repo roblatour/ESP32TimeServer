@@ -18,7 +18,8 @@ static int64_t current_time_ms(void)
 
 bool ntp_cache_init(void)
 {
-    if (s_mutex != NULL) {
+    if (s_mutex != NULL)
+    {
         return true;
     }
     s_mutex = xSemaphoreCreateMutex();
@@ -27,7 +28,8 @@ bool ntp_cache_init(void)
 
 bool ntp_cache_find_or_create(uint32_t ip, uint16_t port, ntp_client_record_t *record)
 {
-    if (s_mutex == NULL || record == NULL || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+    if (s_mutex == NULL || record == NULL || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE)
+    {
         return false;
     }
 
@@ -36,22 +38,28 @@ bool ntp_cache_find_or_create(uint32_t ip, uint16_t port, ntp_client_record_t *r
     bool found = false;
     int64_t oldest_ms = INT64_MAX;
 
-    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV4; ++i) {
-        if (s_ipv4_records[i].is_active && s_ipv4_records[i].client_ip == ip) {
+    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV4; ++i)
+    {
+        if (s_ipv4_records[i].is_active && s_ipv4_records[i].client_ip == ip)
+        {
             selected = i;
             found = true;
             break;
         }
-        if (!s_ipv4_records[i].is_active) {
+        if (!s_ipv4_records[i].is_active)
+        {
             selected = i;
             oldest_ms = INT64_MIN;
-        } else if (oldest_ms != INT64_MIN && s_ipv4_records[i].last_seen_ms < oldest_ms) {
+        }
+        else if (oldest_ms != INT64_MIN && s_ipv4_records[i].last_seen_ms < oldest_ms)
+        {
             selected = i;
             oldest_ms = s_ipv4_records[i].last_seen_ms;
         }
     }
 
-    if (!found) {
+    if (!found)
+    {
         memset(&s_ipv4_records[selected], 0, sizeof(s_ipv4_records[selected]));
         s_ipv4_records[selected].client_ip = ip;
         s_ipv4_records[selected].client_port = port;
@@ -67,12 +75,15 @@ bool ntp_cache_find_or_create(uint32_t ip, uint16_t port, ntp_client_record_t *r
 bool ntp_cache_update(uint32_t ip, uint16_t port, uint32_t t2_sec, uint32_t t2_ns, uint32_t t3_sec, uint32_t t3_ns)
 {
     ntp_client_record_t record;
-    if (!ntp_cache_find_or_create(ip, port, &record) || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+    if (!ntp_cache_find_or_create(ip, port, &record) || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE)
+    {
         return false;
     }
 
-    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV4; ++i) {
-        if (s_ipv4_records[i].is_active && s_ipv4_records[i].client_ip == ip) {
+    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV4; ++i)
+    {
+        if (s_ipv4_records[i].is_active && s_ipv4_records[i].client_ip == ip)
+        {
             s_ipv4_records[i].client_port = port;
             s_ipv4_records[i].prev_t2_sec = t2_sec;
             s_ipv4_records[i].prev_t2_ns = t2_ns;
@@ -90,7 +101,8 @@ bool ntp_cache_update(uint32_t ip, uint16_t port, uint32_t t2_sec, uint32_t t2_n
 
 bool ntp_cache_find_or_create_ipv6(const struct in6_addr *ip, uint16_t port, ntp_client_record_ipv6_t *record)
 {
-    if (s_mutex == NULL || ip == NULL || record == NULL || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+    if (s_mutex == NULL || ip == NULL || record == NULL || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE)
+    {
         return false;
     }
 
@@ -99,22 +111,28 @@ bool ntp_cache_find_or_create_ipv6(const struct in6_addr *ip, uint16_t port, ntp
     bool found = false;
     int64_t oldest_ms = INT64_MAX;
 
-    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV6; ++i) {
-        if (s_ipv6_records[i].is_active && memcmp(&s_ipv6_records[i].client_ip, ip, sizeof(*ip)) == 0) {
+    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV6; ++i)
+    {
+        if (s_ipv6_records[i].is_active && memcmp(&s_ipv6_records[i].client_ip, ip, sizeof(*ip)) == 0)
+        {
             selected = i;
             found = true;
             break;
         }
-        if (!s_ipv6_records[i].is_active) {
+        if (!s_ipv6_records[i].is_active)
+        {
             selected = i;
             oldest_ms = INT64_MIN;
-        } else if (oldest_ms != INT64_MIN && s_ipv6_records[i].last_seen_ms < oldest_ms) {
+        }
+        else if (oldest_ms != INT64_MIN && s_ipv6_records[i].last_seen_ms < oldest_ms)
+        {
             selected = i;
             oldest_ms = s_ipv6_records[i].last_seen_ms;
         }
     }
 
-    if (!found) {
+    if (!found)
+    {
         memset(&s_ipv6_records[selected], 0, sizeof(s_ipv6_records[selected]));
         s_ipv6_records[selected].client_ip = *ip;
         s_ipv6_records[selected].client_port = port;
@@ -130,12 +148,15 @@ bool ntp_cache_find_or_create_ipv6(const struct in6_addr *ip, uint16_t port, ntp
 bool ntp_cache_update_ipv6(const struct in6_addr *ip, uint16_t port, uint64_t t2, uint64_t t3)
 {
     ntp_client_record_ipv6_t record;
-    if (!ntp_cache_find_or_create_ipv6(ip, port, &record) || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+    if (!ntp_cache_find_or_create_ipv6(ip, port, &record) || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE)
+    {
         return false;
     }
 
-    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV6; ++i) {
-        if (s_ipv6_records[i].is_active && memcmp(&s_ipv6_records[i].client_ip, ip, sizeof(*ip)) == 0) {
+    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV6; ++i)
+    {
+        if (s_ipv6_records[i].is_active && memcmp(&s_ipv6_records[i].client_ip, ip, sizeof(*ip)) == 0)
+        {
             s_ipv6_records[i].client_port = port;
             s_ipv6_records[i].prev_t2 = t2;
             s_ipv6_records[i].prev_t3 = t3;
@@ -151,18 +172,24 @@ bool ntp_cache_update_ipv6(const struct in6_addr *ip, uint16_t port, uint64_t t2
 
 void ntp_cache_purge_expired(void)
 {
-    if (s_mutex == NULL || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+    if (s_mutex == NULL || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE)
+    {
         return;
     }
 
     const int64_t now_ms = current_time_ms();
-    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV4; ++i) {
-        if (s_ipv4_records[i].is_active && now_ms - s_ipv4_records[i].last_seen_ms > CACHE_TIMEOUT_MS_IPV4) {
+
+    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV4; ++i)
+    {
+        if (s_ipv4_records[i].is_active && now_ms - s_ipv4_records[i].last_seen_ms > CACHE_TIMEOUT_MS_IPV4)
+        {
             memset(&s_ipv4_records[i], 0, sizeof(s_ipv4_records[i]));
         }
     }
-    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV6; ++i) {
-        if (s_ipv6_records[i].is_active && now_ms - s_ipv6_records[i].last_seen_ms > CACHE_TIMEOUT_MS_IPV6) {
+    for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV6; ++i)
+    {
+        if (s_ipv6_records[i].is_active && now_ms - s_ipv6_records[i].last_seen_ms > CACHE_TIMEOUT_MS_IPV6)
+        {
             memset(&s_ipv6_records[i], 0, sizeof(s_ipv6_records[i]));
         }
     }
@@ -172,7 +199,8 @@ void ntp_cache_purge_expired(void)
 void ntp_cache_purge_task(void *parameter)
 {
     (void)parameter;
-    for (;;) {
+    for (;;)
+    {
         vTaskDelay(pdMS_TO_TICKS(60000));
         ntp_cache_purge_expired();
     }

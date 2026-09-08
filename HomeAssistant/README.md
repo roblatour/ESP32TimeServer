@@ -123,29 +123,9 @@ Use this option if you do **not** already have an `mqtt.yaml` file.
     # ============================
     # MEMORY
     # ============================
-    - name: "Malloc 8-bit"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_8bit }}"
-
-    - name: "Malloc 32-bit"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_32bit }}"
-
-    - name: "Malloc Internal"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_internal }}"
-
     - name: "Malloc DMA"
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.current.memory.malloc_cap_dma }}"
-
-    - name: "Malloc SPIRAM"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_spiram }}"
-
-    - name: "Malloc Default"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_default }}"
 
     - name: "Free Heap"
       state_topic: "ESP32TimeServer/report"
@@ -340,29 +320,9 @@ Use this option if you already have an `mqtt.yaml` file that contains a
     # ============================
     # MEMORY
     # ============================
-    - name: "Malloc 8-bit"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_8bit }}"
-
-    - name: "Malloc 32-bit"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_32bit }}"
-
-    - name: "Malloc Internal"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_internal }}"
-
     - name: "Malloc DMA"
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.current.memory.malloc_cap_dma }}"
-
-    - name: "Malloc SPIRAM"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_spiram }}"
-
-    - name: "Malloc Default"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_default }}"
 
     - name: "Free Heap"
       state_topic: "ESP32TimeServer/report"
@@ -560,29 +520,9 @@ lists (no top-level `sensor:` key).
     # ============================
     # MEMORY
     # ============================
-    - name: "Malloc 8-bit"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_8bit }}"
-
-    - name: "Malloc 32-bit"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_32bit }}"
-
-    - name: "Malloc Internal"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_internal }}"
-
     - name: "Malloc DMA"
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.current.memory.malloc_cap_dma }}"
-
-    - name: "Malloc SPIRAM"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_spiram }}"
-
-    - name: "Malloc Default"
-      state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.current.memory.malloc_cap_default }}"
 
     - name: "Free Heap"
       state_topic: "ESP32TimeServer/report"
