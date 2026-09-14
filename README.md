@@ -26,7 +26,7 @@ A full write-up of the original (version 1) project is available on
 
 ## What's New in
 
-[Version 2](https://github.com/roblatour/ESP32TimeServer/releases/tag/v2.0.0.0)
+[Version 2](https://github.com/roblatour/ESP32TimeServer/releases)
 
 - **New microcontroller board** — now built around the
   [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm) instead
