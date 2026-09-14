@@ -72,8 +72,8 @@ A full write-up of the original (version 1) project is available on
   precise time every second.
 - **Improved throughput** - (versions 2.7 & 2.8) increased maximum 
   requests per second.
-- **Support for RFC 9769-compatible interleaved responses on IPv4 NTP requests** - (version 2.8)
-  including hardware level time stamping. This drastically reduces jitter
+- **Support for RFC 9769-compatible interleaved responses** - (version 2.8)
+  including hardware level time stamping on IPv4 requests. This drastically reduces jitter
   (the variation in successive clock offset measurements) between a client
   and server using RFC 9769-compliant NTP requests.
 
