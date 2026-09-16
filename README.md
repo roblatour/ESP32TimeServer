@@ -73,10 +73,10 @@ A full write-up of the original (version 1) project is available on
 - **Improved throughput** - (versions 2.7 & 2.8) increased maximum 
   requests per second.
 - **Support for RFC 9769-compatible interleaved responses** - (version 2.8)
-  including hardware level time stamping on IPv4 requests. This drastically reduces jitter
+  for NTPv4 request over IPv4 and IPv6 networks
+- **Hardware time stamping** on IPv4 requests. This drastically reduces jitter
   (the variation in successive clock offset measurements) between a client
   and server using RFC 9769-compliant NTP requests.
-
 - **Testing instructions, tools, and links added** - (versions 2.8) added
   instructions, tools, and links for determining / testing: jitter,
   drift, RFC 9769 compliance, memory, and server performance under stress.
