@@ -27,11 +27,11 @@ A full write-up of the original (version 1) project is available on
 ## What's New in [Version 2](https://github.com/roblatour/ESP32TimeServer/releases)
 
 - **New microcontroller board** — built around the
-  [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-wifi6-poe-eth.htm?sku=32832) instead
+  [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm) instead
   of the Olimex ESP32-PoE-ISO. The ESP32-P4 is more modern and faster than the
   ESP32-WROOM-32/32E used in v1.
 
-  Also (as of version 2.9) the [ESP32-P4-WIFI6-POE-ETH](https://www.waveshare.com/esp32-p4-eth.htm) 
+  Also (as of version 2.9) the [ESP32-P4-WIFI6-POE-ETH](https://www.waveshare.com/esp32-p4-wifi6-poe-eth.htm?sku=32832) 
   is supported. The WaveShare ESP32-P4-WIFI6-POE-ETH uses an ESP32-P4 v3.2 chip, 
   while the WaveShare ESP32-P4-ETH uses a ESP32-P4 v1.3 chip. Although the 1.3 
   chip works very well for this project it is not recommended by Espressif for
