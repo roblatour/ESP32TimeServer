@@ -1,3 +1,9 @@
+// ESP32 Time Server v2.9
+// Copyright Rob Latour, 2026
+// License: MIT
+// Website: https://github.com/roblatour/ESP32TimeServer
+//
+
 #pragma once
 #include <cstdint>
 #include <ctime>
@@ -30,17 +36,17 @@ static constexpr uint16_t OTEPort = 3232;
 // (optional) MQTT reporting support
 // MQTT_ENABLED provides for current system status and activity reporting on information such as: uptime, number of active satellites, ntp request counts, etc.
 // Additional detailed related to client activity, memory usage, and historical information can be optionally included
-#define MQTT_ENABLED 1                                        // 0 = Disabled; 1 = Enabled
-#define MQTT_CLIENT_REPORTING_ENABLED 1                       // 0 = Disabled; 1 = Enabled
-#define MQTT_MEMORY_REPORTING_ENABLED 1                       // 0 = Disabled; 1 = Enabled
-#define MQTT_HISTORICAL_REPORTING_ENABLED 1                   // 0 = Disabled; 1 = Enabled
-static constexpr char MQTTServerIPAddress[] = "";             // For example 192.168.1.15
+#define MQTT_ENABLED 1                                         // 0 = Disabled; 1 = Enabled
+#define MQTT_CLIENT_REPORTING_ENABLED 1                        // 0 = Disabled; 1 = Enabled
+#define MQTT_MEMORY_REPORTING_ENABLED 1                        // 0 = Disabled; 1 = Enabled
+#define MQTT_HISTORICAL_REPORTING_ENABLED 1                    // 0 = Disabled; 1 = Enabled
+static constexpr char MQTTServerIPAddress[] = "";              // For example 192.168.1.15
 static constexpr uint16_t MQTTPort = 1883;
 static constexpr char MQTTUsername[] = "";
 static constexpr char MQTTPassword[] = ""; 
 static constexpr char MQTTTopic[] = "ESP32TimeServer";
 static constexpr uint16_t MQTTBrokerRetain = 1;                 // 0 = tell the broker not to retain the most current message; 1 = tell the broker to retain the most current message
-static constexpr uint32_t MQTTReportingPeriod = 900;            // in seconds - 900 for production
+static constexpr uint32_t MQTTReportingPeriod = 900;            // in seconds  
 static constexpr uint32_t MQTTFrequencyOfKeepAliveRequest = 30; // in seconds
 // QoS 0 delivers at most once and does not retain reports while disconnected
 // QoS 1 delivers at least once and queues reports while disconnected
@@ -57,7 +63,13 @@ static constexpr int MQTT_QOS = 0;
 //   (an empty 16GB TF card can potentially hold more than 36,000 queued messages) with the number of unique clients set
 //   by the value MQTT_TF_Client_Limit below.  Regardless, if queued reports do exceed the TF storage capacity they will
 //   be managed on a FIFO basis.
-static constexpr size_t MQTT_TF_Client_Limit = 500;
+//
+//   Note: Adjust MQTT_TF_Client_Limit based on the expected number of unique clients and available TF card storage.
+//         Also changing MQTT_TF_Client_Limit means the value of MQTT_MAX_REPORT_SIZE may need to be adjusted accordingly.
+//         This requires a manual recalculation of MQTT_MAX_REPORT_SIZE based on the new MQTT_TF_Client_Limit.
+//         The reason this value is shown in the settings but MQTT_MAX_REPORT_SIZE is not is simply to draw
+//         your attention to the limit below - and if you're ok with it great - otherwise there is more work to do.
+static constexpr size_t MQTT_TF_Client_Limit = 500; 
 
 // (optional) setting of the ESP32-P4's MAC address support
 // set the value below to "" to use the ESP32-P4's default MAC address, or
@@ -89,49 +101,52 @@ static constexpr int PreferIPvX = 4; // 0 - no preference between IPv4 and IPv6
 // (required) Time zone setting for your region - for more information see https://gist.github.com/alwynallan/24d96091655391107939
 static constexpr const char *timeZoneSpec = "EST5EDT,M3.2.0/2,M11.1.0/2";
 
-// Unless you know what you are doing, the options below should be left as is
-
 // This project was designed and tested to work with a SparkFun GNSS Receiver Breakout board which uses a u-blox - MAX-M10S module.
 // ( https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html )
-// However, the code has fallback logic for non/cloned/older u-blox gps modules and has been tested with one such device as well.
+// However, the code has fallback logic for non/cloned/older u-blox gnss modules and has been tested with one such device as well.
 //
-// The setting below determines if the code should provide processing for other (than the MAX-M10S) gps module - even if they are less capable/potentially less accurate.
+// The setting below determines if the code should provide processing for other (than the MAX-M10S) gnss module - even if they are less capable/potentially less accurate.
 
 // Note: even if fallback processing is set to true below, accuracy should  still be fine as long as PPS is also supported by the hardware and used.
 // For more information here are some detailed timing accuracy notes:
 // - This firmware timestamps NTP responses using gettimeofday() system call, which is backed by the ESP32-P4's high-resolution timer
 //   driven by the built-in 40 MHz external XTAL via the APB clock (~10 ppm). This is the most accurate clock available
 //   on this chip; no external 32.768 kHz RTC crystal is needed or beneficial for NTP timestamping purposes.
-// - Without PPS: time is corrected only at each GPS resync (every 5 min by default). The ~10 ppm APB drift yields up to ~3 ms of
+// - Without PPS: time is corrected only at each GNSS resync (every 5 min by default). The ~10 ppm APB drift yields up to ~3 ms of
 //   accumulated error between syncs; temperature variation can push this toward ~6-9 ms worst case.
-// - With PPS: the PPS discipline task applies continuous sub-second corrections via adjtime() on every GPS pulse.
+// - With PPS: the PPS discipline task applies continuous sub-second corrections via adjtime() on every GNSS pulse.
 //   This reduces inter-sync error to well under 1 ms, limited mainly by interrupt latency (~10-100 us).
 //   Accordingly, the use of PPS is highly recommended
-// - Preferred GPS (MAX-M10S) connects at 921600 baud, minimizing serial latency and enabling faster, more precise time
+// - Preferred GNSS (MAX-M10S) connects at 921600 baud, minimizing serial latency and enabling faster, more precise time
 //   message processing. Fallback modules may be limited to 9600 baud, introducing additional parsing delay and reducing
-//   the accuracy of the time set at each GPS resync.
+//   the accuracy of the time set at each GNSS resync.
+
+//  Recommendation: below this line do not change these unless you know what you are doing
 
 static constexpr bool allowFallbackProcessing = true;
 
-// Determines if processing should proceed without PPS support; processing without PPS will be less accurate (as described above)
-static constexpr bool allowFallbackProcessingWithoutPPS = false;
+static constexpr bool allowFallbackProcessingWithoutPPS = false; // This feature is no longer supported and this setting will be removed in a future release
 
-static constexpr uint32_t periodicGPSRefreshEveryThisNumberOfMinutes = 5UL; // resync with GPS every 5 minutes (recommended)
+static constexpr uint32_t periodicGNSSRefreshEveryThisNumberOfMinutes = 5UL; // resync with GNSS every 5 minutes (recommended)
 
-// a reboot during setup may be required to facilitate initial setup of non/clone/older u-blox gps modules;
+// a reboot during setup may be required to facilitate initial setup of non/clone/older u-blox gnss modules;
 // recommend leaving it set to true unless code continually restarts when this setting is used
-static constexpr bool rebootIfGpsBaudChangeCommandSucceedsButImmediateReconnectFails = true;
+static constexpr bool rebootIfGNSSBaudChangeCommandSucceedsButImmediateReconnectFails = true;
 
-static constexpr time_t safeguardThresholdInSeconds = 1; // When a new GPS reading is taken the difference between it and the last reading
+static constexpr time_t safeguardThresholdInSeconds = 1; // When a new GNSS reading is taken the difference between it and the last reading
                                                          // should be sub-second, if not a sanity check safeguard flag is tripped
 
 static constexpr bool rebootIfSanityCheckFails = true; // Further to the above,
                                                        // if the sanity check fails, the system will either:
                                                        // - automatically reboot if this setting is set to true, or
-                                                       // - display double asterisks'**' on the LCD screen to indicate an issue with the GPS
-                                                       //   and then will providing the esp32's time, unsynced by the GPS, moving forward.
+                                                       // - display double asterisks'**' on the LCD screen to indicate an issue with the GNSS
+                                                       //   and then will providing the esp32's time, unsynced by the GNSS, moving forward.
 
 // (required) GNSS support; do not change these unless you know what you are doing
+
+#define UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED 1 // 0 = Disabled; 1 = Enabled
+// The following only needs to be set if your receiver does not use a U-Blox or U-Block clone GNSS chip
+static constexpr uint32_t baudRateForUbloxNonCompliantGNSSReceiver = 115200;
 
 // IMPORTANT NOTES: ***************************************************************************************
 // Some GNSS receivers and breakout boards provide a 3.3v PPS (Pulse-Per-Second) output pin               *
@@ -142,11 +157,13 @@ static constexpr bool rebootIfSanityCheckFails = true; // Further to the above,
 //    will be fine assuming its gauge is between 24 AWG and 28AWG                                         *
 // 3. The GNSS GND must be connected to the ESP32 GND                                                     *
 // ********************************************************************************************************
+
+// (required) pin definitions for the Waveshare ESP32-P4-ETH and ESP32-P4-WIFI6-POE-ETH 
 static constexpr int TXPin = 22;  // note: prior to release 2.4 pin 16 was used for TX
 static constexpr int RXPin = 21;  // note: prior to release 2.4 pin 17 was used for RX
 static constexpr int PPSPin = 20; // note: prior to release 2.4 pin 18 was used for PPS
 
-// (required) pin definitions for the Waveshare ESP32-P4-ETH; if your using this board do not change these
+// (required) pin definitions for the Waveshare ESP32-P4-ETH and ESP32-P4-WIFI6-POE-ETH ; if your using these board do not change these
 static constexpr int TFCardCommandPin = 44;
 static constexpr int TFCardClockPin = 43;
 static constexpr int TFCardData3Pin = 42;

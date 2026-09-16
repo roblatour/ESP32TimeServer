@@ -1,8 +1,8 @@
 idf_component_register(
     SRCS
         "main.cpp"
-        "app_metadata.cpp"
-        "ntp_cache.c"
+        "custom/app_metadata.cpp"
+        "custom/ntp_cache.c"
     INCLUDE_DIRS
         "."
     REQUIRES

@@ -5,7 +5,7 @@ the **ESP32 NTP Stratum 1 Time Server** as their time source.
 
 ---
 
-## Connenct the ESP32 Time Server to your network
+## Connect the ESP32 Time Server to your network
 
 For optimal results the ESP32 Time Server should be connected as directly to
 your primary router as possible.
@@ -36,10 +36,29 @@ Note this IP address — it is needed for all of the configuration steps below.
 
 ---
 
-## Option A — Network-Wide Setup (Recommended)
+## Option A — Port forwarding from a network router to ESP32TimeServer (Network-Wide Setup)
 
-Configuring time at the router/firewall level means **every device on the
-network** automatically benefits without any per-device changes.
+If your network router supports port forwarding then it will most likely be possible to redirect all NTP requests from your internal network directly to the ESP32TimeServer.  In short, redirecting all UDP port 123 traffic to the IP address of the ESP32TimeServer allows it to respond directly, as a Stratum 1 server, to all NTP requests from your internal network.
+
+In this setup the ESP32TimeServer acts as the sole NTP server on your system.  Also, its MQTT reporting provides insights into which devices request NTP update, when and how often.
+
+On the down side, this setup makes the ESP32TimeServer a single point of failure with respect to devices on your internal network getting time updates.  If ESP32TimeServer fails to maintain a satellite fix beyond its sync period, or has other problems, then it will fall back to being as Stratum 16 sever meaning the quality of its time data is undefined. Furthermore if there is a power or network communications loss local to the ESP32TimeServer then NTP requests on your network will go unanswered. 
+
+---
+
+## Option B — Using a Network Router's Time Service (Network-Wide Setup)
+
+Using a Router's Network Time Service allows you to set up ESP32TimeServer as sole, primary, or secondary Time Server sources.  In this option your Network Router gets its time from (usually) Stratum 2 Time Servers, manages them, and delivers Stratum 3 quality time to devices on your network.  
+
+However, if ESP32TimeServer is identified as a source to your Network Router's time service, then it can use ESP32TimeServer as a Stratum 1 time server, and deliver Stratum 2 quality results to you network devices.  
+
+This approach allows fall backups - for example: ESP32TimeServer and Internet NTP pools can be all be both used as source and the Network Router's Time service.  The Network Router's Time service can then prioritize the delivery of ESP32TimeServer Stratum 1 based results, but failing that can fall back to using the Internet NTP pools.
+
+Additionally, on the plus side, the Router's time service usually allows you to view  various time server health indicators.  
+
+However, unfortunately as an additional trade off in this setup, the ESP32TimeServer will identify only one client in its MQTT reporting - the Network Router.
+
+Here are some further setup examples:
 
 ### OPNsense
 
@@ -59,11 +78,6 @@ the rest of the LAN.
 7. Navigate to **Services → Network Time → Status** to confirm OPNsense has
    synchronised to the ESP32 Time Server (it should appear as the active peer at
    stratum 1).
-
-> **Optional — Force all LAN NTP traffic to OPNsense:** Create a firewall rule
-> on the LAN interface that redirects UDP port 123 traffic (destination any) to
-> OPNsense's own LAN IP. This ensures every device on the network uses OPNsense
-> (backed by the ESP32) regardless of what NTP server it has configured.
 
 ---
 
@@ -85,14 +99,12 @@ ESP32 Time Server as its upstream reference.
 7. Navigate to **Status → NTP** to confirm pfSense has synchronised with the
    ESP32 Time Server at stratum 1.
 
-> **Optional — Force all LAN NTP traffic to pfSense:** Under **Firewall → NAT →
-> Port Forward**, create a rule that redirects UDP port 123 from any LAN source
-> to pfSense's LAN IP. This intercepts hard-coded NTP addresses in devices and
-> satisfies them from pfSense, which is backed by the ESP32 Time Server.
+This will enable you to view ESP32TimeServer health indicators from the OPNSense/PFSense network status windows and set up alternative internet NTP Servers/Pools to use as fallbacks.  On the down side, in ESP32TimeServer MQTT reporting all traffic
+will appear to come from just your router (which is consolidating all the requests).
 
 ---
 
-## Option B — Per-Device Setup
+## Option C — Per-Device Setup
 
 If a network-wide change is not possible or desired, each device can be
 configured individually to point directly at the ESP32 Time Server's IP address.
@@ -346,3 +358,11 @@ Once configured, you can cross-check the accuracy of your system clock against
 internet references using [https://time.is](https://time.is). A well-configured
 Stratum 1 source backed by GPS with PPS should keep your systems within a few
 milliseconds of true UTC.
+
+---
+
+## Option D — A Hybrid Approach
+
+Network Routers such as OPNSense and PFSense may be setup as described in Option B above, with individual devices set up to point direct to the ESP32TimeServer's IP address following the steps in Option C.
+
+This give the ability to mix and max the pros and cons of the options above to suite your needs.

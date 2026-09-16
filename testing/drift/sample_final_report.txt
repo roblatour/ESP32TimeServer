@@ -1,66 +1,67 @@
 
 Executive Summary
-Overall Result: PASS
-Confidence: High
+Overall Result: PASS WITH WARNINGS
 
-Test Period: 6 Sep 14:53:06 - 6 Sep 16:38:28
+Test Period: 16 Sep 07:04:02 - 16 Sep 09:34:18
 
-Endpoint Drift Analysis (Primary Section)
+Master server: 192.168.7.24
+Reference Server: 192.168.1.214
+External source 1: time.nrc.ca
+External source 2: 0.ca.pool.ntp.org
+
+Test Duration: 2:30:16
+Number of tests: 6
+
+Endpoint Drift Comparison: time.nrc.ca
 Master Server
-Initial Error: -0.0044955
-Final Error: -0.0027264999999999998
-Net Endpoint Drift: 0.0017690000000000006
-Direction: Ahead
-Assessment: Stable
+Initial Error: -0.003936
+Final Error: -0.004364
+Net Endpoint Drift: -0.000428
+Trend Slope: -0.000179
+Assessment: PASS
 
 Reference Server
-Initial Error: -0.0040625
-Final Error: -0.0029635
-Net Endpoint Drift: 0.0010990000000000002
-Direction: Ahead
-Assessment: Stable
+Initial Error: -0.003820
+Final Error: -0.003927
+Net Endpoint Drift: -0.000107
+Trend Slope: -0.000089
+Assessment: PASS
+
+Endpoint Drift Comparison: 0.ca.pool.ntp.org
+Master Server
+Initial Error: -0.015226
+Final Error: -0.002501
+Net Endpoint Drift: 0.012725
+Trend Slope: 0.002160
+Assessment: INCONCLUSIVE
+
+Reference Server
+Initial Error: -0.015110
+Final Error: -0.002064
+Net Endpoint Drift: 0.013046
+Trend Slope: 0.002249
+Assessment: INCONCLUSIVE
 
 Internal Synchronization
-Initial Difference: -0.0004330000000000002
-Final Difference: 0.00023700000000000023
-Net Separation Change: 0.0006700000000000005
-Direction: Master ahead
-Assessment: Synchronized
+Initial Difference: -0.000116
+Final Difference: -0.000437
+Net Separation Change: -0.000321
+Maximum Separation: 0.000621
+Trend Slope: -0.000090
+Assessment: PASS
 
-External Reference Analysis
-Average Consensus Value: 0.0009068750000000001
-Average Disagreement: 0.0009068750000000001
-Maximum Disagreement: 0.0025249999999999995
-Standard Deviation: 0.001372988236085281
-Confidence Assessment: High
-
-Master Analysis
-Average Error: -0.0019809375
-Maximum Error: 0.0088085
-Standard Deviation: 0.004454596674363461
-Trend Slope: 0.00035664880952380936
-Endpoint Drift: 0.0017690000000000006
-Outlier Count: 0
-
-Reference Analysis
-Average Error: -0.0034611875
-Maximum Error: 0.004448
-Standard Deviation: 0.0009628900299730125
-Trend Slope: 0.0001599107142857142
-Endpoint Drift: 0.0010990000000000002
-Outlier Count: 0
-
-Internal Synchronization Analysis
-Average Difference: 0.0014802499999999998
-Maximum Difference: 0.012034
-Standard Deviation: 0.004270824067353479
-Trend Slope: 0.0001967380952380953
-Endpoint Drift: 0.0006700000000000005
-Outlier Count: 0
-
-Outlier Summary
+External Reference Consistency
+Eligible two-source consensus samples: 5
+Rejected two-source consensus samples: 1
+Average Consensus Value: 0.010615
+Average Absolute Disagreement: 0.003313
+Maximum Absolute Disagreement: 0.011290
+Disagreement Standard Deviation: 0.004158
+Rejected Series: [1]
 
 Findings and Conclusions:
-The Master server exhibited no meaningful endpoint drift and remained stable relative to the external consensus reference throughout the test period.
-The Reference server exhibited no meaningful endpoint drift and remained stable relative to the external consensus reference throughout the test period.
-The Master and Reference servers remained synchronized throughout the test period.
+The Master and Reference servers passed the endpoint-drift comparison relative to time.nrc.ca. Their respective endpoint changes were 0.000428 and 0.000107 seconds, within the configured 0.005000-second thresholds.
+The Master and Reference endpoint-drift comparisons relative to 0.ca.pool.ntp.org were inconclusive because its selected measurements disagreed with time.nrc.ca beyond the 0.005000-second external-consistency threshold in series [1].
+The Master-to-Reference endpoint separation remained within the configured synchronization thresholds.
+
+(review.py version 1.1)

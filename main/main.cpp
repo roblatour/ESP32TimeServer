@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.8.2
+// ESP32 Time Server v2.9
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -7,24 +7,24 @@
 //                                   https://www.waveshare.com/wiki/ESP32-P4-ETH?srsltid=AfmBOoo6nZm5hsPAhtpzT6lWSHd2zhWNPM_mqgbNvyoESbjvbO7uykcH
 //
 //                      NOTE: Powering the ESP32-P4_ETH by either a USB C cable or, with its optional POE had installed,
-//                      a POE Ethernet cable is sufficient to power the ESP32-P4-ETH, GPS module and LCD screen.
+//                      a POE Ethernet cable is sufficient to power the ESP32-P4-ETH, GNSS module and LCD screen.
 //
 //                      ************************************************************************************************
 //                      * HOWEVER DO NOT POWER THE ESP32-P4_ETH VIA BOTH ITS USB C CONNECTION AND POE AT THE SAME TIME *
 //                      ************************************************************************************************
 //
-// GPS (recommended):   SparkFun GNSS Receiver Breakout - MAX-M10S  https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html
+// GNSS (recommended):  SparkFun GNSS Receiver Breakout - MAX-M10S  https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html
 //
 // LCD2004:             blue/green screen with HD44780 I2C serial interface adapter https://www.aliexpress.com/item/1005006829045609.html.
 //
 // Wiring:
 //
-// (mandatory) GPS module wiring to and from the ESP32-P4-ETH board:
-// GPS GND            <- -> ESP32-P4-ETH GND
-// GPS VCC            <- -> ESP32-P4-ETH 3V3
-// GPS TXD            <- -> ESP32-P4-ETH GPIO17 (RX)
-// GPS RXD            <- -> ESP32-P4-ETH GPIO16 (TX)
-// GPS PPS            <- -> ESP32-P4-ETH GPIO18
+// (mandatory) GNSS module wiring to and from the ESP32-P4-ETH board:
+// GNSS GND            <- -> ESP32-P4-ETH GND
+// GNSS VCC            <- -> ESP32-P4-ETH 3V3
+// GNSS TXD            <- -> ESP32-P4-ETH GPIO17 (RX)
+// GNSS RXD            <- -> ESP32-P4-ETH GPIO16 (TX)
+// GNSS PPS            <- -> ESP32-P4-ETH GPIO18
 //
 // (optional) LCD204A V1.5 (HD44780 + PCF8574T I2C backpack) wiring to and from the ESP32-P4-ETH board:
 // LCD GND            <- -> ESP32-P4-ETH GND
@@ -38,6 +38,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -55,8 +56,8 @@
 #include "ETH.h"
 #include "SparkFun_u-blox_GNSS_v3.h"
 #include "ESP32TimeServerSettings.h"
-#include "app_metadata.h"
-#include "ntp_cache.h"
+#include "custom/app_metadata.h"
+#include "custom/ntp_cache.h"
 
 extern "C"
 {
@@ -72,6 +73,7 @@ extern "C"
 #include "mqtt_client.h"
 #endif
 #include "esp_netif.h"
+#include "esp_rom_sys.h"
 #include "esp_timer.h"
 #include "esp_vfs_fat.h"
 #include "nvs.h"
@@ -93,37 +95,349 @@ extern "C"
 #include "lwip/sockets.h"
 }
 
-// The following are used in the development of this program to determine the ideal stack sizes for various routines
+static const char *TAG = "main_cpp";
+
+// Optional startup health test
 //
-// Unless you are modifying the programming code the options below should all be disabled (set to 0)
+// When enabled the startup health test will perform a series of checks to ensure the system is functioning correctly at boot.
 //
-// In ESP32TimeServerSetting.h:
-//    set DEBUG_ENABLE to 1
-//    for the MQTT test, all of MQTT_ENABLED, MQTT_CLIENT_REPORTING_ENABLED, MQTT_MEMORY_REPORTING_ENABLED, MQTT_HISTORICAL_REPORTING_ENABLED should be set to 1 above
+// These tests include:
 //
-// The following is required when any of the STACK_SIZE_ENABLED options below are enabled:
-//    From the ESP-IDF Terminal enter the command
-//         idf.py menuconfig
-//         (the menu screen may take 30 seconds or more to load)
-//    Navigate to:
-//         Component config → FreeRTOS → Kernel
-//    use the down arrow key to scroll down to
-//        configUSE_TRACE_FACILITY
-//        enable FreeTOS trace facility by pressing the space bar (puts a star in the option [*] to signify it is enabled)
-//    press 'S' (enter) to save the change
-//    press the ESC key
-//    press 'Q' to quit
-//    code should now build, flash and run ok
+// Part 1: the program sends itself NTPv3 and NTPv4 (standard and interlaced) requests via IPv4 and IPv6,
+// using loop back and assigned addresses,
 //
-//    Once the ideal stack size is known, the configUSE_TRACE_FACILITY should be disabled following the same process described above
+// Part 2: it health test the same logic that all NTP requests go through to receive those requests,
+// process and reply to them using standard and RFC 9769-compatible interleaved responses,
 //
-#define CALCULATE_MQTT_SERVICE_TASK_STACK_SIZE_ENABLED 0   // 0 = Disabled; 1 = Enabled
-#define CALCULATE_OTE_SERVICE_TASK_STACK_SIZE_ENABLED 0    // 0 = Disabled; 1 = Enabled
-#define CALCULATE_GPS_TIME_SYNC_TASK_STACK_SIZE_ENABLED 0  // 0 = Disabled; 1 = Enabled
-#define CALCULATE_GPS_RECOVERY_TASK_STACK_SIZE_ENABLED 0   // 0 = Disabled; 1 = Enabled
-#define CALCULATE_PPS_DISCIPLINE_TASK_STACK_SIZE_ENABLED 0 // 0 = Disabled; 1 = Enabled
-#define CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED 0     // 0 = Disabled; 1 = Enabled
-#define CALCULATE_UPDATE_DISPLAY_TASK_STACK_SIZE_ENABLED 0 // 0 = Disabled; 1 = Enabled
+// Part 3: it verifying the responses to ensure proper operations and reports a pass/fail result.
+//
+// Additionally, this activity is reflected in regular receive/send/client stats within MQTT reporting. .
+//
+// The startup health test can be useful during development and troubleshooting, but it slightly increase boot time
+// and resource usage.
+//
+// However, it is recommended to keep this option be disabled in production builds to minimize boot time and resource usage.
+// Also, and perhaps more importantly, as its results may be misinterpreted.
+// For example: if the user's network does not support IPv6 the IPv6 tests may fail even though the system is
+// functioning correctly.
+//
+
+#define STARTUP_HEALTH_TEST_ENABLED 0 // 0 = Disabled; 1 = Enabled
+
+// The following series of conditional compile flags are used to determine the ideal stack sizes for
+// xTaskCreatePinnedToCore calls used throughout the program.
+//
+// Unless you are changing the code associated with options below and need to know the impacts of
+// those changes have on the stack sizes then e conditional compile flags below should be disabled (set to 0)
+
+#define CALCULATE_ETHERNET_TRANSPORT_RECOVERY_TASK_STACK_SIZE_ENABLED 0 // 0 = Disabled; 1 = Enabled
+#define CALCULATE_GNSS_RECOVERY_TASK_STACK_SIZE_ENABLED 0               // 0 = Disabled; 1 = Enabled
+#define CALCULATE_GNSS_Time_Sync_Task_Stack_Size_ENABLED 0              // 0 = Disabled; 1 = Enabled
+#define CALCULATE_HARDWARE_NTP_SERVER_TASK_STACK_SIZE_ENABLED 0         // 0 = Disabled; 1 = Enabled
+#define CALCULATE_MQTT_SERVICE_TASK_STACK_SIZE_ENABLED 0                // 0 = Disabled; 1 = Enabled
+#define CALCULATE_NTP_CACHE_PURGE_TASK_STACK_SIZE_ENABLED 0             // 0 = Disabled; 1 = Enabled
+#define CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED 0                  // 0 = Disabled; 1 = Enabled
+#define CALCULATE_OTE_SERVICE_TASK_STACK_SIZE_ENABLED 0                 // 0 = Disabled; 1 = Enabled
+#define CALCULATE_PPS_DISCIPLINE_TASK_STACK_SIZE_ENABLED 0              // 0 = Disabled; 1 = Enabled
+#define CALCULATE_UPDATE_DISPLAY_TASK_STACK_SIZE_ENABLED 0              // 0 = Disabled; 1 = Enabled
+
+// FreeRTOS task stack allocations, in bytes.
+
+static constexpr size_t Ethernet_Transport_Recovery_Task_Stack_Size = 3072;
+static constexpr size_t GNSS_Recovery_Task_Stack_Size = 12288;
+static constexpr size_t GNSS_Time_Sync_Task_Stack_Size = 2517;
+static constexpr size_t Hardware_NTP_Server_Task_Stack_Size = 4096;
+static constexpr size_t MQTT_Service_Task_Stack_Size = 3512;
+static constexpr size_t NTP_Cache_Purge_Task_Stack_Size = 2304;
+static constexpr size_t NTP_Server_Task_Stack_Size = 3560;
+static constexpr size_t OTE_Service_Task_Stack_Size = 3560; // unlikely to exceed this stack size (based on current implementation)
+static constexpr size_t PPS_Discipline_Task_Stack_Size = 2347;
+static constexpr size_t Update_Display_Task_Stack_Size = 3063;
+
+static constexpr unsigned int Default_Safety_Margin_Percent = 30; // unless otherwise specified add this percentage to the highest stack usage as a safety margin
+
+#if CALCULATE_ETHERNET_TRANSPORT_RECOVERY_TASK_STACK_SIZE_ENABLED || \
+    CALCULATE_GNSS_RECOVERY_TASK_STACK_SIZE_ENABLED ||               \
+    CALCULATE_GNSS_TIME_SYNC_TASK_STACK_SIZE_ENABLED ||              \
+    CALCULATE_HARDWARE_NTP_SERVER_TASK_STACK_SIZE_ENABLED ||         \
+    CALCULATE_MQTT_SERVICE_TASK_STACK_SIZE_ENABLED ||                \
+    CALCULATE_NTP_CACHE_PURGE_TASK_STACK_SIZE_ENABLED ||             \
+    CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED ||                  \
+    CALCULATE_OTE_SERVICE_TASK_STACK_SIZE_ENABLED ||                 \
+    CALCULATE_PPS_DISCIPLINE_TASK_STACK_SIZE_ENABLED ||              \
+    CALCULATE_UPDATE_DISPLAY_TASK_STACK_SIZE_ENABLED
+
+// For the purposes of calculating stack sizes force DEBUG_ENABLED if any of the stack size calculations are enabled
+// so that the task includes all debug processing is included in the stack size calculations
+#define DEBUG_ENABLED 1
+
+// For the purposes of calculating stack sizes force all MQTT tasks as enabled if MQTT_ENABLED is enabled
+#if MQTT_ENABLED
+#define MQTT_CLIENT_REPORTING_ENABLED 1
+#define MQTT_MEMORY_REPORTING_ENABLED 1
+#define MQTT_HISTORICAL_REPORTING_ENABLED 1
+#endif
+
+typedef enum
+{
+    Ethernet_Transport_Recovery,
+    GNSS_Recovery,
+    GNSS_Time_Sync,
+    Hardware_NTP_Server,
+    MQTT_Service,
+    NTP_Cache_Purge,
+    NTP_Server,
+    OTE_Service,
+    PPS_Discipline,
+    Update_Display
+} TaskToPinToCore_t;
+
+static size_t Highest_Ethernet_Transport_Recovery_Task_Stack_Size = 0;
+static size_t Highest_GNSS_Recovery_Task_Stack_Size = 0;
+static size_t Highest_GNSS_Time_Sync_Task_Stack_Size = 0;
+static size_t Highest_Hardware_NTP_Server_Task_Stack_Size = 0;
+static size_t Highest_MQTT_Service_Task_Stack_Size = 0;
+static size_t Highest_NTP_Cache_Purge_Task_Stack_Size = 0;
+static size_t Highest_NTP_Server_Task_Stack_Size = 0;
+static size_t Highest_OTE_Service_Task_Stack_Size = 0;
+static size_t Highest_PPS_Discipline_Task_Stack_Size = 0;
+static size_t Highest_Update_Display_Task_Stack_Size = 0;
+static SemaphoreHandle_t s_task_stack_usage_mutex = nullptr;
+
+static void report_current_task_stack_usage(TaskToPinToCore_t task_id)
+{
+    xSemaphoreTake(s_task_stack_usage_mutex, portMAX_DELAY);
+
+    const char *task_name = nullptr;
+    size_t allocated_bytes = 0;
+    unsigned int safety_margin_percent = 30;
+    bool highest_value_changed = false;
+    bool show_details = false;
+
+    switch (task_id)
+    {
+    case Ethernet_Transport_Recovery:
+        task_name = "ethernet_transport_task";
+        allocated_bytes = Ethernet_Transport_Recovery_Task_Stack_Size;
+        break;
+    case GNSS_Recovery:
+        task_name = "gnss_recovery_task";
+        allocated_bytes = GNSS_Recovery_Task_Stack_Size;
+        break;
+    case GNSS_Time_Sync:
+        task_name = "gnss_time_sync_task";
+        allocated_bytes = GNSS_Time_Sync_Task_Stack_Size;
+        break;
+    case Hardware_NTP_Server:
+        task_name = "hardware_ntp_server_task";
+        allocated_bytes = Hardware_NTP_Server_Task_Stack_Size;
+        break;
+    case MQTT_Service:
+        task_name = "mqtt_service_task";
+        allocated_bytes = MQTT_Service_Task_Stack_Size;
+        break;
+    case NTP_Cache_Purge:
+        task_name = "ntp_cache_purge_task";
+        allocated_bytes = NTP_Cache_Purge_Task_Stack_Size;
+        break;
+    case NTP_Server:
+        task_name = "ntp_server_task";
+        allocated_bytes = NTP_Server_Task_Stack_Size;
+        safety_margin_percent = 50;
+        ESP_LOGE(task_name, "I see you");
+        break;
+    case OTE_Service:
+        task_name = "ote_service_task";
+        allocated_bytes = OTE_Service_Task_Stack_Size;
+        break;
+    case PPS_Discipline:
+        task_name = "pps_discipline_task";
+        allocated_bytes = PPS_Discipline_Task_Stack_Size;
+        break;
+    case Update_Display:
+        task_name = "update_display_task";
+        allocated_bytes = Update_Display_Task_Stack_Size;
+        safety_margin_percent = 60;
+        break;
+    default:
+        task_name = "unknown_task";
+        break;
+    }
+
+    // calculate the suggested stack size based on the peak usage and safety margin
+
+    const size_t high_watermark_bytes = uxTaskGetStackHighWaterMark(nullptr);
+    const size_t peak_usage_bytes = allocated_bytes > high_watermark_bytes ? allocated_bytes - high_watermark_bytes : 0;
+    const size_t curent_suggestion = (peak_usage_bytes * (100U + safety_margin_percent) + 99U) / 100U;
+
+    if (show_details)
+    {
+        ESP_LOGI(task_name,
+                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
+                 static_cast<unsigned int>(allocated_bytes),
+                 static_cast<unsigned int>(high_watermark_bytes),
+                 static_cast<unsigned int>(peak_usage_bytes),
+                 static_cast<unsigned int>(curent_suggestion));
+    }
+
+    if (curent_suggestion == 0)
+        ESP_LOGE(task_name, "Error: Suggested stack size is 0 bytes. Try increasing the allocted bytes of %u", static_cast<unsigned int>(allocated_bytes));
+
+    switch (task_id)
+    {
+    case Ethernet_Transport_Recovery:
+        if (curent_suggestion > Highest_Ethernet_Transport_Recovery_Task_Stack_Size)
+        {
+            Highest_Ethernet_Transport_Recovery_Task_Stack_Size = curent_suggestion;
+            highest_value_changed = true;
+        }
+        break;
+    case GNSS_Recovery:
+        if (curent_suggestion > Highest_GNSS_Recovery_Task_Stack_Size)
+        {
+            Highest_GNSS_Recovery_Task_Stack_Size = curent_suggestion;
+            highest_value_changed = true;
+        }
+        break;
+    case GNSS_Time_Sync:
+        if (curent_suggestion > Highest_GNSS_Time_Sync_Task_Stack_Size)
+        {
+            Highest_GNSS_Time_Sync_Task_Stack_Size = curent_suggestion;
+            highest_value_changed = true;
+        }
+        break;
+    case Hardware_NTP_Server:
+        if (curent_suggestion > Highest_Hardware_NTP_Server_Task_Stack_Size)
+        {
+            Highest_Hardware_NTP_Server_Task_Stack_Size = curent_suggestion;
+            highest_value_changed = true;
+        }
+        break;
+    case MQTT_Service:
+        if (curent_suggestion > Highest_MQTT_Service_Task_Stack_Size)
+        {
+            Highest_MQTT_Service_Task_Stack_Size = curent_suggestion;
+            highest_value_changed = true;
+        }
+        break;
+    case NTP_Cache_Purge:
+        if (curent_suggestion > Highest_NTP_Cache_Purge_Task_Stack_Size)
+        {
+            Highest_NTP_Cache_Purge_Task_Stack_Size = curent_suggestion;
+            highest_value_changed = true;
+        }
+        break;
+    case NTP_Server:
+        if (curent_suggestion > Highest_NTP_Server_Task_Stack_Size)
+        {
+            Highest_NTP_Server_Task_Stack_Size = curent_suggestion;
+            highest_value_changed = true;
+        }
+        break;
+    case OTE_Service:
+        if (curent_suggestion > Highest_OTE_Service_Task_Stack_Size)
+        {
+            Highest_OTE_Service_Task_Stack_Size = curent_suggestion;
+            highest_value_changed = true;
+        }
+
+        break;
+    case PPS_Discipline:
+        if (curent_suggestion > Highest_PPS_Discipline_Task_Stack_Size)
+        {
+            Highest_PPS_Discipline_Task_Stack_Size = curent_suggestion;
+            highest_value_changed = true;
+        }
+        break;
+    case Update_Display:
+        if (curent_suggestion > Highest_Update_Display_Task_Stack_Size)
+        {
+            Highest_Update_Display_Task_Stack_Size = curent_suggestion;
+            highest_value_changed = true;
+        }
+        break;
+    default:
+
+        break;
+    }
+
+    // Report the highest suggested stack sizes for all tasks to date in such a way that they can be easily copied into the code above
+    // If no new highest value has yet been reported for a task the value shown will be 0, the old value will remain as the comment
+    if (highest_value_changed)
+    {
+        ESP_LOGI(TAG, "Suggested updated task stack sizes:");
+        ESP_LOGI(TAG, " ");
+
+        if (Highest_Ethernet_Transport_Recovery_Task_Stack_Size > Ethernet_Transport_Recovery_Task_Stack_Size)
+            ESP_LOGW(TAG, "static constexpr size_t Ethernet_Transport_Recovery_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_Ethernet_Transport_Recovery_Task_Stack_Size), static_cast<unsigned int>(Ethernet_Transport_Recovery_Task_Stack_Size));
+        else
+            ESP_LOGI(TAG, "static constexpr size_t Ethernet_Transport_Recovery_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_Ethernet_Transport_Recovery_Task_Stack_Size), static_cast<unsigned int>(Ethernet_Transport_Recovery_Task_Stack_Size));
+
+        if (Highest_GNSS_Recovery_Task_Stack_Size > GNSS_Recovery_Task_Stack_Size)
+            ESP_LOGW(TAG, "static constexpr size_t GNSS_Recovery_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_GNSS_Recovery_Task_Stack_Size), static_cast<unsigned int>(GNSS_Recovery_Task_Stack_Size));
+        else
+            ESP_LOGI(TAG, "static constexpr size_t GNSS_Recovery_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_GNSS_Recovery_Task_Stack_Size), static_cast<unsigned int>(GNSS_Recovery_Task_Stack_Size));
+
+        if (Highest_GNSS_Time_Sync_Task_Stack_Size > GNSS_Time_Sync_Task_Stack_Size)
+            ESP_LOGW(TAG, "static constexpr size_t GNSS_Time_Sync_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_GNSS_Time_Sync_Task_Stack_Size), static_cast<unsigned int>(GNSS_Time_Sync_Task_Stack_Size));
+        else
+            ESP_LOGI(TAG, "static constexpr size_t GNSS_Time_Sync_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_GNSS_Time_Sync_Task_Stack_Size), static_cast<unsigned int>(GNSS_Time_Sync_Task_Stack_Size));
+
+        if (Highest_Hardware_NTP_Server_Task_Stack_Size > Hardware_NTP_Server_Task_Stack_Size)
+            ESP_LOGW(TAG, "static constexpr size_t Hardware_NTP_Server_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_Hardware_NTP_Server_Task_Stack_Size), static_cast<unsigned int>(Hardware_NTP_Server_Task_Stack_Size));
+        else
+            ESP_LOGI(TAG, "static constexpr size_t Hardware_NTP_Server_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_Hardware_NTP_Server_Task_Stack_Size), static_cast<unsigned int>(Hardware_NTP_Server_Task_Stack_Size));
+
+        if (Highest_MQTT_Service_Task_Stack_Size > MQTT_Service_Task_Stack_Size)
+            ESP_LOGW(TAG, "static constexpr size_t MQTT_Service_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_MQTT_Service_Task_Stack_Size), static_cast<unsigned int>(MQTT_Service_Task_Stack_Size));
+        else
+            ESP_LOGI(TAG, "static constexpr size_t MQTT_Service_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_MQTT_Service_Task_Stack_Size), static_cast<unsigned int>(MQTT_Service_Task_Stack_Size));
+
+        if (Highest_NTP_Cache_Purge_Task_Stack_Size > NTP_Cache_Purge_Task_Stack_Size)
+            ESP_LOGW(TAG, "static constexpr size_t NTP_Cache_Purge_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_NTP_Cache_Purge_Task_Stack_Size), static_cast<unsigned int>(NTP_Cache_Purge_Task_Stack_Size));
+        else
+            ESP_LOGI(TAG, "static constexpr size_t NTP_Cache_Purge_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_NTP_Cache_Purge_Task_Stack_Size), static_cast<unsigned int>(NTP_Cache_Purge_Task_Stack_Size));
+
+        if (Highest_NTP_Server_Task_Stack_Size > NTP_Server_Task_Stack_Size)
+            ESP_LOGW(TAG, "static constexpr size_t NTP_Server_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_NTP_Server_Task_Stack_Size), static_cast<unsigned int>(NTP_Server_Task_Stack_Size));
+        else
+            ESP_LOGI(TAG, "static constexpr size_t NTP_Server_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_NTP_Server_Task_Stack_Size), static_cast<unsigned int>(NTP_Server_Task_Stack_Size));
+
+        if (Highest_OTE_Service_Task_Stack_Size > OTE_Service_Task_Stack_Size)
+            ESP_LOGW(TAG, "static constexpr size_t OTE_Service_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_OTE_Service_Task_Stack_Size), static_cast<unsigned int>(OTE_Service_Task_Stack_Size));
+        else
+            ESP_LOGI(TAG, "static constexpr size_t OTE_Service_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_OTE_Service_Task_Stack_Size), static_cast<unsigned int>(OTE_Service_Task_Stack_Size));
+
+        if (Highest_PPS_Discipline_Task_Stack_Size > PPS_Discipline_Task_Stack_Size)
+            ESP_LOGW(TAG, "static constexpr size_t PPS_Discipline_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_PPS_Discipline_Task_Stack_Size), static_cast<unsigned int>(PPS_Discipline_Task_Stack_Size));
+        else
+            ESP_LOGI(TAG, "static constexpr size_t PPS_Discipline_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_PPS_Discipline_Task_Stack_Size), static_cast<unsigned int>(PPS_Discipline_Task_Stack_Size));
+
+        if (Highest_Update_Display_Task_Stack_Size > Update_Display_Task_Stack_Size)
+            ESP_LOGW(TAG, "static constexpr size_t Update_Display_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_Update_Display_Task_Stack_Size), static_cast<unsigned int>(Update_Display_Task_Stack_Size));
+        else
+            ESP_LOGI(TAG, "static constexpr size_t Update_Display_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_Update_Display_Task_Stack_Size), static_cast<unsigned int>(Update_Display_Task_Stack_Size));
+
+        ESP_LOGI(TAG, " ");
+    };
+
+    xSemaphoreGive(s_task_stack_usage_mutex);
+}
+
+#endif
+
+// ***********************************************************************************************************************************
+// ****                                                                                                                            ***
+// Determines if processing should proceed without PPS support; processing without PPS will be less accurate                       ***
+// **** Please note this feature is no longer supported and should remain disabled                                                 ***
+// ****                                                                                                                            ***
+#define FALLBACK_PROCESSING_WITHOUT_PPS_ENABLED 0 // 0 = Disabled; 1 = Enabled                                      ***
+// ****                                                                                                                            ***
+// ***********************************************************************************************************************************
+
+#ifndef UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
+#define UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED 1
+#endif
 
 static constexpr gpio_num_t ETH_MDC_GPIO = GPIO_NUM_31;
 static constexpr gpio_num_t ETH_MDIO_GPIO = GPIO_NUM_52;
@@ -141,6 +455,7 @@ static constexpr size_t NTP_PACKET_SIZE = 48;
 static constexpr uint64_t NTP_EPOCH_OFFSET = 2208988800ULL;
 static constexpr int8_t NTP_PRECISION_EXPONENT = -13;
 static constexpr uint32_t NTP_ROOT_DISPERSION = 66;
+static constexpr uint64_t NTP_CACHE_TIMESTAMP_MATCH_TOLERANCE = 8;
 static constexpr size_t NTP_SOCKET_BATCH_LIMIT = 16;
 static constexpr EventBits_t ETH_CONNECTED_BIT = BIT0;
 static constexpr EventBits_t ETH_GOT_IP_BIT = BIT1;
@@ -148,8 +463,6 @@ static constexpr EventBits_t ETH_GOT_IP6_BIT = BIT2;
 static constexpr size_t IP_ADDRESS_TEXT_SIZE = INET6_ADDRSTRLEN;
 static constexpr uint32_t OTE_Failure_Display_Time_Ms = 10000;
 static constexpr uint32_t OTE_Reboot_Delay_Ms = 5000;
-
-static const char *TAG = "main_cpp";
 
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
 static i2c_dev_t s_lcd_io{};
@@ -230,6 +543,10 @@ static std::atomic<bool> s_hardware_ntp_accepting{false};
 static std::atomic<int64_t> s_last_hardware_ntp_response_us{0};
 static SemaphoreHandle_t s_hardware_ntp_transmit_mutex = nullptr;
 
+static bool configure_static_ip();
+static bool configure_hardware_timestamps();
+static bool start_ethernet_driver();
+
 static bool format_socket_address(const struct sockaddr_storage &address, char *buffer, size_t buffer_size)
 {
     if (buffer_size == 0)
@@ -251,14 +568,21 @@ static bool format_socket_address(const struct sockaddr_storage &address, char *
 
 #if MQTT_ENABLED
 
-static constexpr size_t MQTT_REPORT_SIZE = 4624;
+// MQTT_MAX_REPORT_SIZE is based on MQTT_TF_Client_Limit (in ESP32TimeServerSetting.h)
+// please see the spreadsheet at tools/json_message_calculator.xlsx for calculation details
+// Note: increasing this limit will increase memory usage for MQTT report buffering and may impact system performance.
+static constexpr size_t MQTT_MAX_REPORT_SIZE = 31944; // examples: for 256 clients use 2060; for 500 clients use 31944
+
+// MQTT_REPORT_SIZE based on MQTT_CLIENT_SIZE (below)
+// please see the spreadsheet at tools/json_message_calculator.xlsx for calculation details
+// Note: increasing this limit will increase memory usage for MQTT report buffering and may impact system performance.
 static constexpr size_t MQTT_CLIENT_LIMIT = 50;
+static constexpr size_t MQTT_REPORT_SIZE = 4944;
 
 static constexpr size_t MQTT_NTP_EVENT_QUEUE_DEPTH = 1024;
 static constexpr size_t MQTT_REPORT_QUEUE_DEPTH = 4;
 static constexpr size_t MQTT_NTP_EVENT_BATCH_LIMIT = 128;
 
-static constexpr size_t MQTT_MAX_REPORT_SIZE = 131072;
 static constexpr uint32_t MQTT_RESTART_PUBLISH_TIMEOUT_MS = 1000;
 static constexpr uint32_t MQTT_QUEUED_PUBLISH_DELAY_MS = 250;
 static constexpr char TF_MOUNT_POINT[] = "/tfcard";
@@ -297,6 +621,24 @@ static std::atomic<uint32_t> s_ntp_telemetry_events_dropped{0};
 static std::atomic<uint8_t> s_satellite_count{0};
 static std::atomic<uint8_t> s_satellite_min{UINT8_MAX};
 static std::atomic<uint8_t> s_satellite_max{0};
+
+static void mqtt_note_satellite_count(uint8_t satellites)
+{
+    s_satellite_count.store(satellites, std::memory_order_relaxed);
+
+    uint8_t minimum = s_satellite_min.load(std::memory_order_relaxed);
+    while (satellites < minimum &&
+           !s_satellite_min.compare_exchange_weak(minimum, satellites, std::memory_order_relaxed, std::memory_order_relaxed))
+    {
+    }
+
+    uint8_t maximum = s_satellite_max.load(std::memory_order_relaxed);
+    while (satellites > maximum &&
+           !s_satellite_max.compare_exchange_weak(maximum, satellites, std::memory_order_relaxed, std::memory_order_relaxed))
+    {
+    }
+}
+
 static std::atomic<int64_t> s_eth_link_connected_us{0};
 static std::atomic<int64_t> s_eth_link_up_total_us{0};
 #if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
@@ -309,7 +651,6 @@ static std::atomic<bool> s_historical_pps_fault_active{false};
 
 #if MQTT_ENABLED && MQTT_CLIENT_REPORTING_ENABLED
 static std::atomic<bool> s_mqtt_client_table_overflown{false};
-static char s_mqtt_clients_json[MQTT_MAX_REPORT_SIZE] = "";
 static size_t s_mqtt_client_count = 0;
 #endif
 
@@ -329,41 +670,38 @@ static char s_mqtt_report_topic[128] = "";
 static char s_mqtt_status_topic[128] = "";
 
 static void mqtt_publish_final_report();
+static bool mqtt_publish_or_queue_restart_notification(const char *reason);
 static void mqtt_enqueue_ntp_request(const struct sockaddr_storage &source_address);
 #endif
 
-#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
-static std::atomic<uint32_t> s_ntp_stack_report_requests{0};
-#endif
+static HardwareSerial s_gnss_serial(1);
+static SFE_UBLOX_GNSS_SERIAL s_gnss;
+static uint32_t s_detected_gnss_baud = 0;
+static bool s_gnss_required_assume_success = false;
 
-static HardwareSerial s_gps_serial(1);
-static SFE_UBLOX_GNSS_SERIAL s_gps;
-static uint32_t s_detected_gps_baud = 0;
-static bool s_gps_required_assume_success = false;
-
-// The following flag for National Marine Electronics Association fallback doesn't determine if it is allowed or not
-// rather the program sets it to true if it is required (due to an older / ubox uncompliant hardware gps module being used)
+// The following flag for National Marine Electronics Association (NEMA) fallback doesn't determine if it is allowed or not
+// rather the program sets it to true if it is required (due to an older / ubox noncompliant hardware gnss module being used)
 
 static bool s_use_nmea_fallback = false;
-static bool s_gps_is_max_m10s = false;
+static bool s_gnss_is_max_m10s = false;
 static std::atomic<bool> s_gnss_locked{false};
 static std::atomic<int64_t> s_gnss_lock_started_us{0};
 static std::atomic<int64_t> s_gnss_locked_total_us{0};
 static std::atomic<bool> s_pps_discipline_active{false};
-static std::atomic<bool> s_gps_recovery_in_progress{false};
-static std::atomic<int64_t> s_last_gps_recovery_us{0};
+static std::atomic<bool> s_gnss_recovery_in_progress{false};
+static std::atomic<int64_t> s_last_gnss_recovery_us{0};
 
 struct sync_faults_t
 {
     bool pps_missing = false;
-    bool gps_invalid = false;
+    bool gnss_invalid = false;
     bool sanity_mismatch = false;
     bool sync_stale = false;
 };
 
 static bool has_sync_fault(const sync_faults_t &faults)
 {
-    return faults.pps_missing || faults.gps_invalid || faults.sanity_mismatch || faults.sync_stale;
+    return faults.pps_missing || faults.gnss_invalid || faults.sanity_mismatch || faults.sync_stale;
 }
 
 struct sync_state_t
@@ -398,48 +736,47 @@ static std::atomic<int64_t> s_ntp_last_gnss_valid_us{0};
 static std::atomic<bool> s_ntp_pps_active{false};
 static std::atomic<bool> s_ntp_gnss_timing_valid{false};
 static std::atomic<bool> s_ntp_pps_missing{false};
-static std::atomic<bool> s_ntp_gps_invalid{false};
+static std::atomic<bool> s_ntp_gnss_invalid{false};
 static std::atomic<bool> s_ntp_sanity_mismatch{false};
 static std::atomic<bool> s_ntp_sync_stale{false};
-static constexpr int64_t Sync_Stale_After_Us = static_cast<int64_t>(periodicGPSRefreshEveryThisNumberOfMinutes) * 60LL * 1000000LL * 3LL;
+static constexpr int64_t Sync_Stale_After_Us = static_cast<int64_t>(periodicGNSSRefreshEveryThisNumberOfMinutes) * 60LL * 1000000LL * 3LL;
 static constexpr int64_t Gnss_Validity_Timeout_Us = 3500000LL;
 static constexpr int64_t Sync_Reboot_After_Us = 30LL * 60LL * 1000000LL;
 static constexpr int64_t Max_Sync_Attempt_Us = 10000000LL;
 static constexpr int64_t Gnss_Invalid_Reacquisition_After_Us = 30LL * 1000000LL;
-static constexpr int64_t Runtime_Gps_Recovery_Min_Interval_Us = 5LL * 60LL * 1000000LL;
+static constexpr int64_t Runtime_gnss_Recovery_Min_Interval_Us = 5LL * 60LL * 1000000LL;
 static constexpr uint32_t Sync_Failures_Before_Runtime_Recovery = 20;
 static constexpr uint32_t Sanity_Failures_Before_Fault = 2;
-static constexpr uint32_t GPS_Startup_Qualification_Duration_Ms = 15000UL;
-static constexpr uint32_t GPS_Startup_Qualification_PPS_Edges = 10;
-static constexpr int64_t GPS_Startup_Min_PPS_Interval_Us = 800000LL;
-static constexpr int64_t GPS_Startup_Max_PPS_Interval_Us = 1200000LL;
-static constexpr uint32_t GPS_Time_Sync_Task_Stack_Size = 4096;
-static constexpr uint32_t PPS_Discipline_Task_Stack_Size = 3072;
-static constexpr uint32_t GPS_Recovery_Task_Stack_Size = 12288;
+static constexpr uint32_t gnss_Startup_Qualification_Duration_Ms = 15000UL;
+static constexpr uint32_t gnss_Startup_Qualification_PPS_Edges = 10;
+static constexpr int64_t gnss_Startup_Min_PPS_Interval_Us = 800000LL;
+static constexpr int64_t gnss_Startup_Max_PPS_Interval_Us = 1200000LL;
 
-static constexpr char GPS_NVS_NAMESPACE[] = "gps_state";
-static constexpr char GPS_NVS_KEY_ID_TYPE[] = "id_type";
-static constexpr char GPS_NVS_KEY_ID_VALUE[] = "id_value";
-static constexpr char GPS_NVS_KEY_MAX_BAUD[] = "max_baud";
-static constexpr char GPS_NVS_KEY_ATTEMPT_NO_SIGNAL_RECOVERY[] = "no_sig_rcv";
+static constexpr char gnss_NVS_NAMESPACE[] = "gnss_state";
+static constexpr char gnss_NVS_KEY_ID_TYPE[] = "id_type";
+static constexpr char gnss_NVS_KEY_ID_VALUE[] = "id_value";
+static constexpr char gnss_NVS_KEY_MAX_BAUD[] = "max_baud";
+static constexpr char gnss_NVS_KEY_ATTEMPT_NO_SIGNAL_RECOVERY[] = "no_sig_rcv";
+static constexpr char restart_NVS_NAMESPACE[] = "restart_evt";
+static constexpr char restart_NVS_KEY_PENDING[] = "pending";
 
-static constexpr char GPS_ID_TYPE_UNIQID[] = "uniqid";
-static constexpr char GPS_ID_TYPE_MODULE_FP[] = "module_fp";
-static constexpr char GPS_ID_TYPE_GENERIC[] = "generic";
-static constexpr char GPS_ID_VALUE_UNDETERMINED[] = "undetermined_gps_board";
+static constexpr char gnss_ID_TYPE_UNIQID[] = "uniqid";
+static constexpr char gnss_ID_TYPE_MODULE_FP[] = "module_fp";
+static constexpr char gnss_ID_TYPE_GENERIC[] = "generic";
+static constexpr char gnss_ID_VALUE_UNDETERMINED[] = "undetermined_gnss_board";
 
 /* pre-release code - commented out
 static constexpr bool reduceGNSSUART1OutputToTimeMessages = true;
 static constexpr bool saveReducedGNSSUART1OutputPermanently = false;
 */
-struct gps_identity_t
+struct gnss_identity_t
 {
     bool valid = false;
     char type[16] = "";
     char value[96] = "";
 };
 
-struct gps_nvs_data_t
+struct gnss_nvs_data_t
 {
     bool has_id_type = false;
     char id_type[16] = "";
@@ -447,7 +784,7 @@ struct gps_nvs_data_t
     uint32_t max_baud = 0;
 };
 
-static uint32_t s_gps_target_baud = 0;
+static uint32_t s_gnss_target_baud = 0;
 
 struct nmea_rmc_time_t
 {
@@ -471,7 +808,7 @@ static void refresh_sync_state_locked(sync_state_t *state, int64_t now_us)
                                                        (now_us - state->last_gnss_valid_us) > Gnss_Validity_Timeout_Us);
 
     state->faults.sync_stale = sync_stale;
-    state->faults.gps_invalid = gnss_missing;
+    state->faults.gnss_invalid = gnss_missing;
     state->faults.pps_missing = pps_missing;
 
 #if DEBUG_ENABLED
@@ -490,7 +827,7 @@ static void publish_ntp_sync_state_locked(const sync_state_t &state)
     s_ntp_pps_active.store(state.pps_active, std::memory_order_relaxed);
     s_ntp_gnss_timing_valid.store(state.gnss_timing_valid, std::memory_order_relaxed);
     s_ntp_pps_missing.store(state.faults.pps_missing, std::memory_order_relaxed);
-    s_ntp_gps_invalid.store(state.faults.gps_invalid, std::memory_order_relaxed);
+    s_ntp_gnss_invalid.store(state.faults.gnss_invalid, std::memory_order_relaxed);
     s_ntp_sanity_mismatch.store(state.faults.sanity_mismatch, std::memory_order_relaxed);
     s_ntp_sync_stale.store(state.faults.sync_stale, std::memory_order_relaxed);
     s_ntp_sync_state_sequence.fetch_add(1, std::memory_order_release);
@@ -579,13 +916,13 @@ static uint32_t sync_state_note_failure(const sync_faults_t &faults, time_t upda
 {
     uint32_t failure_count = 0;
 
-    if (faults.gps_invalid)
+    if (faults.gnss_invalid)
         set_gnss_lock_state(false);
 
 #if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
     if (s_time_has_been_set.load())
     {
-        if (faults.gps_invalid && !s_historical_gnss_fault_active.exchange(true))
+        if (faults.gnss_invalid && !s_historical_gnss_fault_active.exchange(true))
             s_last_gnss_unsynchronized.store(time(nullptr));
         if (faults.pps_missing && !s_historical_pps_fault_active.exchange(true))
             s_last_pps_undisciplined.store(time(nullptr));
@@ -597,7 +934,7 @@ static uint32_t sync_state_note_failure(const sync_faults_t &faults, time_t upda
         s_sync_state.last_sync_delta_seconds = update_delta;
         s_sync_state.consecutive_sync_failures++;
         s_sync_state.faults.pps_missing = s_sync_state.faults.pps_missing || faults.pps_missing;
-        s_sync_state.faults.gps_invalid = s_sync_state.faults.gps_invalid || faults.gps_invalid;
+        s_sync_state.faults.gnss_invalid = s_sync_state.faults.gnss_invalid || faults.gnss_invalid;
         s_sync_state.faults.sanity_mismatch = s_sync_state.faults.sanity_mismatch || faults.sanity_mismatch;
         s_sync_state.faults.sync_stale = s_sync_state.faults.sync_stale || faults.sync_stale;
         refresh_sync_state_locked(&s_sync_state, esp_timer_get_time());
@@ -966,7 +1303,7 @@ static bool parse_mac_id_string(const char *text, uint8_t mac[6])
     return true;
 }
 
-static uint32_t get_highest_candidate_gps_baud()
+static uint32_t get_highest_candidate_gnss_baud()
 {
     return 921600;
 }
@@ -987,60 +1324,60 @@ static void build_candidate_baud_rates(std::vector<uint32_t> &out, uint32_t pref
     }
 }
 
-static bool load_gps_nvs_data(gps_nvs_data_t *data)
+static bool load_gnss_nvs_data(gnss_nvs_data_t *data)
 {
     if (data == nullptr)
         return false;
 
-    *data = gps_nvs_data_t{};
+    *data = gnss_nvs_data_t{};
 
     nvs_handle_t handle = 0;
-    esp_err_t err = nvs_open(GPS_NVS_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = nvs_open(gnss_NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err == ESP_ERR_NVS_NOT_FOUND)
         return true;
     if (err != ESP_OK)
         return false;
 
     size_t type_length = 0;
-    err = nvs_get_str(handle, GPS_NVS_KEY_ID_TYPE, nullptr, &type_length);
+    err = nvs_get_str(handle, gnss_NVS_KEY_ID_TYPE, nullptr, &type_length);
     if (err == ESP_OK && type_length > 0)
     {
         if (type_length > sizeof(data->id_type))
             type_length = sizeof(data->id_type);
-        if (nvs_get_str(handle, GPS_NVS_KEY_ID_TYPE, data->id_type, &type_length) == ESP_OK)
+        if (nvs_get_str(handle, gnss_NVS_KEY_ID_TYPE, data->id_type, &type_length) == ESP_OK)
             data->has_id_type = data->id_type[0] != '\0';
     }
 
     size_t value_length = 0;
-    err = nvs_get_str(handle, GPS_NVS_KEY_ID_VALUE, nullptr, &value_length);
+    err = nvs_get_str(handle, gnss_NVS_KEY_ID_VALUE, nullptr, &value_length);
     if (err == ESP_OK && value_length > 0)
     {
         if (value_length > sizeof(data->id_value))
             value_length = sizeof(data->id_value);
-        (void)nvs_get_str(handle, GPS_NVS_KEY_ID_VALUE, data->id_value, &value_length);
+        (void)nvs_get_str(handle, gnss_NVS_KEY_ID_VALUE, data->id_value, &value_length);
     }
 
-    (void)nvs_get_u32(handle, GPS_NVS_KEY_MAX_BAUD, &data->max_baud);
+    (void)nvs_get_u32(handle, gnss_NVS_KEY_MAX_BAUD, &data->max_baud);
 
     nvs_close(handle);
     return true;
 }
 
-static bool save_gps_nvs_data(const gps_identity_t &identity, uint32_t max_baud)
+static bool save_gnss_nvs_data(const gnss_identity_t &identity, uint32_t max_baud)
 {
     if (!identity.valid || identity.type[0] == '\0' || identity.value[0] == '\0' || max_baud == 0)
         return false;
 
     nvs_handle_t handle = 0;
-    esp_err_t err = nvs_open(GPS_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = nvs_open(gnss_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK)
         return false;
 
-    err = nvs_set_str(handle, GPS_NVS_KEY_ID_TYPE, identity.type);
+    err = nvs_set_str(handle, gnss_NVS_KEY_ID_TYPE, identity.type);
     if (err == ESP_OK)
-        err = nvs_set_str(handle, GPS_NVS_KEY_ID_VALUE, identity.value);
+        err = nvs_set_str(handle, gnss_NVS_KEY_ID_VALUE, identity.value);
     if (err == ESP_OK)
-        err = nvs_set_u32(handle, GPS_NVS_KEY_MAX_BAUD, max_baud);
+        err = nvs_set_u32(handle, gnss_NVS_KEY_MAX_BAUD, max_baud);
     if (err == ESP_OK)
         err = nvs_commit(handle);
 
@@ -1048,35 +1385,35 @@ static bool save_gps_nvs_data(const gps_identity_t &identity, uint32_t max_baud)
     return err == ESP_OK;
 }
 
-static void clear_gps_nvs_data()
+static void clear_gnss_nvs_data()
 {
     nvs_handle_t handle = 0;
-    esp_err_t err = nvs_open(GPS_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = nvs_open(gnss_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK)
         return;
 
-    err = nvs_erase_key(handle, GPS_NVS_KEY_ID_TYPE);
+    err = nvs_erase_key(handle, gnss_NVS_KEY_ID_TYPE);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
     {
         nvs_close(handle);
         return;
     }
 
-    err = nvs_erase_key(handle, GPS_NVS_KEY_ID_VALUE);
+    err = nvs_erase_key(handle, gnss_NVS_KEY_ID_VALUE);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
     {
         nvs_close(handle);
         return;
     }
 
-    err = nvs_erase_key(handle, GPS_NVS_KEY_MAX_BAUD);
+    err = nvs_erase_key(handle, gnss_NVS_KEY_MAX_BAUD);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
     {
         nvs_close(handle);
         return;
     }
 
-    err = nvs_erase_key(handle, GPS_NVS_KEY_ATTEMPT_NO_SIGNAL_RECOVERY);
+    err = nvs_erase_key(handle, gnss_NVS_KEY_ATTEMPT_NO_SIGNAL_RECOVERY);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
     {
         nvs_close(handle);
@@ -1087,35 +1424,35 @@ static void clear_gps_nvs_data()
     nvs_close(handle);
 }
 
-static gps_identity_t query_gps_identity()
+static gnss_identity_t query_gnss_identity()
 {
-    gps_identity_t identity{};
+    gnss_identity_t identity{};
 
     UBX_SEC_UNIQID_data_t unique_chip_data{};
-    if (s_gps.getUniqueChipId(&unique_chip_data, 2000))
+    if (s_gnss.getUniqueChipId(&unique_chip_data, 2000))
     {
-        const char *unique_chip_id = s_gps.getUniqueChipIdStr(&unique_chip_data, 2000);
+        const char *unique_chip_id = s_gnss.getUniqueChipIdStr(&unique_chip_data, 2000);
         if (unique_chip_id != nullptr && unique_chip_id[0] != '\0')
         {
-            snprintf(identity.type, sizeof(identity.type), "%s", GPS_ID_TYPE_UNIQID);
+            snprintf(identity.type, sizeof(identity.type), "%s", gnss_ID_TYPE_UNIQID);
             snprintf(identity.value, sizeof(identity.value), "%s", unique_chip_id);
             identity.valid = true;
             return identity;
         }
     }
 
-    if (s_gps.getModuleInfo(2000))
+    if (s_gnss.getModuleInfo(2000))
     {
-        const char *module_name = s_gps.getModuleName(2000);
-        const char *firmware_type = s_gps.getFirmwareType(2000);
-        uint8_t firmware_high = s_gps.getFirmwareVersionHigh(2000);
-        uint8_t firmware_low = s_gps.getFirmwareVersionLow(2000);
-        uint8_t protocol_high = s_gps.getProtocolVersionHigh(2000);
-        uint8_t protocol_low = s_gps.getProtocolVersionLow(2000);
+        const char *module_name = s_gnss.getModuleName(2000);
+        const char *firmware_type = s_gnss.getFirmwareType(2000);
+        uint8_t firmware_high = s_gnss.getFirmwareVersionHigh(2000);
+        uint8_t firmware_low = s_gnss.getFirmwareVersionLow(2000);
+        uint8_t protocol_high = s_gnss.getProtocolVersionHigh(2000);
+        uint8_t protocol_low = s_gnss.getProtocolVersionLow(2000);
 
         if (module_name != nullptr && module_name[0] != '\0')
         {
-            snprintf(identity.type, sizeof(identity.type), "%s", GPS_ID_TYPE_MODULE_FP);
+            snprintf(identity.type, sizeof(identity.type), "%s", gnss_ID_TYPE_MODULE_FP);
             snprintf(identity.value,
                      sizeof(identity.value),
                      "%s|%s|FW%u.%u|PR%u.%u",
@@ -1130,13 +1467,13 @@ static gps_identity_t query_gps_identity()
         }
     }
 
-    snprintf(identity.type, sizeof(identity.type), "%s", GPS_ID_TYPE_GENERIC);
-    snprintf(identity.value, sizeof(identity.value), "%s", GPS_ID_VALUE_UNDETERMINED);
+    snprintf(identity.type, sizeof(identity.type), "%s", gnss_ID_TYPE_GENERIC);
+    snprintf(identity.value, sizeof(identity.value), "%s", gnss_ID_VALUE_UNDETERMINED);
     identity.valid = true;
     return identity;
 }
 
-static bool gps_identity_matches(const gps_nvs_data_t &stored, const gps_identity_t &current)
+static bool gnss_identity_matches(const gnss_nvs_data_t &stored, const gnss_identity_t &current)
 {
     if (!stored.has_id_type || !current.valid)
         return false;
@@ -1173,9 +1510,9 @@ static bool check_uptime_request()
     }
     else if (millis() - button_press_start_ms >= holdUpTimeRestartButtonForThisManySecondsToTriggerAReset * 1000UL)
     {
-        clear_gps_nvs_data();
+        clear_gnss_nvs_data();
 #if DEBUG_ENABLED
-        ESP_LOGI(TAG, "Uptime/reset button restart requested: cleared stored GPS NVS values.");
+        ESP_LOGI(TAG, "Uptime/reset button restart requested: cleared stored GNSS NVS values.");
 #endif
 #if MQTT_ENABLED
         mqtt_publish_final_report();
@@ -1205,24 +1542,18 @@ static time_t epoch_from_utc(int year, int month, int day, int hour, int minute,
 }
 
 static uint64_t get_current_time_in_ntp64_format()
+
 {
+
     struct timeval now{};
+
     gettimeofday(&now, nullptr);
 
     uint64_t seconds = NTP_EPOCH_OFFSET + static_cast<uint64_t>(now.tv_sec);
+
     uint64_t fraction = (static_cast<uint64_t>(now.tv_usec) << 32) / 1000000ULL;
+
     return (seconds << 32) | fraction;
-}
-
-static void synchronize_hardware_clock()
-{
-    if (!s_ptp_clock_ready.load(std::memory_order_acquire))
-        return;
-
-    struct timeval now{};
-    gettimeofday(&now, nullptr);
-    const struct timespec hardware_time{now.tv_sec, static_cast<long>(now.tv_usec) * 1000L};
-    clock_settime(CLOCK_PTP_SYSTEM, &hardware_time);
 }
 
 static void write_ntp_timestamp(uint8_t *reply, size_t offset, uint64_t timestamp)
@@ -1261,7 +1592,7 @@ static ntp_reply_status_t get_ntp_reply_status()
         bool gnss_timing_valid = s_ntp_gnss_timing_valid.load(std::memory_order_relaxed);
         sync_faults_t faults{
             s_ntp_pps_missing.load(std::memory_order_relaxed),
-            s_ntp_gps_invalid.load(std::memory_order_relaxed),
+            s_ntp_gnss_invalid.load(std::memory_order_relaxed),
             s_ntp_sanity_mismatch.load(std::memory_order_relaxed),
             s_ntp_sync_stale.load(std::memory_order_relaxed)};
 
@@ -1273,7 +1604,7 @@ static ntp_reply_status_t get_ntp_reply_status()
                            (now_us - last_gnss_valid_us) <= Gnss_Validity_Timeout_Us;
         bool sync_stale = last_successful_sync_us > 0 &&
                           (now_us - last_successful_sync_us) > Sync_Stale_After_Us;
-        bool gnss_synchronized = gnss_recent && !sync_stale && !faults.gps_invalid;
+        bool gnss_synchronized = gnss_recent && !sync_stale && !faults.gnss_invalid;
         bool stratum_one = s_time_has_been_set.load(std::memory_order_acquire) &&
                            !s_time_setting_in_progress.load(std::memory_order_acquire) &&
                            !has_sync_fault(faults) && pps_active && gnss_synchronized &&
@@ -1309,12 +1640,20 @@ static void build_ntp_reply(const uint8_t *request, uint8_t *reply, uint8_t vers
 
 static constexpr size_t ETH_HEADER_SIZE = 14;
 static constexpr size_t IPV4_HEADER_SIZE = 20;
+static constexpr size_t IPV6_HEADER_SIZE = 40;
 static constexpr size_t UDP_HEADER_SIZE = 8;
 static constexpr size_t RAW_NTP_FRAME_SIZE = ETH_HEADER_SIZE + IPV4_HEADER_SIZE + UDP_HEADER_SIZE + NTP_PACKET_SIZE;
-static constexpr size_t HARDWARE_NTP_REQUEST_QUEUE_DEPTH = 64;
+static constexpr size_t RAW_IPV6_NTP_FRAME_SIZE = ETH_HEADER_SIZE + IPV6_HEADER_SIZE + UDP_HEADER_SIZE + NTP_PACKET_SIZE;
+static constexpr size_t HARDWARE_NTP_REQUEST_QUEUE_DEPTH = 256;
+static constexpr size_t HARDWARE_NTP_REQUEST_BUFFER_COUNT = 64; // Do not increase this value, larger pools caused unacceptable internal/DMA-memory pressure
+static constexpr size_t HARDWARE_NTP_REQUEST_BUFFER_SIZE = ETH_HEADER_SIZE + IPV6_HEADER_SIZE + 60 + UDP_HEADER_SIZE + NTP_PACKET_SIZE;
+static constexpr int64_t HARDWARE_NTP_TIMESTAMP_REFRESH_MS = 1000;
+static constexpr uint32_t HARDWARE_NTP_TRANSMIT_RETRY_COUNT = 3;
+static constexpr uint32_t HARDWARE_NTP_TRANSMIT_RETRY_DELAY_US = 10;
 static constexpr uint32_t ETHERNET_RECOVERY_DELAY_MS = 100;
 static constexpr uint32_t ETHERNET_RECOVERY_STOP_TIMEOUT_MS = 1000;
-static constexpr int64_t MQTT_TRANSPORT_STALL_TIMEOUT_US = 35000000LL;
+static constexpr uint32_t ETHERNET_RECOVERY_IP_TIMEOUT_MS = 10000;
+static constexpr int64_t NTP_TRANSPORT_STALL_TIMEOUT_US = 35000000LL;
 
 struct hardware_ntp_request_t
 {
@@ -1326,6 +1665,58 @@ struct hardware_ntp_request_t
 };
 
 static QueueHandle_t s_hardware_ntp_request_queue = nullptr;
+static QueueHandle_t s_hardware_ntp_request_buffer_queue = nullptr;
+static TaskHandle_t s_ntp_cache_purge_task_handle = nullptr;
+static TaskHandle_t s_hardware_ntp_server_task_handle = nullptr;
+static uint8_t s_hardware_ntp_request_buffers[HARDWARE_NTP_REQUEST_BUFFER_COUNT][HARDWARE_NTP_REQUEST_BUFFER_SIZE]{};
+
+static bool initialize_hardware_ntp_request_buffers()
+{
+    for (size_t index = 0; index < HARDWARE_NTP_REQUEST_BUFFER_COUNT; ++index)
+    {
+        uint8_t *buffer = s_hardware_ntp_request_buffers[index];
+        if (xQueueSend(s_hardware_ntp_request_buffer_queue, &buffer, 0) != pdTRUE)
+            return false;
+    }
+    return true;
+}
+
+static void release_hardware_ntp_request_buffer(uint8_t *buffer)
+{
+    if (buffer != nullptr && s_hardware_ntp_request_buffer_queue != nullptr)
+        xQueueSend(s_hardware_ntp_request_buffer_queue, &buffer, 0);
+}
+
+static void deinitialize_hardware_ntp_server()
+{
+    s_hardware_ntp_accepting.store(false, std::memory_order_release);
+    if (s_hardware_ntp_server_task_handle != nullptr)
+    {
+        vTaskDelete(s_hardware_ntp_server_task_handle);
+        s_hardware_ntp_server_task_handle = nullptr;
+    }
+    if (s_ntp_cache_purge_task_handle != nullptr)
+    {
+        vTaskDelete(s_ntp_cache_purge_task_handle);
+        s_ntp_cache_purge_task_handle = nullptr;
+    }
+    if (s_hardware_ntp_request_queue != nullptr)
+    {
+        vQueueDelete(s_hardware_ntp_request_queue);
+        s_hardware_ntp_request_queue = nullptr;
+    }
+    if (s_hardware_ntp_request_buffer_queue != nullptr)
+    {
+        vQueueDelete(s_hardware_ntp_request_buffer_queue);
+        s_hardware_ntp_request_buffer_queue = nullptr;
+    }
+    if (s_hardware_ntp_transmit_mutex != nullptr)
+    {
+        vSemaphoreDelete(s_hardware_ntp_transmit_mutex);
+        s_hardware_ntp_transmit_mutex = nullptr;
+    }
+    ntp_cache_deinit();
+}
 
 static uint16_t internet_checksum(const uint8_t *data, size_t length)
 {
@@ -1379,20 +1770,86 @@ static bool is_ipv4_ntp_request(const uint8_t *frame, uint32_t length, size_t *i
     return true;
 }
 
+static bool is_ipv6_extension_header(uint8_t next_header)
+{
+    return next_header == 0 || next_header == 43 || next_header == 60 || next_header == 135 || next_header == 51;
+}
+
+static bool is_ipv6_ntp_request(const uint8_t *frame, uint32_t length, size_t *ip_offset, size_t *udp_offset)
+{
+    if (frame == nullptr || length < RAW_IPV6_NTP_FRAME_SIZE || frame[12] != 0x86 || frame[13] != 0xDD)
+        return false;
+
+    const size_t ipv6_offset = ETH_HEADER_SIZE;
+    if ((frame[ipv6_offset] >> 4) != 6)
+        return false;
+
+    const size_t payload_length = static_cast<size_t>((frame[ipv6_offset + 4] << 8) | frame[ipv6_offset + 5]);
+    const size_t payload_end = ipv6_offset + IPV6_HEADER_SIZE + payload_length;
+    if (payload_end > length)
+        return false;
+
+    uint8_t next_header = frame[ipv6_offset + 6];
+    size_t offset = ipv6_offset + IPV6_HEADER_SIZE;
+    for (size_t count = 0; is_ipv6_extension_header(next_header); ++count)
+    {
+        if (count == 8 || offset + 2 > payload_end)
+            return false;
+        const size_t extension_length = next_header == 51
+                                            ? static_cast<size_t>(frame[offset + 1] + 2) * 4
+                                            : static_cast<size_t>(frame[offset + 1] + 1) * 8;
+        if (extension_length < 8 || offset + extension_length > payload_end)
+            return false;
+        next_header = frame[offset];
+        offset += extension_length;
+    }
+
+    if (next_header != IPPROTO_UDP || offset + UDP_HEADER_SIZE + NTP_PACKET_SIZE > payload_end)
+        return false;
+
+    const uint16_t udp_length = static_cast<uint16_t>((frame[offset + 4] << 8) | frame[offset + 5]);
+    const uint16_t destination_port = static_cast<uint16_t>((frame[offset + 2] << 8) | frame[offset + 3]);
+    if (destination_port != NTP_PORT || udp_length != UDP_HEADER_SIZE + NTP_PACKET_SIZE ||
+        offset + udp_length != payload_end)
+        return false;
+
+    *ip_offset = ipv6_offset;
+    *udp_offset = offset;
+    return true;
+}
+
+static uint16_t ipv6_udp_checksum(const uint8_t *source, const uint8_t *destination, const uint8_t *udp, size_t udp_length)
+{
+    uint8_t checksum_data[IPV6_HEADER_SIZE + UDP_HEADER_SIZE + NTP_PACKET_SIZE] = {};
+    memcpy(checksum_data, source, 16);
+    memcpy(checksum_data + 16, destination, 16);
+    checksum_data[35] = static_cast<uint8_t>(udp_length);
+    checksum_data[39] = IPPROTO_UDP;
+    memcpy(checksum_data + IPV6_HEADER_SIZE, udp, udp_length);
+    const uint16_t checksum = internet_checksum(checksum_data, IPV6_HEADER_SIZE + udp_length);
+    return checksum == 0 ? 0xFFFF : checksum;
+}
+
 static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *frame, uint32_t length, void *netif, void *info)
 {
     size_t ip_offset = 0;
     size_t udp_offset = 0;
     const eth_mac_time_t *rx_timestamp = static_cast<const eth_mac_time_t *>(info);
     if (!is_ipv4_ntp_request(frame, length, &ip_offset, &udp_offset) || !timestamp_is_valid(rx_timestamp))
-        return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
+    {
+        release_hardware_ntp_request_buffer(frame);
+        return ESP_OK;
+    }
 
     const eth_mac_time_t receive_timestamp = *rx_timestamp;
     const uint8_t *request = frame + udp_offset + UDP_HEADER_SIZE;
     const uint8_t version = (request[0] >> 3) & 0x07;
     const uint8_t mode = request[0] & 0x07;
     if (version < 3 || version > 4 || mode != 3)
-        return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
+    {
+        release_hardware_ntp_request_buffer(frame);
+        return ESP_OK;
+    }
 
     const uint32_t client_ip = (static_cast<uint32_t>(frame[ip_offset + 16]) << 24) |
                                (static_cast<uint32_t>(frame[ip_offset + 17]) << 16) |
@@ -1401,7 +1858,10 @@ static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *
     const uint16_t client_port = static_cast<uint16_t>((frame[udp_offset] << 8) | frame[udp_offset + 1]);
     ntp_client_record_t client_record{};
     if (!ntp_cache_find_or_create(client_ip, client_port, &client_record))
-        return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
+    {
+        release_hardware_ntp_request_buffer(frame);
+        return ESP_OK;
+    }
 
     const uint64_t receive_time = ntp64_from_hardware_timestamp(receive_timestamp);
 #if MQTT_ENABLED
@@ -1412,9 +1872,6 @@ static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *
     memcpy(&source_ipv4_address->sin_addr, frame + ip_offset + 12, sizeof(source_ipv4_address->sin_addr));
     s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
     mqtt_enqueue_ntp_request(source_address);
-#endif
-#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
-    s_ntp_stack_report_requests.fetch_add(1, std::memory_order_relaxed);
 #endif
     uint8_t reply[NTP_PACKET_SIZE] = {};
     const ntp_reply_status_t status = get_ntp_reply_status();
@@ -1485,31 +1942,214 @@ static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *
     udp[5] = UDP_HEADER_SIZE + NTP_PACKET_SIZE;
     memcpy(udp + UDP_HEADER_SIZE, reply, sizeof(reply));
 
+    const bool request_hardware_tx_timestamp = interleaved_reply ||
+                                               client_record.prev_t2_sec == 0 ||
+                                               (esp_timer_get_time() / 1000 - client_record.last_seen_ms) >= HARDWARE_NTP_TIMESTAMP_REFRESH_MS;
     eth_mac_time_t tx_timestamp{};
     bool tx_timestamp_valid = false;
     esp_err_t result = ESP_ERR_INVALID_STATE;
     if (s_hardware_ntp_accepting.load(std::memory_order_acquire) &&
-        s_hardware_ntp_transmit_mutex != nullptr &&
-        xSemaphoreTake(s_hardware_ntp_transmit_mutex, portMAX_DELAY) == pdTRUE)
+        s_hardware_ntp_transmit_mutex != nullptr)
     {
-        if (s_hardware_ntp_accepting.load(std::memory_order_acquire))
+        if (xSemaphoreTake(s_hardware_ntp_transmit_mutex, portMAX_DELAY) == pdTRUE)
         {
-            result = esp_eth_transmit_ctrl_vargs(handle, &tx_timestamp, 2, response_frame, sizeof(response_frame));
-            tx_timestamp_valid = timestamp_is_valid(&tx_timestamp);
+            if (s_hardware_ntp_accepting.load(std::memory_order_acquire))
+            {
+                for (uint32_t attempt = 0; attempt < HARDWARE_NTP_TRANSMIT_RETRY_COUNT; ++attempt)
+                {
+                    if (!interleaved_reply)
+                    {
+                        write_ntp_timestamp(reply, 40, get_current_time_in_ntp64_format());
+                        memcpy(udp + UDP_HEADER_SIZE, reply, sizeof(reply));
+                    }
+
+                    if (request_hardware_tx_timestamp)
+                    {
+                        result = esp_eth_transmit_ctrl_vargs(handle, &tx_timestamp, 2, response_frame, sizeof(response_frame));
+                        tx_timestamp_valid = timestamp_is_valid(&tx_timestamp);
+                    }
+                    else
+                    {
+                        result = esp_eth_transmit(handle, response_frame, sizeof(response_frame));
+                    }
+                    if (result != ESP_ERR_NO_MEM)
+                        break;
+                    esp_rom_delay_us(HARDWARE_NTP_TRANSMIT_RETRY_DELAY_US);
+                }
+            }
+            xSemaphoreGive(s_hardware_ntp_transmit_mutex);
         }
-        xSemaphoreGive(s_hardware_ntp_transmit_mutex);
     }
-    if (result == ESP_OK && tx_timestamp_valid)
+    if (result == ESP_OK)
     {
-        ntp_cache_update(client_ip, client_port, receive_timestamp.seconds, receive_timestamp.nanoseconds,
-                         tx_timestamp.seconds, tx_timestamp.nanoseconds);
+        if (tx_timestamp_valid)
+        {
+            ntp_cache_update(client_ip, client_port, receive_timestamp.seconds, receive_timestamp.nanoseconds,
+                             tx_timestamp.seconds, tx_timestamp.nanoseconds);
+        }
         s_last_hardware_ntp_response_us.store(esp_timer_get_time(), std::memory_order_release);
 #if MQTT_ENABLED
         s_ntp_responses.fetch_add(1, std::memory_order_relaxed);
 #endif
     }
 
-    free(frame);
+    release_hardware_ntp_request_buffer(frame);
+    return result;
+}
+
+static uint64_t read_ntp_timestamp(const uint8_t *packet, size_t offset)
+{
+    return (static_cast<uint64_t>(packet[offset]) << 56) |
+           (static_cast<uint64_t>(packet[offset + 1]) << 48) |
+           (static_cast<uint64_t>(packet[offset + 2]) << 40) |
+           (static_cast<uint64_t>(packet[offset + 3]) << 32) |
+           (static_cast<uint64_t>(packet[offset + 4]) << 24) |
+           (static_cast<uint64_t>(packet[offset + 5]) << 16) |
+           (static_cast<uint64_t>(packet[offset + 6]) << 8) |
+           static_cast<uint64_t>(packet[offset + 7]);
+}
+
+static esp_err_t process_hardware_ipv6_ntp_request(esp_eth_handle_t handle, uint8_t *frame, uint32_t length, void *netif, void *info)
+{
+    size_t ip_offset = 0;
+    size_t udp_offset = 0;
+    const eth_mac_time_t *rx_timestamp = static_cast<const eth_mac_time_t *>(info);
+    if (!is_ipv6_ntp_request(frame, length, &ip_offset, &udp_offset) || !timestamp_is_valid(rx_timestamp))
+    {
+        release_hardware_ntp_request_buffer(frame);
+        return ESP_OK;
+    }
+
+    const eth_mac_time_t receive_timestamp = *rx_timestamp;
+    const uint8_t *request = frame + udp_offset + UDP_HEADER_SIZE;
+    const uint8_t version = (request[0] >> 3) & 0x07;
+    const uint8_t mode = request[0] & 0x07;
+    if (version < 3 || version > 4 || mode != 3)
+    {
+        release_hardware_ntp_request_buffer(frame);
+        return ESP_OK;
+    }
+
+    struct in6_addr client_ip{};
+    memcpy(&client_ip, frame + ip_offset + 8, sizeof(client_ip));
+    const uint16_t client_port = static_cast<uint16_t>((frame[udp_offset] << 8) | frame[udp_offset + 1]);
+    ntp_client_record_ipv6_t client_record{};
+    if (!ntp_cache_find_or_create_ipv6(&client_ip, client_port, &client_record))
+    {
+        release_hardware_ntp_request_buffer(frame);
+        return ESP_OK;
+    }
+
+    const uint64_t receive_time = ntp64_from_hardware_timestamp(receive_timestamp);
+#if MQTT_ENABLED
+    struct sockaddr_storage source_address{};
+    auto *source_ipv6_address = reinterpret_cast<struct sockaddr_in6 *>(&source_address);
+    source_ipv6_address->sin6_family = AF_INET6;
+    source_ipv6_address->sin6_port = htons(client_port);
+    source_ipv6_address->sin6_scope_id = esp_netif_get_netif_impl_index(static_cast<esp_netif_t *>(netif));
+    source_ipv6_address->sin6_addr = client_ip;
+    s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
+    mqtt_enqueue_ntp_request(source_address);
+#endif
+    uint8_t reply[NTP_PACKET_SIZE] = {};
+    const ntp_reply_status_t status = get_ntp_reply_status();
+#if MQTT_ENABLED
+    if (status.gnss_synchronized && status.pps_disciplined)
+        s_ntp_responses_synchronized_and_disciplined.fetch_add(1, std::memory_order_relaxed);
+    if (!status.gnss_synchronized)
+        s_ntp_responses_gnss_unsynchronized.fetch_add(1, std::memory_order_relaxed);
+    if (!status.pps_disciplined)
+        s_ntp_responses_pps_undisciplined.fetch_add(1, std::memory_order_relaxed);
+#endif
+    build_ntp_reply(request, reply, version, receive_time, status);
+
+    const uint64_t client_receive_timestamp = read_ntp_timestamp(request, 32);
+    const uint64_t client_origin_timestamp = read_ntp_timestamp(request, 24);
+    const uint64_t client_transmit_timestamp = read_ntp_timestamp(request, 40);
+    const bool interleaved_reply = client_record.prev_t2 != 0 &&
+                                   client_receive_timestamp != client_transmit_timestamp &&
+                                   client_origin_timestamp == client_record.prev_t2;
+    if (interleaved_reply)
+    {
+        write_ntp_timestamp(reply, 24, client_receive_timestamp);
+        write_ntp_timestamp(reply, 40, client_record.prev_t3);
+    }
+    else
+    {
+        write_ntp_timestamp(reply, 40, get_current_time_in_ntp64_format());
+    }
+
+    uint8_t response_frame[RAW_IPV6_NTP_FRAME_SIZE] = {};
+    memcpy(response_frame, frame + 6, 6);
+    memcpy(response_frame + 6, frame, 6);
+    response_frame[12] = 0x86;
+    response_frame[13] = 0xDD;
+    uint8_t *ip = response_frame + ETH_HEADER_SIZE;
+    ip[0] = 0x60;
+    ip[5] = UDP_HEADER_SIZE + NTP_PACKET_SIZE;
+    ip[6] = IPPROTO_UDP;
+    ip[7] = 64;
+    memcpy(ip + 8, frame + ip_offset + 24, 16);
+    memcpy(ip + 24, frame + ip_offset + 8, 16);
+    uint8_t *udp = ip + IPV6_HEADER_SIZE;
+    udp[1] = static_cast<uint8_t>(NTP_PORT);
+    udp[2] = frame[udp_offset];
+    udp[3] = frame[udp_offset + 1];
+    udp[5] = UDP_HEADER_SIZE + NTP_PACKET_SIZE;
+    memcpy(udp + UDP_HEADER_SIZE, reply, sizeof(reply));
+    const uint16_t checksum = ipv6_udp_checksum(ip + 8, ip + 24, udp, UDP_HEADER_SIZE + NTP_PACKET_SIZE);
+    udp[6] = static_cast<uint8_t>(checksum >> 8);
+    udp[7] = static_cast<uint8_t>(checksum);
+
+    const bool request_hardware_tx_timestamp = interleaved_reply || client_record.prev_t2 == 0 ||
+                                               (esp_timer_get_time() / 1000 - client_record.last_seen_ms) >= HARDWARE_NTP_TIMESTAMP_REFRESH_MS;
+    eth_mac_time_t tx_timestamp{};
+    bool tx_timestamp_valid = false;
+    esp_err_t result = ESP_ERR_INVALID_STATE;
+    if (s_hardware_ntp_accepting.load(std::memory_order_acquire) && s_hardware_ntp_transmit_mutex != nullptr &&
+        xSemaphoreTake(s_hardware_ntp_transmit_mutex, portMAX_DELAY) == pdTRUE)
+    {
+        if (s_hardware_ntp_accepting.load(std::memory_order_acquire))
+        {
+            for (uint32_t attempt = 0; attempt < HARDWARE_NTP_TRANSMIT_RETRY_COUNT; ++attempt)
+            {
+                if (!interleaved_reply)
+                {
+                    write_ntp_timestamp(reply, 40, get_current_time_in_ntp64_format());
+                    memcpy(udp + UDP_HEADER_SIZE, reply, sizeof(reply));
+                    udp[6] = 0;
+                    udp[7] = 0;
+                    const uint16_t refreshed_checksum = ipv6_udp_checksum(ip + 8, ip + 24, udp, UDP_HEADER_SIZE + NTP_PACKET_SIZE);
+                    udp[6] = static_cast<uint8_t>(refreshed_checksum >> 8);
+                    udp[7] = static_cast<uint8_t>(refreshed_checksum);
+                }
+                if (request_hardware_tx_timestamp)
+                {
+                    result = esp_eth_transmit_ctrl_vargs(handle, &tx_timestamp, 2, response_frame, sizeof(response_frame));
+                    tx_timestamp_valid = timestamp_is_valid(&tx_timestamp);
+                }
+                else
+                {
+                    result = esp_eth_transmit(handle, response_frame, sizeof(response_frame));
+                }
+                if (result != ESP_ERR_NO_MEM)
+                    break;
+                esp_rom_delay_us(HARDWARE_NTP_TRANSMIT_RETRY_DELAY_US);
+            }
+        }
+        xSemaphoreGive(s_hardware_ntp_transmit_mutex);
+    }
+    if (result == ESP_OK)
+    {
+        if (tx_timestamp_valid)
+            ntp_cache_update_ipv6(&client_ip, client_port, receive_time, ntp64_from_hardware_timestamp(tx_timestamp));
+        s_last_hardware_ntp_response_us.store(esp_timer_get_time(), std::memory_order_release);
+#if MQTT_ENABLED
+        s_ntp_responses.fetch_add(1, std::memory_order_relaxed);
+#endif
+    }
+
+    release_hardware_ntp_request_buffer(frame);
     return result;
 }
 
@@ -1518,14 +2158,16 @@ static esp_err_t ntp_ethernet_input(esp_eth_handle_t handle, uint8_t *frame, uin
     size_t ip_offset = 0;
     size_t udp_offset = 0;
     const eth_mac_time_t *rx_timestamp = static_cast<const eth_mac_time_t *>(info);
-    if (!is_ipv4_ntp_request(frame, length, &ip_offset, &udp_offset))
+    if (!is_ipv4_ntp_request(frame, length, &ip_offset, &udp_offset) &&
+        !is_ipv6_ntp_request(frame, length, &ip_offset, &udp_offset))
         return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
-
     const uint8_t *request = frame + udp_offset + UDP_HEADER_SIZE;
     const uint8_t version = (request[0] >> 3) & 0x07;
     const uint8_t mode = request[0] & 0x07;
     if (version < 3 || version > 4 || mode != 3)
+    {
         return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
+    }
 
     if (!timestamp_is_valid(rx_timestamp))
     {
@@ -1537,16 +2179,48 @@ static esp_err_t ntp_ethernet_input(esp_eth_handle_t handle, uint8_t *frame, uin
     s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
 #endif
     const eth_mac_time_t receive_timestamp = *rx_timestamp;
-    const hardware_ntp_request_t ntp_request{handle, frame, length, static_cast<esp_netif_t *>(netif), receive_timestamp};
-    if (!s_hardware_ntp_accepting.load(std::memory_order_acquire) ||
-        s_hardware_ntp_request_queue == nullptr ||
-        xQueueSend(s_hardware_ntp_request_queue, &ntp_request, 0) != pdTRUE)
+    if (!s_hardware_ntp_accepting.load(std::memory_order_acquire) || s_hardware_ntp_request_queue == nullptr ||
+        s_hardware_ntp_request_buffer_queue == nullptr)
     {
         free(frame);
+    }
+    else
+    {
+        uint8_t *request_buffer = nullptr;
+        if (length > HARDWARE_NTP_REQUEST_BUFFER_SIZE ||
+            xQueueReceive(s_hardware_ntp_request_buffer_queue, &request_buffer, 0) != pdTRUE)
+        {
+            free(frame);
+            return ESP_OK;
+        }
+        memcpy(request_buffer, frame, length);
+        free(frame);
+
+        const hardware_ntp_request_t ntp_request{handle, request_buffer, length, static_cast<esp_netif_t *>(netif), receive_timestamp};
+        if (xQueueSend(s_hardware_ntp_request_queue, &ntp_request, 0) != pdTRUE)
+        {
+            release_hardware_ntp_request_buffer(request_buffer);
+        }
     }
     return ESP_OK;
 }
 
+static void ntp_cache_purge_task(void *parameter)
+{
+    (void)parameter;
+    for (;;)
+    {
+        vTaskDelay(pdMS_TO_TICKS(60000));
+        ntp_cache_purge_expired();
+
+#if CALCULATE_NTP_CACHE_PURGE_TASK_STACK_SIZE_ENABLED
+        report_current_task_stack_usage(NTP_Cache_Purge);
+#endif
+    }
+}
+
+// Handles NTP requests from IPv4 sources using Ethernet hardware timestamps to provide high-precision, GNSS-disciplined time responses.
+// If the hardware timestamp is not available or valid, the request will be handled by the standard NTP server (ntp_server_task).
 static void hardware_ntp_server_task(void *parameter)
 {
     (void)parameter;
@@ -1554,16 +2228,24 @@ static void hardware_ntp_server_task(void *parameter)
     for (;;)
     {
         if (xQueueReceive(s_hardware_ntp_request_queue, &ntp_request, portMAX_DELAY) == pdTRUE)
-            process_hardware_ntp_request(ntp_request.handle, ntp_request.frame, ntp_request.length,
-                                         ntp_request.netif, &ntp_request.rx_timestamp);
+        {
+            if (ntp_request.frame[12] == 0x86 && ntp_request.frame[13] == 0xDD)
+                process_hardware_ipv6_ntp_request(ntp_request.handle, ntp_request.frame, ntp_request.length,
+                                                  ntp_request.netif, &ntp_request.rx_timestamp);
+            else
+                process_hardware_ntp_request(ntp_request.handle, ntp_request.frame, ntp_request.length,
+                                             ntp_request.netif, &ntp_request.rx_timestamp);
+#if CALCULATE_HARDWARE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+            report_current_task_stack_usage(Hardware_NTP_Server);
+#endif
+        }
     }
 }
 
 #if MQTT_ENABLED
 static void recover_ethernet_transport()
 {
-    const esp_eth_handle_t handle = ETH.handle();
-    if (handle == nullptr || s_hardware_ntp_transmit_mutex == nullptr ||
+    if (ETH.handle() == nullptr || s_hardware_ntp_transmit_mutex == nullptr ||
         xSemaphoreTake(s_hardware_ntp_transmit_mutex, portMAX_DELAY) != pdTRUE)
         return;
 
@@ -1571,37 +2253,21 @@ static void recover_ethernet_transport()
     s_hardware_ntp_accepting.store(false, std::memory_order_release);
     hardware_ntp_request_t request{};
     while (xQueueReceive(s_hardware_ntp_request_queue, &request, 0) == pdTRUE)
-        free(request.frame);
-
-    bool recovery_succeeded = false;
-    s_ptp_clock_ready.store(false, std::memory_order_release);
-    if (esp_eth_stop(handle) == ESP_OK)
     {
-        const int64_t stop_deadline_us = esp_timer_get_time() +
-                                         static_cast<int64_t>(ETHERNET_RECOVERY_STOP_TIMEOUT_MS) * 1000;
-        while (s_ethernet_connected.load(std::memory_order_acquire) && esp_timer_get_time() < stop_deadline_us)
-            vTaskDelay(pdMS_TO_TICKS(10));
-
-        if (!s_ethernet_connected.load(std::memory_order_acquire))
-        {
-            vTaskDelay(pdMS_TO_TICKS(ETHERNET_RECOVERY_DELAY_MS));
-            if (esp_eth_start(handle) == ESP_OK)
-            {
-                esp_eth_mac_t *mac = nullptr;
-                if (esp_eth_get_mac_instance(handle, &mac) == ESP_OK &&
-                    esp_eth_mac_enable_ts4all(mac, true) == ESP_OK)
-                {
-                    s_ptp_clock_ready.store(true, std::memory_order_release);
-                    synchronize_hardware_clock();
-                    recovery_succeeded = true;
-                }
-            }
-        }
+        release_hardware_ntp_request_buffer(request.frame);
     }
-    if (!recovery_succeeded)
-        ESP_LOGE(TAG, "Ethernet transport recovery failed");
-    s_hardware_ntp_accepting.store(recovery_succeeded, std::memory_order_release);
+
+    s_ptp_clock_ready.store(false, std::memory_order_release);
+    s_hardware_ntp_accepting.store(false, std::memory_order_release);
     xSemaphoreGive(s_hardware_ntp_transmit_mutex);
+
+    if (mqtt_publish_or_queue_restart_notification("ethernet_transport_stalled"))
+    {
+        ESP_LOGW(TAG, "Restarting after NTP transport stall");
+        esp_restart();
+    }
+
+    ESP_LOGE(TAG, "Ethernet transport restart notification could not be published or queued");
 }
 
 static void ethernet_transport_recovery_task(void *parameter)
@@ -1614,16 +2280,33 @@ static void ethernet_transport_recovery_task(void *parameter)
         const int64_t last_ntp_response_us = s_last_hardware_ntp_response_us.load(std::memory_order_acquire);
         if (s_mqtt_has_connected.load(std::memory_order_acquire) &&
             !s_mqtt_connected.load(std::memory_order_acquire) && disconnected_since_us > 0 &&
-            now_us - disconnected_since_us >= MQTT_TRANSPORT_STALL_TIMEOUT_US &&
-            last_ntp_response_us > 0 && now_us - last_ntp_response_us >= MQTT_TRANSPORT_STALL_TIMEOUT_US)
+            now_us - disconnected_since_us >= NTP_TRANSPORT_STALL_TIMEOUT_US &&
+            last_ntp_response_us > 0 && now_us - last_ntp_response_us >= NTP_TRANSPORT_STALL_TIMEOUT_US)
         {
             recover_ethernet_transport();
             s_mqtt_disconnected_since_us.store(esp_timer_get_time(), std::memory_order_release);
+
+#if CALCULATE_ETHERNET_TRANSPORT_RECOVERY_TASK_STACK_SIZE_ENABLED
+            report_current_task_stack_usage(Ethernet_Transport_Recovery);
+#endif
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 #endif
+
+static void synchronize_hardware_clock()
+{
+    if (!s_ptp_clock_ready.load(std::memory_order_acquire))
+        return;
+
+    struct timeval now{};
+    gettimeofday(&now, nullptr);
+    const struct timespec clock_time{
+        now.tv_sec,
+        static_cast<long>(now.tv_usec) * 1000L};
+    clock_settime(CLOCK_PTP_SYSTEM, &clock_time);
+}
 
 static bool configure_hardware_timestamps()
 {
@@ -1786,6 +2469,183 @@ static bool parse_nmea_rmc_sentence(const char *sentence, nmea_rmc_time_t *time_
     return true;
 }
 
+#if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
+#else
+static constexpr size_t NMEA_GSV_GROUP_LIMIT = 8;
+static constexpr uint32_t NMEA_GSV_GROUP_EXPIRY_MS = 10000UL;
+
+struct nmea_gsv_group_t
+{
+    char talker[3] = "";
+    char signal_id[4] = "";
+    uint8_t message_count = 0;
+    uint8_t next_message_number = 0;
+    uint8_t satellites_in_view = 0;
+    uint32_t last_updated_ms = 0;
+    bool published = false;
+};
+
+static nmea_gsv_group_t s_nmea_gsv_groups[NMEA_GSV_GROUP_LIMIT]{};
+
+static bool is_nmea_checksum_valid(const char *sentence)
+{
+    if (sentence == nullptr || sentence[0] != '$')
+        return false;
+
+    const char *checksum_marker = strrchr(sentence, '*');
+    if (checksum_marker == nullptr || checksum_marker[1] == '\0' || checksum_marker[2] == '\0' || checksum_marker[3] != '\0')
+        return false;
+
+    unsigned int expected_checksum = 0;
+    if (sscanf(checksum_marker + 1, "%2X", &expected_checksum) != 1)
+        return false;
+
+    uint8_t actual_checksum = 0;
+    for (const char *cursor = sentence + 1; cursor < checksum_marker; ++cursor)
+        actual_checksum ^= static_cast<uint8_t>(*cursor);
+
+    return actual_checksum == expected_checksum;
+}
+
+static bool parse_nmea_uint8_field(const char *sentence, int field_index, uint8_t *value)
+{
+    if (value == nullptr)
+        return false;
+
+    char field[4] = "";
+    if (!get_nmea_field(sentence, field_index, field, sizeof(field)) || field[0] == '\0')
+        return false;
+
+    unsigned int parsed_value = 0;
+    if (sscanf(field, "%u", &parsed_value) != 1 || parsed_value > UINT8_MAX)
+        return false;
+
+    for (const char *cursor = field; *cursor != '\0'; ++cursor)
+    {
+        if (!is_digit_char(*cursor))
+            return false;
+    }
+
+    *value = static_cast<uint8_t>(parsed_value);
+    return true;
+}
+
+static void publish_nmea_gsv_satellite_count(uint32_t now_ms)
+{
+#if MQTT_ENABLED
+    bool has_constellation_specific_group = false;
+    bool has_reportable_group = false;
+    for (const nmea_gsv_group_t &group : s_nmea_gsv_groups)
+    {
+        if (!group.published || (now_ms - group.last_updated_ms) > NMEA_GSV_GROUP_EXPIRY_MS)
+            continue;
+
+        has_reportable_group = true;
+        if (strcmp(group.talker, "GN") != 0)
+        {
+            has_constellation_specific_group = true;
+            break;
+        }
+    }
+
+    if (!has_reportable_group)
+        return;
+
+    uint16_t total_satellites = 0;
+    for (const nmea_gsv_group_t &group : s_nmea_gsv_groups)
+    {
+        if (group.published && (now_ms - group.last_updated_ms) <= NMEA_GSV_GROUP_EXPIRY_MS &&
+            (!has_constellation_specific_group || strcmp(group.talker, "GN") != 0))
+            total_satellites += group.satellites_in_view;
+    }
+    mqtt_note_satellite_count(static_cast<uint8_t>(std::min<uint16_t>(total_satellites, UINT8_MAX)));
+#else
+    (void)now_ms;
+#endif
+}
+
+static void expire_nmea_gsv_groups(uint32_t now_ms)
+{
+    bool group_expired = false;
+    for (nmea_gsv_group_t &group : s_nmea_gsv_groups)
+    {
+        if (group.talker[0] != '\0' && (now_ms - group.last_updated_ms) > NMEA_GSV_GROUP_EXPIRY_MS)
+        {
+            group = nmea_gsv_group_t{};
+            group_expired = true;
+        }
+    }
+
+    if (group_expired)
+        publish_nmea_gsv_satellite_count(now_ms);
+}
+
+static void process_nmea_gsv_sentence(const char *sentence)
+{
+    if (!is_nmea_checksum_valid(sentence))
+        return;
+
+    char sentence_type[16] = "";
+    if (!get_nmea_field(sentence, 0, sentence_type, sizeof(sentence_type)) || strlen(sentence_type) != 5 ||
+        strcmp(sentence_type + 2, "GSV") != 0)
+        return;
+
+    uint8_t message_count = 0;
+    uint8_t message_number = 0;
+    uint8_t satellites_in_view = 0;
+    if (!parse_nmea_uint8_field(sentence, 1, &message_count) ||
+        !parse_nmea_uint8_field(sentence, 2, &message_number) ||
+        !parse_nmea_uint8_field(sentence, 3, &satellites_in_view) ||
+        message_count == 0 || message_number == 0 || message_number > message_count)
+        return;
+
+    const uint16_t satellite_offset = static_cast<uint16_t>(message_number - 1) * 4U;
+    const uint8_t satellites_in_message = satellites_in_view > satellite_offset
+                                              ? std::min<uint8_t>(4, static_cast<uint8_t>(satellites_in_view - satellite_offset))
+                                              : 0;
+    char signal_id[4] = "";
+    (void)get_nmea_field(sentence, 4 + satellites_in_message * 4, signal_id, sizeof(signal_id));
+
+    const uint32_t now_ms = millis();
+    expire_nmea_gsv_groups(now_ms);
+
+    nmea_gsv_group_t *group = nullptr;
+    nmea_gsv_group_t *available_group = nullptr;
+    for (nmea_gsv_group_t &candidate : s_nmea_gsv_groups)
+    {
+        if (candidate.talker[0] == '\0')
+        {
+            available_group = &candidate;
+            continue;
+        }
+        if (strncmp(candidate.talker, sentence_type, 2) == 0 && strcmp(candidate.signal_id, signal_id) == 0)
+        {
+            group = &candidate;
+            break;
+        }
+    }
+
+    if (group == nullptr && available_group != nullptr)
+    {
+        group = available_group;
+        snprintf(group->talker, sizeof(group->talker), "%.2s", sentence_type);
+        snprintf(group->signal_id, sizeof(group->signal_id), "%s", signal_id);
+    }
+
+    if (group == nullptr || (message_number != 1 && (group->message_count != message_count || group->next_message_number != message_number)))
+        return;
+
+    group->message_count = message_count;
+    group->next_message_number = static_cast<uint8_t>(message_number + 1);
+    group->satellites_in_view = satellites_in_view;
+    group->last_updated_ms = now_ms;
+    group->published = message_number == message_count;
+
+    if (group->published)
+        publish_nmea_gsv_satellite_count(now_ms);
+}
+#endif
+
 static bool wait_for_nmea_rmc_time(nmea_rmc_time_t *time_data, uint32_t timeout_ms)
 {
     if (time_data == nullptr)
@@ -1798,9 +2658,9 @@ static bool wait_for_nmea_rmc_time(nmea_rmc_time_t *time_data, uint32_t timeout_
 
     while ((millis() - start_ms) < timeout_ms)
     {
-        while (s_gps_serial.available() > 0)
+        while (s_gnss_serial.available() > 0)
         {
-            int value = s_gps_serial.read();
+            int value = s_gnss_serial.read();
             if (value < 0)
                 break;
 
@@ -1819,6 +2679,10 @@ static bool wait_for_nmea_rmc_time(nmea_rmc_time_t *time_data, uint32_t timeout_
             if (ch == '\r' || ch == '\n')
             {
                 sentence[index] = '\0';
+#if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
+#else
+                process_nmea_gsv_sentence(sentence);
+#endif
                 if (parse_nmea_rmc_sentence(sentence, time_data))
                     return true;
 
@@ -1847,7 +2711,7 @@ static bool wait_for_nmea_rmc_time(nmea_rmc_time_t *time_data, uint32_t timeout_
     return false;
 }
 
-struct gps_probe_result_t
+struct gnss_probe_result_t
 {
     bool saw_data = false;
     size_t bytes_seen = 0;
@@ -1864,7 +2728,7 @@ static bool current_gnss_timing_is_valid()
 
     // Get the latest Position/Velocity/Time solution and fill all global variables
     static constexpr uint16_t status_query_timeout_ms = 1500;
-    if (!s_gps.getPVT(status_query_timeout_ms))
+    if (!s_gnss.getPVT(status_query_timeout_ms))
     {
 #if DEBUG_ENABLED
         ESP_LOGE(TAG, "getPVT failed");
@@ -1872,18 +2736,14 @@ static bool current_gnss_timing_is_valid()
         return false;
     };
 
-    uint8_t fix_type = s_gps.getFixType(status_query_timeout_ms); // 0 - No fix; 1 - Dead reckoning only; 2 - 2D-fix; 3: 3D-fix; 4 - GPS + dead reckoning combined; 5 - Time only fix
+    uint8_t fix_type = s_gnss.getFixType(status_query_timeout_ms); // 0 - No fix; 1 - Dead reckoning only; 2 - 2D-fix; 3: 3D-fix; 4 - GNSS + dead reckoning combined; 5 - Time only fix
 #if MQTT_ENABLED
-    uint8_t satellites = s_gps.getSIV(status_query_timeout_ms);
-    s_satellite_count.store(satellites);
-    if (satellites < s_satellite_min.load())
-        s_satellite_min.store(satellites);
-    if (satellites > s_satellite_max.load())
-        s_satellite_max.store(satellites);
+    uint8_t satellites = s_gnss.getSIV(status_query_timeout_ms);
+    mqtt_note_satellite_count(satellites);
 #endif
-    bool gnss_fix_ok = s_gps.getGnssFixOk(status_query_timeout_ms);
-    bool date_valid = s_gps.getDateValid(status_query_timeout_ms);
-    bool time_valid = s_gps.getTimeValid(status_query_timeout_ms);
+    bool gnss_fix_ok = s_gnss.getGnssFixOk(status_query_timeout_ms);
+    bool date_valid = s_gnss.getDateValid(status_query_timeout_ms);
+    bool time_valid = s_gnss.getTimeValid(status_query_timeout_ms);
 
 #if DEBUG_ENABLED
 
@@ -1905,24 +2765,24 @@ static bool current_gnss_timing_is_valid()
     return (fix_type > 2) && gnss_fix_ok && date_valid && time_valid;
 }
 
-static gps_probe_result_t probe_gps_uart(uint32_t baud);
+static gnss_probe_result_t probe_gnss_uart(uint32_t baud);
 
-static gps_probe_result_t probe_gps_uart(uint32_t baud)
+static gnss_probe_result_t probe_gnss_uart(uint32_t baud)
 {
-    static constexpr uint16_t gpsProbeListenTimeMs = 1500;
-    gps_probe_result_t result{};
+    static constexpr uint16_t gnssProbeListenTimeMs = 1500;
+    gnss_probe_result_t result{};
     size_t sample_len = 0;
 
-    s_gps_serial.end();
-    s_gps_serial.begin(baud, SERIAL_8N1, RXPin, TXPin);
+    s_gnss_serial.end();
+    s_gnss_serial.begin(baud, SERIAL_8N1, RXPin, TXPin);
     vTaskDelay(pdMS_TO_TICKS(150));
 
     uint32_t start_ms = millis();
-    while ((millis() - start_ms) < gpsProbeListenTimeMs)
+    while ((millis() - start_ms) < gnssProbeListenTimeMs)
     {
-        while (s_gps_serial.available() > 0)
+        while (s_gnss_serial.available() > 0)
         {
-            int value = s_gps_serial.read();
+            int value = s_gnss_serial.read();
             if (value < 0)
                 break;
 
@@ -1953,31 +2813,31 @@ static gps_probe_result_t probe_gps_uart(uint32_t baud)
     return result;
 }
 
-static bool try_gps_begin(uint32_t baud, bool assume_success, bool *saw_serial_data)
+static bool try_gnss_begin(uint32_t baud, bool assume_success, bool *saw_serial_data)
 {
 
-    static constexpr uint16_t gpsBeginMaxWaitMs = 2500;
+    static constexpr uint16_t gnssBeginMaxWaitMs = 2500;
 
-    gps_probe_result_t probe_result = probe_gps_uart(baud);
+    gnss_probe_result_t probe_result = probe_gnss_uart(baud);
     if (probe_result.saw_data && saw_serial_data != nullptr)
         *saw_serial_data = true;
 
 #if DEBUG_ENABLED
     ESP_LOGI(TAG,
-             "GPS probe at %lu baud: %u bytes seen, sample: %s",
+             "GNSS probe at %lu baud: %u bytes seen, sample: %s",
              static_cast<unsigned long>(baud),
              static_cast<unsigned int>(probe_result.bytes_seen),
              probe_result.saw_data ? probe_result.sample : "<none>");
 #endif
 
-    s_gps_serial.end();
-    s_gps_serial.begin(baud, SERIAL_8N1, RXPin, TXPin);
+    s_gnss_serial.end();
+    s_gnss_serial.begin(baud, SERIAL_8N1, RXPin, TXPin);
     vTaskDelay(pdMS_TO_TICKS(150));
 
-    bool begin_result = s_gps.begin(s_gps_serial, gpsBeginMaxWaitMs, assume_success);
+    bool begin_result = s_gnss.begin(s_gnss_serial, gnssBeginMaxWaitMs, assume_success);
 #if DEBUG_ENABLED
     ESP_LOGI(TAG,
-             "GPS begin at %lu baud with assume_success=%s -> %s",
+             "GNSS begin at %lu baud with assume_success=%s -> %s",
              static_cast<unsigned long>(baud),
              assume_success ? "true" : "false",
              begin_result ? "success" : "failed");
@@ -1986,24 +2846,24 @@ static bool try_gps_begin(uint32_t baud, bool assume_success, bool *saw_serial_d
     return begin_result;
 }
 
-static bool confirm_saved_gps_baud_rate(uint32_t baud)
+static bool confirm_saved_gnss_baud_rate(uint32_t baud)
 {
     bool saw_serial_data = false;
 
-    s_detected_gps_baud = 0;
-    s_gps_required_assume_success = false;
+    s_detected_gnss_baud = 0;
+    s_gnss_required_assume_success = false;
 
     for (int attempt = 0; attempt < 2; ++attempt)
     {
-        bool begin_without_assume = try_gps_begin(baud, false, &saw_serial_data);
+        bool begin_without_assume = try_gnss_begin(baud, false, &saw_serial_data);
         bool begin_with_assume = false;
         if (!begin_without_assume)
-            begin_with_assume = try_gps_begin(baud, true, &saw_serial_data);
+            begin_with_assume = try_gnss_begin(baud, true, &saw_serial_data);
 
         if (begin_without_assume || begin_with_assume)
         {
-            s_detected_gps_baud = baud;
-            s_gps_required_assume_success = begin_with_assume;
+            s_detected_gnss_baud = baud;
+            s_gnss_required_assume_success = begin_with_assume;
             return true;
         }
     }
@@ -2011,23 +2871,23 @@ static bool confirm_saved_gps_baud_rate(uint32_t baud)
     return false;
 }
 
-static bool set_gps_baud_rate(uint32_t gps_baud, int max_attempts, uint32_t initial_probe_baud = 0)
+static bool set_gnss_baud_rate(uint32_t gnss_baud, int max_attempts, uint32_t initial_probe_baud = 0)
 {
 
     std::vector<uint32_t> candidate_baud_rates;
-    uint32_t preferred_probe_baud = initial_probe_baud > 0 ? initial_probe_baud : gps_baud;
+    uint32_t preferred_probe_baud = initial_probe_baud > 0 ? initial_probe_baud : gnss_baud;
     build_candidate_baud_rates(candidate_baud_rates, preferred_probe_baud);
 
     bool saw_any_serial_data = false;
-    s_detected_gps_baud = 0;
-    s_gps_required_assume_success = false;
+    s_detected_gnss_baud = 0;
+    s_gnss_required_assume_success = false;
 
     char baud_line[lcdColumns + 1];
 
     for (int attempt = 0; attempt < max_attempts; ++attempt)
     {
 #if DEBUG_ENABLED
-        ESP_LOGI(TAG, "GPS initialization attempt %d of %d", attempt + 1, max_attempts);
+        ESP_LOGI(TAG, "GNSS initialization attempt %d of %d", attempt + 1, max_attempts);
 #endif
 
         for (uint32_t candidate_baud : candidate_baud_rates)
@@ -2040,67 +2900,67 @@ static bool set_gps_baud_rate(uint32_t gps_baud, int max_attempts, uint32_t init
             snprintf(baud_line, sizeof(baud_line), "Baud: %lu %s", static_cast<unsigned long>(candidate_baud), dots);
             display_line(2, baud_line);
 
-            bool begin_without_assume = try_gps_begin(candidate_baud, false, &saw_any_serial_data);
+            bool begin_without_assume = try_gnss_begin(candidate_baud, false, &saw_any_serial_data);
             bool begin_with_assume = false;
             if (!begin_without_assume)
-                begin_with_assume = try_gps_begin(candidate_baud, true, &saw_any_serial_data);
+                begin_with_assume = try_gnss_begin(candidate_baud, true, &saw_any_serial_data);
 
             if (begin_without_assume || begin_with_assume)
             {
-                s_detected_gps_baud = candidate_baud;
-                s_gps_required_assume_success = begin_with_assume;
+                s_detected_gnss_baud = candidate_baud;
+                s_gnss_required_assume_success = begin_with_assume;
 
-                if (candidate_baud != gps_baud)
+                if (candidate_baud != gnss_baud)
                 {
 #if DEBUG_ENABLED
                     ESP_LOGI(TAG,
-                             "GPS responded at %lu baud. Attempting to switch to %lu baud.",
+                             "GNSS responded at %lu baud. Attempting to switch to %lu baud.",
                              static_cast<unsigned long>(candidate_baud),
-                             static_cast<unsigned long>(gps_baud));
+                             static_cast<unsigned long>(gnss_baud));
 #endif
 
-                    bool baud_change_command_reported_success = s_gps.setSerialRate(gps_baud);
+                    bool baud_change_command_reported_success = s_gnss.setSerialRate(gnss_baud);
 
 #if DEBUG_ENABLED
                     if (!baud_change_command_reported_success)
-                        ESP_LOGW(TAG, "GPS baud-rate change command to %lu was not acknowledged. Probing the target baud anyway.", static_cast<unsigned long>(gps_baud));
+                        ESP_LOGW(TAG, "GNSS baud-rate change command to %lu was not acknowledged. Probing the target baud anyway.", static_cast<unsigned long>(gnss_baud));
 #endif
 
                     vTaskDelay(pdMS_TO_TICKS(200));
 
-                    bool reconnect_without_assume = try_gps_begin(gps_baud, false, &saw_any_serial_data);
+                    bool reconnect_without_assume = try_gnss_begin(gnss_baud, false, &saw_any_serial_data);
                     bool reconnect_with_assume = false;
                     if (!reconnect_without_assume)
-                        reconnect_with_assume = try_gps_begin(gps_baud, true, &saw_any_serial_data);
+                        reconnect_with_assume = try_gnss_begin(gnss_baud, true, &saw_any_serial_data);
 
                     if (reconnect_without_assume || reconnect_with_assume)
                     {
-                        s_detected_gps_baud = gps_baud;
-                        s_gps_required_assume_success = reconnect_with_assume;
+                        s_detected_gnss_baud = gnss_baud;
+                        s_gnss_required_assume_success = reconnect_with_assume;
 
 #if DEBUG_ENABLED
                         if (!baud_change_command_reported_success)
-                            ESP_LOGW(TAG, "GPS baud-rate change command to %lu reported failure, but reconnect succeeded at the new baud.", static_cast<unsigned long>(gps_baud));
+                            ESP_LOGW(TAG, "GNSS baud-rate change command to %lu reported failure, but reconnect succeeded at the new baud.", static_cast<unsigned long>(gnss_baud));
 #endif
                     }
                     else
                     {
-                        bool old_baud_without_assume = try_gps_begin(candidate_baud, false, &saw_any_serial_data);
+                        bool old_baud_without_assume = try_gnss_begin(candidate_baud, false, &saw_any_serial_data);
                         bool old_baud_with_assume = false;
                         if (!old_baud_without_assume)
-                            old_baud_with_assume = try_gps_begin(candidate_baud, true, &saw_any_serial_data);
+                            old_baud_with_assume = try_gnss_begin(candidate_baud, true, &saw_any_serial_data);
 
                         if (old_baud_without_assume || old_baud_with_assume)
                         {
-                            s_detected_gps_baud = candidate_baud;
-                            s_gps_required_assume_success = old_baud_with_assume;
+                            s_detected_gnss_baud = candidate_baud;
+                            s_gnss_required_assume_success = old_baud_with_assume;
 
-                            if (baud_change_command_reported_success && rebootIfGpsBaudChangeCommandSucceedsButImmediateReconnectFails)
+                            if (baud_change_command_reported_success && rebootIfGNSSBaudChangeCommandSucceedsButImmediateReconnectFails)
                             {
 #if DEBUG_ENABLED
-                                ESP_LOGW(TAG, "GPS baud-rate change command to %lu was acknowledged, but immediate reconnect failed. Rebooting to complete transition.", static_cast<unsigned long>(gps_baud));
+                                ESP_LOGW(TAG, "GNSS baud-rate change command to %lu was acknowledged, but immediate reconnect failed. Rebooting to complete transition.", static_cast<unsigned long>(gnss_baud));
 #endif
-                                display_line(1, "GPS baud changed");
+                                display_line(1, "GNSS baud changed");
                                 display_line(2, "Rebooting...");
                                 vTaskDelay(pdMS_TO_TICKS(1000));
 #if MQTT_ENABLED
@@ -2110,27 +2970,27 @@ static bool set_gps_baud_rate(uint32_t gps_baud, int max_attempts, uint32_t init
                             }
 
 #if DEBUG_ENABLED
-                            ESP_LOGW(TAG, "GPS baud-rate change to %lu did not take effect immediately. Continuing at detected baud %lu.", static_cast<unsigned long>(gps_baud), static_cast<unsigned long>(candidate_baud));
+                            ESP_LOGW(TAG, "GNSS baud-rate change to %lu did not take effect immediately. Continuing at detected baud %lu.", static_cast<unsigned long>(gnss_baud), static_cast<unsigned long>(candidate_baud));
 #endif
                         }
                         else
                         {
 #if DEBUG_ENABLED
-                            ESP_LOGW(TAG, "GPS baud-rate change attempt left module unreachable at both %lu and %lu. Continuing with best-known state.", static_cast<unsigned long>(candidate_baud), static_cast<unsigned long>(gps_baud));
+                            ESP_LOGW(TAG, "GNSS baud-rate change attempt left module unreachable at both %lu and %lu. Continuing with best-known state.", static_cast<unsigned long>(candidate_baud), static_cast<unsigned long>(gnss_baud));
 #endif
                         }
                     }
                 }
 
 #if DEBUG_ENABLED
-                if (s_gps_required_assume_success)
+                if (s_gnss_required_assume_success)
                 {
                     ESP_LOGW(TAG,
-                             "GPS communication was established only with assume_success=true at %lu baud. The attached module may have limited u-blox compatibility.",
-                             static_cast<unsigned long>(s_detected_gps_baud));
+                             "GNSS communication was established only with assume_success=true at %lu baud. The attached module may have limited u-blox compatibility.",
+                             static_cast<unsigned long>(s_detected_gnss_baud));
                 };
 
-                ESP_LOGI(TAG, "GPS initialization will continue at %lu baud.", static_cast<unsigned long>(s_detected_gps_baud));
+                ESP_LOGI(TAG, "GNSS initialization will continue at %lu baud.", static_cast<unsigned long>(s_detected_gnss_baud));
 #endif
                 return true;
             }
@@ -2141,26 +3001,32 @@ static bool set_gps_baud_rate(uint32_t gps_baud, int max_attempts, uint32_t init
 
 #if DEBUG_ENABLED
     if (saw_any_serial_data)
-        ESP_LOGW(TAG, "GPS serial data was detected, but SparkFun u-blox GNSS v3 could not initialize the module. The module may be an older NEO-6/7/M8 variant.");
+        ESP_LOGW(TAG, "GNSS serial data was detected, but SparkFun u-blox GNSS v3 could not initialize the module. The module may be an older NEO-6/7/M8 variant.");
     else
-        ESP_LOGW(TAG, "No GPS serial data was detected on GPIO%d/GPIO%d at any tested baud rate. Check power, TX/RX wiring, and signal levels.", RXPin, TXPin);
+        ESP_LOGW(TAG, "No GNSS serial data was detected on GPIO%d/GPIO%d at any tested baud rate. Check power, TX/RX wiring, and signal levels.", RXPin, TXPin);
 #endif
 
     return false;
 }
 
-static bool configure_gps_outputs(bool *uart1_output_set_result)
+static bool configure_gnss_outputs(bool *uart1_output_set_result)
 {
-    bool i2c_output_disabled = s_gps.setI2COutput(0);
-    bool uart1_output_set = s_gps.setUART1Output(COM_TYPE_UBX | COM_TYPE_NMEA);
-    bool uart2_output_disabled = s_gps.setUART2Output(0);
+#if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
+    bool i2c_output_disabled = s_gnss.setI2COutput(0);
+    bool uart2_output_disabled = s_gnss.setUART2Output(0);
+#else
+    bool i2c_output_disabled = true;
+    bool uart2_output_disabled = true;
+#endif
+
+    bool uart1_output_set = s_gnss.setUART1Output(COM_TYPE_UBX | COM_TYPE_NMEA);
 
     if (uart1_output_set_result != nullptr)
         *uart1_output_set_result = uart1_output_set;
 
 #if DEBUG_ENABLED
     ESP_LOGI(TAG,
-             "GPS port config results: I2C off=%s, UART1 UBX=%s, UART2 off=%s",
+             "GNSS port config results: I2C off=%s, UART1 UBX=%s, UART2 off=%s",
              i2c_output_disabled ? "ok" : "failed",
              uart1_output_set ? "ok" : "failed",
              uart2_output_disabled ? "ok" : "failed");
@@ -2178,7 +3044,7 @@ static bool configure_gps_outputs(bool *uart1_output_set_result)
 
 /* pre-release code - commented out
 
-static bool configure_gps_time_only_uart1_output()
+static bool configure_gnss_time_only_uart1_output()
 {
     if (!reduceGNSSUART1OutputToTimeMessages)
         return true;
@@ -2186,9 +3052,9 @@ static bool configure_gps_time_only_uart1_output()
     uint8_t layer = saveReducedGNSSUART1OutputPermanently ? VAL_LAYER_ALL : VAL_LAYER_RAM_BBR;
     auto set_message_rate = [layer](uint32_t key, uint8_t rate, const char *message_name)
     {
-        bool command_worked = s_gps.setVal8(key, rate, layer);
+        bool command_worked = s_gnss.setVal8(key, rate, layer);
 #if DEBUG_ENABLED
-        ESP_LOGI(TAG, "GPS UART1 %s: %s", message_name, command_worked ? "ok" : "failed");
+        ESP_LOGI(TAG, "GNSS UART1 %s: %s", message_name, command_worked ? "ok" : "failed");
 #endif
         return command_worked;
     };
@@ -2203,7 +3069,7 @@ static bool configure_gps_time_only_uart1_output()
 
 #if DEBUG_ENABLED
     ESP_LOGI(TAG,
-             "GPS time-only UART1 message configuration: %s (%s)",
+             "GNSS time-only UART1 message configuration: %s (%s)",
              configured ? "ok" : "partially applied; continuing with available output",
              saveReducedGNSSUART1OutputPermanently ? "saved to receiver flash" : "RAM/BBR only");
 #endif
@@ -2380,46 +3246,12 @@ static void pps_discipline_task(void *parameter)
         }
 
 #if CALCULATE_PPS_DISCIPLINE_TASK_STACK_SIZE_ENABLED
-
-        // The following code is used to determine the ideal stack size for this method
-        // it only needs to be setup and run once
-        //
-        // NOTE 1: Specific to pps_discipline_task to get a valid result the code below needed to be running
-        //         with the stack report usage display being examined when a PPS event happens (every second)
-        //
-        // NOTE 2: Results were taken after a minute to allow the numbers to settle in
-        //
-        // NOTE 3: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
-        //
-        // Below is the code that has now already been used to calculate the ideal stack size:
-        //
-        // Configured task stack; rerun this measurement after changing PPS processing.
-        const size_t allocated_bytes = PPS_Discipline_Task_Stack_Size;
-
-        // high watermark is returned in words
-        UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
-        size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
-
-        // compute peak usage and suggested size (25% margin)
-        size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
-
-        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
-
-        ESP_LOGI("pps_discipline_task",
-                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
-                 (unsigned)allocated_bytes,
-                 (unsigned)high_watermark_bytes,
-                 (unsigned)peak_usage_bytes,
-                 (unsigned)suggested_bytes);
-
-        // Results of this testing (when a PPS event was underway):
-        // pps_discipline_task: Stack report: Allocated=22000 bytes, HighWater=20148 bytes unused, PeakUsage=1852 bytes, Suggested=2315 bytes
-
+        report_current_task_stack_usage(PPS_Discipline);
 #endif
     }
 }
 
-static bool wait_for_gps_startup_qualification()
+static bool wait_for_gnss_startup_qualification()
 {
     int64_t valid_started_us = 0;
     int64_t last_pps_us = 0;
@@ -2455,8 +3287,8 @@ static bool wait_for_gps_startup_qualification()
         {
             now_us = esp_timer_get_time();
             if (last_pps_us == 0 ||
-                ((now_us - last_pps_us) >= GPS_Startup_Min_PPS_Interval_Us &&
-                 (now_us - last_pps_us) <= GPS_Startup_Max_PPS_Interval_Us))
+                ((now_us - last_pps_us) >= gnss_Startup_Min_PPS_Interval_Us &&
+                 (now_us - last_pps_us) <= gnss_Startup_Max_PPS_Interval_Us))
             {
                 stable_pps_edges++;
             }
@@ -2466,19 +3298,19 @@ static bool wait_for_gps_startup_qualification()
             }
             last_pps_us = now_us;
 
-            uint32_t displayed_pps_edges = std::min(stable_pps_edges, GPS_Startup_Qualification_PPS_Edges);
+            uint32_t displayed_pps_edges = std::min(stable_pps_edges, gnss_Startup_Qualification_PPS_Edges);
             char pps_edges_line[lcdColumns + 1];
             snprintf(pps_edges_line,
                      sizeof(pps_edges_line),
                      "Edges %lu of %lu",
                      static_cast<unsigned long>(displayed_pps_edges),
-                     static_cast<unsigned long>(GPS_Startup_Qualification_PPS_Edges));
+                     static_cast<unsigned long>(gnss_Startup_Qualification_PPS_Edges));
             display_line(1, "PPS Stabilizing");
             display_line(2, pps_edges_line);
         }
 
-        if ((now_us - valid_started_us) >= static_cast<int64_t>(GPS_Startup_Qualification_Duration_Ms) * 1000LL &&
-            stable_pps_edges >= GPS_Startup_Qualification_PPS_Edges)
+        if ((now_us - valid_started_us) >= static_cast<int64_t>(gnss_Startup_Qualification_Duration_Ms) * 1000LL &&
+            stable_pps_edges >= gnss_Startup_Qualification_PPS_Edges)
         {
 #if DEBUG_ENABLED
             ESP_LOGI(TAG, "GNSS and PPS startup qualification complete after %lu stable PPS edges.",
@@ -2491,120 +3323,168 @@ static bool wait_for_gps_startup_qualification()
     }
 }
 
-static void setup_gps()
+static void setup_gnss()
 {
 
-    static constexpr int maxAttemptsToInitializeGPS = 10;
+#if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
+    static constexpr int maxAttemptsToInitializeGNSS = 10;
+    gnss_nvs_data_t stored_gnss_data{};
+    bool gnss_nvs_load_ok = load_gnss_nvs_data(&stored_gnss_data);
+    bool first_time_initial_setup = !stored_gnss_data.has_id_type;
+    uint32_t highest_candidate_baud = get_highest_candidate_gnss_baud();
+#else
+    bool first_time_initial_setup = false;
+    uint32_t highest_candidate_baud = baudRateForUbloxNonCompliantGNSSReceiver;
+#endif
 
-    gps_nvs_data_t stored_gps_data{};
-    bool gps_nvs_load_ok = load_gps_nvs_data(&stored_gps_data);
-
-    bool first_time_initial_setup = !stored_gps_data.has_id_type;
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "Startup mode: %s", first_time_initial_setup ? "First time initial setup" : "Not first time initial setup");
 #endif
-    uint32_t highest_candidate_baud = get_highest_candidate_gps_baud();
+
     uint32_t startup_target_baud = highest_candidate_baud;
 
-    if (gps_nvs_load_ok && stored_gps_data.has_id_type && stored_gps_data.max_baud > 0)
-        startup_target_baud = stored_gps_data.max_baud;
+#if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
+    if (gnss_nvs_load_ok && stored_gnss_data.has_id_type && stored_gnss_data.max_baud > 0)
+        startup_target_baud = stored_gnss_data.max_baud;
 
-    bool known_module_fast_path = gps_nvs_load_ok && stored_gps_data.has_id_type && stored_gps_data.max_baud > 0;
+    bool known_module_fast_path = gnss_nvs_load_ok && stored_gnss_data.has_id_type && stored_gnss_data.max_baud > 0;
+#else
+    bool known_module_fast_path = false;
+#endif
+
 #if DEBUG_ENABLED
     ESP_LOGI(TAG,
-             "GPS startup path: %s (target baud=%lu)",
+             "GNSS startup path: %s (target baud=%lu)",
              known_module_fast_path ? "known module fast path" : "first-time scan path",
              static_cast<unsigned long>(startup_target_baud));
 #endif
 
-    bool gps_communication_confirmed = false;
+#if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
+
+    bool gnss_communication_confirmed = false;
     if (known_module_fast_path)
     {
-        s_gps_target_baud = startup_target_baud;
-        gps_communication_confirmed = confirm_saved_gps_baud_rate(s_gps_target_baud);
+        s_gnss_target_baud = startup_target_baud;
+        gnss_communication_confirmed = confirm_saved_gnss_baud_rate(s_gnss_target_baud);
 #if DEBUG_ENABLED
-        if (!gps_communication_confirmed)
-            ESP_LOGW(TAG, "Saved GPS baud %lu did not confirm communication; starting automatic recovery scan.", static_cast<unsigned long>(s_gps_target_baud));
+        if (!gnss_communication_confirmed)
+            ESP_LOGW(TAG, "Saved GNSS baud %lu did not confirm communication; starting automatic recovery scan.", static_cast<unsigned long>(s_gnss_target_baud));
 #endif
     }
 
-    if (!gps_communication_confirmed)
+    if (!gnss_communication_confirmed)
     {
-        s_gps_target_baud = highest_candidate_baud;
-        uint32_t initial_probe_baud = first_time_initial_setup ? 9600 : s_gps_target_baud;
-        if (!set_gps_baud_rate(s_gps_target_baud, maxAttemptsToInitializeGPS, initial_probe_baud))
+        s_gnss_target_baud = highest_candidate_baud;
+        uint32_t initial_probe_baud = first_time_initial_setup ? 9600 : s_gnss_target_baud;
+        if (!set_gnss_baud_rate(s_gnss_target_baud, maxAttemptsToInitializeGNSS, initial_probe_baud))
         {
 #if DEBUG_ENABLED
-            ESP_LOGE(TAG, "GPS comms failed - check TX/RX + power");
+            ESP_LOGE(TAG, "GNSS comms failed - check TX/RX + power");
 #endif
-            halt_with_display("GPS comms failed", "Check TX/RX + power", "See serial log");
+            halt_with_display("GNSS comms failed", "Check TX/RX + power", "See serial log");
         }
     }
 
-    gps_identity_t current_identity = query_gps_identity();
-    bool should_retry_as_first_time = gps_nvs_load_ok && stored_gps_data.has_id_type;
+    gnss_identity_t current_identity = query_gnss_identity();
+    bool should_retry_as_first_time = gnss_nvs_load_ok && stored_gnss_data.has_id_type;
     if (should_retry_as_first_time)
     {
-        bool same_gps_module = gps_identity_matches(stored_gps_data, current_identity);
-        if (!same_gps_module && startup_target_baud != highest_candidate_baud)
+        bool same_gnss_module = gnss_identity_matches(stored_gnss_data, current_identity);
+        if (!same_gnss_module && startup_target_baud != highest_candidate_baud)
         {
-            s_gps_target_baud = highest_candidate_baud;
-            if (!set_gps_baud_rate(s_gps_target_baud, maxAttemptsToInitializeGPS, s_gps_target_baud))
+            s_gnss_target_baud = highest_candidate_baud;
+            if (!set_gnss_baud_rate(s_gnss_target_baud, maxAttemptsToInitializeGNSS, s_gnss_target_baud))
             {
-                ESP_LOGE(TAG, "GPS comms failed after module mismatch fallback");
-                halt_with_display("GPS comms failed", "Check TX/RX + power", "See serial log");
+                ESP_LOGE(TAG, "GNSS comms failed after module mismatch fallback");
+                halt_with_display("GNSS comms failed", "Check TX/RX + power", "See serial log");
             }
-            current_identity = query_gps_identity();
+            current_identity = query_gnss_identity();
         }
     }
 
-    s_gps_is_max_m10s = strstr(current_identity.value, "MAX-M10S") != nullptr;
-#if DEBUG_ENABLED
-    ESP_LOGI(TAG, "GPS module profile: %s", s_gps_is_max_m10s ? "MAX-M10S" : "generic/fallback");
+    s_gnss_is_max_m10s = strstr(current_identity.value, "MAX-M10S") != nullptr;
 
-    ESP_LOGI(TAG, "GPS startup mode: baud=%lu, initialization=%s",
-             static_cast<unsigned long>(s_detected_gps_baud),
-             s_gps_required_assume_success ? "assume_success" : "confirmed");
+#else
+
+    s_gnss_target_baud = highest_candidate_baud;
+    s_detected_gnss_baud = highest_candidate_baud;
+    s_gnss_is_max_m10s = false;
+    s_gnss_required_assume_success = false;
+    s_use_nmea_fallback = true;
+    uint32_t baud = highest_candidate_baud;
+    static constexpr uint16_t gnssBeginMaxWaitMs = 2500;
+    bool assume_success = false;
+
+    s_gnss_serial.end();
+    s_gnss_serial.begin(baud, SERIAL_8N1, RXPin, TXPin);
+    vTaskDelay(pdMS_TO_TICKS(150));
+
+    bool begin_result = s_gnss.begin(s_gnss_serial, gnssBeginMaxWaitMs, assume_success);
+#if DEBUG_ENABLED
+    ESP_LOGI(TAG,
+             "GNSS begin at %lu baud with assume_success=%s -> %s",
+             static_cast<unsigned long>(baud),
+             assume_success ? "true" : "false",
+             begin_result ? "success" : "failed");
 #endif
 
-    if (s_detected_gps_baud > 0)
+#endif
+
+#if DEBUG_ENABLED
+    ESP_LOGI(TAG, "GNSS module profile: %s", s_gnss_is_max_m10s ? "MAX-M10S" : "generic/fallback");
+
+    ESP_LOGI(TAG, "GNSS startup mode: baud=%lu, initialization=%s",
+             static_cast<unsigned long>(s_detected_gnss_baud),
+             s_gnss_required_assume_success ? "assume_success" : "confirmed");
+#endif
+
+#if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
+    if (s_detected_gnss_baud > 0)
     {
-        bool save_ok = save_gps_nvs_data(current_identity, s_detected_gps_baud);
+        bool save_ok = save_gnss_nvs_data(current_identity, s_detected_gnss_baud);
 #if DEBUG_ENABLED
         ESP_LOGI(TAG,
-                 "GPS identity persistence: type=%s, value=%s, max_baud=%lu, save=%s",
+                 "GNSS identity persistence: type=%s, value=%s, max_baud=%lu, save=%s",
                  current_identity.type,
                  current_identity.value,
-                 static_cast<unsigned long>(s_detected_gps_baud),
+                 static_cast<unsigned long>(s_detected_gnss_baud),
                  save_ok ? "ok" : "failed");
 #endif
     }
 
+#endif
+
     bool uart1_output_set = false;
-    configure_gps_outputs(&uart1_output_set);
+    configure_gnss_outputs(&uart1_output_set);
+
     /* pre-release code - commented out
-    configure_gps_time_only_uart1_output();
+    configure_gnss_time_only_uart1_output();
     end of pre-release code */
 #if DEBUG_ENABLED
     if (!uart1_output_set)
-        ESP_LOGW(TAG, "GPS UART1 output configuration failed. Continuing with the module's current output settings.");
+        ESP_LOGW(TAG, "GNSS UART1 output configuration failed. Continuing with the module's current output settings.");
 #endif
 
-    s_use_nmea_fallback = s_gps_required_assume_success || !uart1_output_set;
+#if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
+    s_use_nmea_fallback = s_gnss_required_assume_success || !uart1_output_set;
+#else
+    s_use_nmea_fallback = true;
+#endif
+
     if (s_use_nmea_fallback && !allowFallbackProcessing)
     {
         ESP_LOGE(TAG, "NMEA fallback processing is required but not allowed - check the ESP32TimeServerSetting.h file.");
-        halt_with_display("GPS fallback required", "Fallback not allowed", "Check settings");
+        halt_with_display("GNSS fallback required", "Fallback not allowed", "Check settings");
     }
 #if DEBUG_ENABLED
     if (s_use_nmea_fallback)
-        ESP_LOGW(TAG, "NMEA fallback mode enabled for GPS fix/time acquisition.");
+        ESP_LOGW(TAG, "NMEA fallback mode enabled for GNSS fix/time acquisition.");
 #endif
 
-    display_line(1, "Waiting for GPS fix");
+    display_line(1, "Waiting for GNSS fix");
     display_line(2, "");
 
-    static constexpr uint32_t gpsFixEscalationToNmeaFallbackMs = 120000UL;
+    static constexpr uint32_t gnssFixEscalationToNmeaFallbackMs = 120000UL;
 
     bool nmea_fallback_enabled = s_use_nmea_fallback;
     uint32_t wait_start_ms = millis();
@@ -2623,11 +3503,11 @@ static void setup_gps()
 
         if (!s_use_nmea_fallback)
         {
-            fix_type = s_gps.getFixType();
-            gnss_fix_ok = s_gps.getGnssFixOk();
-            satellites_used = s_gps.getSIV();
-            date_valid = s_gps.getDateValid();
-            time_valid = s_gps.getTimeValid();
+            fix_type = s_gnss.getFixType();
+            gnss_fix_ok = s_gnss.getGnssFixOk();
+            satellites_used = s_gnss.getSIV();
+            date_valid = s_gnss.getDateValid();
+            time_valid = s_gnss.getTimeValid();
             ubx_fix_ready = (fix_type == 3 || fix_type == 4 || fix_type == 5) && gnss_fix_ok && date_valid && time_valid;
 
             if ((fix_type == 3 || fix_type == 4) && satellites_used >= 4 && !gnss_fix_ok)
@@ -2650,7 +3530,7 @@ static void setup_gps()
         }
 
         uint32_t now_ms = millis();
-        if (!ubx_fix_ready && !nmea_fallback_enabled && allowFallbackProcessing && (now_ms - wait_start_ms) >= gpsFixEscalationToNmeaFallbackMs)
+        if (!ubx_fix_ready && !nmea_fallback_enabled && allowFallbackProcessing && (now_ms - wait_start_ms) >= gnssFixEscalationToNmeaFallbackMs)
         {
             nmea_fallback_enabled = true;
 #if DEBUG_ENABLED
@@ -2671,16 +3551,16 @@ static void setup_gps()
 
 #if DEBUG_ENABLED
             if (ubx_fix_ready)
-                ESP_LOGI(TAG, "GPS fix obtained after %lu ms: fix_type=%u (%s)",
+                ESP_LOGI(TAG, "GNSS fix obtained after %lu ms: fix_type=%u (%s)",
                          static_cast<unsigned long>(millis() - wait_start_ms),
                          static_cast<unsigned int>(fix_type),
                          fix_type_to_text(fix_type));
             else
-                ESP_LOGI(TAG, "GPS fix obtained after %lu ms via NMEA fallback.",
+                ESP_LOGI(TAG, "GNSS fix obtained after %lu ms via NMEA fallback.",
                          static_cast<unsigned long>(millis() - wait_start_ms));
 #endif
 
-            if (wait_for_gps_startup_qualification())
+            if (wait_for_gnss_startup_qualification())
                 return;
         }
 
@@ -2690,10 +3570,10 @@ static void setup_gps()
 
             if (s_use_nmea_fallback)
 
-                ESP_LOGI(TAG, "Waiting for GPS fix: elapsed=%lu ms, NMEA fallback active",
+                ESP_LOGI(TAG, "Waiting for GNSS fix: elapsed=%lu ms, NMEA fallback active",
                          static_cast<unsigned long>(now_ms - wait_start_ms));
             else
-                ESP_LOGI(TAG, "Waiting for GPS fix: elapsed=%lu ms, fix_type=%u (%s), gnss_fix_ok=%s, date_valid=%s, time_valid=%s, SIV=%u",
+                ESP_LOGI(TAG, "Waiting for GNSS fix: elapsed=%lu ms, fix_type=%u (%s), gnss_fix_ok=%s, date_valid=%s, time_valid=%s, SIV=%u",
                          static_cast<unsigned long>(now_ms - wait_start_ms),
                          static_cast<unsigned int>(fix_type),
                          fix_type_to_text(fix_type),
@@ -2708,7 +3588,7 @@ static void setup_gps()
         if ((now_ms - wait_start_ms) >= 60000UL && (last_long_wait_warning_ms == 0 || (now_ms - last_long_wait_warning_ms) >= 30000UL))
         {
 #if DEBUG_ENABLED
-            ESP_LOGW(TAG, "GPS has not produced a usable fix yet. Check antenna placement, sky view, and module compatibility.");
+            ESP_LOGW(TAG, "GNSS has not produced a usable fix yet. Check antenna placement, sky view, and module compatibility.");
 #endif
             last_long_wait_warning_ms = now_ms;
         }
@@ -2894,10 +3774,10 @@ static bool mqtt_tf_write_report(const char *payload)
     return true;
 }
 
-static void mqtt_enqueue_report(const char *payload)
+static bool mqtt_enqueue_report(const char *payload)
 {
     if (MQTT_QOS == 0)
-        return;
+        return false;
 
     if (s_tf_queue_available.load())
     {
@@ -2909,12 +3789,12 @@ static void mqtt_enqueue_report(const char *payload)
 #if DEBUG_ENABLED
                 ESP_LOGE(TAG, "Unable to queue MQTT report on TF card");
 #endif
-                return;
+                return false;
             }
             s_mqtt_queued_messages_discarded++;
             mqtt_tf_refresh_queue_count();
         }
-        return;
+        return true;
     }
 
     if (s_mqtt_queued_messages_count.load() == MQTT_REPORT_QUEUE_DEPTH)
@@ -2927,6 +3807,7 @@ static void mqtt_enqueue_report(const char *payload)
     size_t index = (s_mqtt_report_head + s_mqtt_queued_messages_count.load()) % MQTT_REPORT_QUEUE_DEPTH;
     snprintf(s_mqtt_reports[index].payload, sizeof(s_mqtt_reports[index].payload), "%s", payload);
     s_mqtt_queued_messages_count++;
+    return true;
 }
 
 static bool mqtt_publish_queued_report(const char *payload)
@@ -3023,58 +3904,6 @@ static void mqtt_build_report(char *payload, size_t payload_size)
     s_mqtt_queued_messages_discarded = 0;
     uint32_t most_requests_per_second = s_ntp_most_requests_per_second.exchange(0, std::memory_order_relaxed);
 
-#if MQTT_CLIENT_REPORTING_ENABLED
-    s_mqtt_clients_json[0] = '\0';
-    size_t clients_length = 0;
-
-    if (xSemaphoreTake(s_mqtt_stats_mutex, portMAX_DELAY) == pdTRUE)
-    {
-        std::sort(s_mqtt_clients, s_mqtt_clients + s_mqtt_client_count,
-                  [](const mqtt_client_request_t &left, const mqtt_client_request_t &right)
-                  {
-                      auto address_family_order = [](sa_family_t address_family)
-                      {
-                          if (address_family == AF_INET)
-                              return 0;
-                          if (address_family == AF_INET6)
-                              return 1;
-                          return 2;
-                      };
-                      int left_order = address_family_order(left.address_family);
-                      int right_order = address_family_order(right.address_family);
-                      if (left_order != right_order)
-                          return left_order < right_order;
-                      size_t address_size = left.address_family == AF_INET ? sizeof(struct in_addr) : sizeof(struct in6_addr);
-                      return memcmp(left.address, right.address, address_size) < 0;
-                  });
-        for (size_t index = 0; index < s_mqtt_client_count; index++)
-        {
-            struct sockaddr_storage address{};
-            address.ss_family = s_mqtt_clients[index].address_family;
-            if (address.ss_family == AF_INET)
-                memcpy(&reinterpret_cast<struct sockaddr_in *>(&address)->sin_addr, s_mqtt_clients[index].address, sizeof(struct in_addr));
-            else if (address.ss_family == AF_INET6)
-                memcpy(&reinterpret_cast<struct sockaddr_in6 *>(&address)->sin6_addr, s_mqtt_clients[index].address, sizeof(struct in6_addr));
-            else
-                continue;
-
-            char address_text[IP_ADDRESS_TEXT_SIZE] = "";
-            if (!format_socket_address(address, address_text, sizeof(address_text)))
-                continue;
-            int written = snprintf(s_mqtt_clients_json + clients_length, sizeof(s_mqtt_clients_json) - clients_length,
-                                   "%s{\"address\":\"%s\",\"requests\":%lu}",
-                                   clients_length == 0 ? "" : ",", address_text,
-                                   static_cast<unsigned long>(s_mqtt_clients[index].requests));
-            if (written < 0 || static_cast<size_t>(written) >= sizeof(s_mqtt_clients_json) - clients_length)
-                break;
-            clients_length += static_cast<size_t>(written);
-        }
-        s_mqtt_client_count = 0;
-        xSemaphoreGive(s_mqtt_stats_mutex);
-    }
-
-#endif
-
     char publishing_date_and_time[25] = "";
     format_time_to_ISO8601(time(nullptr), publishing_date_and_time, sizeof(publishing_date_and_time));
 
@@ -3097,13 +3926,16 @@ static void mqtt_build_report(char *payload, size_t payload_size)
     uint8_t satellite_min = s_satellite_min.exchange(UINT8_MAX);
     uint8_t satellite_max = s_satellite_max.exchange(0);
     if (satellite_min == UINT8_MAX)
+    {
         satellite_min = s_satellite_count.load();
+        satellite_max = satellite_min;
+    }
 
     size_t len = 0;
 
     len += snprintf(payload + len, payload_size - len, "{");
 
-    len += snprintf(payload + len, payload_size - len, "\"current\": {");
+    len += snprintf(payload + len, payload_size - len, "\"current\":{");
     len += snprintf(payload + len, payload_size - len, "\"time\":\"%s\",", publishing_date_and_time);
     len += snprintf(payload + len, payload_size - len, "\"uptime\":%lu,", (unsigned long)(esp_timer_get_time() / 1000000LL));
     len += snprintf(payload + len, payload_size - len, "\"ethernet_up\":%s,", s_ethernet_connected.load() ? "true" : "false");
@@ -3111,10 +3943,10 @@ static void mqtt_build_report(char *payload, size_t payload_size)
     // to make this easy on the user - the following have been simplified for reporting so the user sees true when things are ok and false when they are not
     bool current_gnss_locked = s_gnss_locked.load();                 // Indicates whether GNSS currently has a satellite lock
     bool current_gnss_timing_valid = s_ntp_gnss_timing_valid.load(); // Tracks if GNSS timing data is valid
-    bool current_gps_valid = !s_ntp_gps_invalid.load();              // Signals GNSS timing missing, expired, or unusable
+    bool current_gnss_valid = !s_ntp_gnss_invalid.load();            // Signals GNSS timing missing, expired, or unusable
     bool current_sync_fresh = !s_ntp_sync_stale.load();              // Shows if last successful sync is too old
     bool current_sanity_matched = !s_ntp_sanity_mismatch.load();     // Marks detected mismatch between GNSS time and sanity checks (if the gnss time is outside the timeframe that it should be)
-    bool current_gnss_ok = current_gnss_locked && current_gnss_timing_valid && current_gps_valid && current_sync_fresh && current_sanity_matched;
+    bool current_gnss_ok = current_gnss_locked && current_gnss_timing_valid && current_gnss_valid && current_sync_fresh && current_sanity_matched;
 
     len += snprintf(payload + len, payload_size - len, "\"gnss_synchronized\":%s,", current_gnss_ok ? "true" : "false");
     if (!current_gnss_ok)
@@ -3122,7 +3954,7 @@ static void mqtt_build_report(char *payload, size_t payload_size)
         len += snprintf(payload + len, payload_size - len, "\"gnss_synchronized_indicators\":{");
         len += snprintf(payload + len, payload_size - len, "\"locked\":%s,", current_gnss_locked ? "true" : "false");
         len += snprintf(payload + len, payload_size - len, "\"timing\":%s,", current_gnss_timing_valid ? "true" : "false");
-        len += snprintf(payload + len, payload_size - len, "\"gps_valid\":%s,", current_gps_valid ? "true" : "false");
+        len += snprintf(payload + len, payload_size - len, "\"gnss_valid\":%s,", current_gnss_valid ? "true" : "false");
         len += snprintf(payload + len, payload_size - len, "\"sync_fresh\":%s,", current_sync_fresh ? "true" : "false");
         len += snprintf(payload + len, payload_size - len, "\"sanity_check_passed\":%s", current_sanity_matched ? "true" : "false");
         len += snprintf(payload + len, payload_size - len, "},");
@@ -3206,7 +4038,55 @@ static void mqtt_build_report(char *payload, size_t payload_size)
 
 #if MQTT_CLIENT_REPORTING_ENABLED
     len += snprintf(payload + len, payload_size - len, "},");
-    len += snprintf(payload + len, payload_size - len, "\"clients\":[%s],", s_mqtt_clients_json);
+    len += snprintf(payload + len, payload_size - len, "\"clients\":[");
+    bool first_client = true;
+    if (xSemaphoreTake(s_mqtt_stats_mutex, portMAX_DELAY) == pdTRUE)
+    {
+        std::sort(s_mqtt_clients, s_mqtt_clients + s_mqtt_client_count,
+                  [](const mqtt_client_request_t &left, const mqtt_client_request_t &right)
+                  {
+                      auto address_family_order = [](sa_family_t address_family)
+                      {
+                          if (address_family == AF_INET)
+                              return 0;
+                          if (address_family == AF_INET6)
+                              return 1;
+                          return 2;
+                      };
+                      int left_order = address_family_order(left.address_family);
+                      int right_order = address_family_order(right.address_family);
+                      if (left_order != right_order)
+                          return left_order < right_order;
+                      size_t address_size = left.address_family == AF_INET ? sizeof(struct in_addr) : sizeof(struct in6_addr);
+                      return memcmp(left.address, right.address, address_size) < 0;
+                  });
+        for (size_t index = 0; index < s_mqtt_client_count && len < payload_size; index++)
+        {
+            struct sockaddr_storage address{};
+            address.ss_family = s_mqtt_clients[index].address_family;
+            if (address.ss_family == AF_INET)
+                memcpy(&reinterpret_cast<struct sockaddr_in *>(&address)->sin_addr, s_mqtt_clients[index].address, sizeof(struct in_addr));
+            else if (address.ss_family == AF_INET6)
+                memcpy(&reinterpret_cast<struct sockaddr_in6 *>(&address)->sin6_addr, s_mqtt_clients[index].address, sizeof(struct in6_addr));
+            else
+                continue;
+
+            char address_text[IP_ADDRESS_TEXT_SIZE] = "";
+            if (!format_socket_address(address, address_text, sizeof(address_text)))
+                continue;
+            int written = snprintf(payload + len, payload_size - len,
+                                   "%s{\"address\":\"%s\",\"requests\":%lu}",
+                                   first_client ? "" : ",", address_text,
+                                   static_cast<unsigned long>(s_mqtt_clients[index].requests));
+            if (written < 0 || static_cast<size_t>(written) >= payload_size - len)
+                break;
+            len += static_cast<size_t>(written);
+            first_client = false;
+        }
+        s_mqtt_client_count = 0;
+        xSemaphoreGive(s_mqtt_stats_mutex);
+    }
+    len += snprintf(payload + len, payload_size - len, "],");
     len += snprintf(payload + len, payload_size - len, "\"clients_overflown\":%s", s_mqtt_client_table_overflown.exchange(false) ? "true" : "false");
 #else
     len += snprintf(payload + len, payload_size - len, "}");
@@ -3228,7 +4108,6 @@ static void mqtt_build_report(char *payload, size_t payload_size)
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "Published: \n\r%s", payload);
 #endif
-    // ESP_LOGI(TAG, "Published: \n\r%s", payload); // testing add or remove this as needed
 }
 
 static void mqtt_publish_final_report()
@@ -3254,6 +4133,92 @@ static void mqtt_publish_final_report()
     s_mqtt_restart_publish_id.store(-1);
 }
 
+static bool mqtt_publish_or_queue_restart_notification(const char *reason)
+{
+    char payload[128] = "";
+    snprintf(payload, sizeof(payload), "{\"event\":\"controlled_restart\",\"reason\":\"%s\"}", reason);
+
+    bool published = false;
+    if (s_mqtt_connected.load())
+    {
+        s_mqtt_restart_publish_id.store(-1);
+        s_mqtt_restart_publish_completed.store(false);
+        int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain);
+        if (message_id >= 0)
+        {
+            s_mqtt_restart_publish_id.store(message_id);
+            TickType_t wait_started = xTaskGetTickCount();
+            while (!s_mqtt_restart_publish_completed.load() && s_mqtt_connected.load() &&
+                   (xTaskGetTickCount() - wait_started) < pdMS_TO_TICKS(MQTT_RESTART_PUBLISH_TIMEOUT_MS))
+                vTaskDelay(pdMS_TO_TICKS(10));
+            published = s_mqtt_restart_publish_completed.load();
+        }
+        s_mqtt_restart_publish_id.store(-1);
+    }
+
+    if (published)
+        return true;
+    if (s_tf_queue_available.load())
+        return mqtt_enqueue_report(payload);
+
+    nvs_handle_t handle = 0;
+    esp_err_t result = nvs_open(restart_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (result == ESP_OK)
+    {
+        result = nvs_set_str(handle, restart_NVS_KEY_PENDING, payload);
+        if (result == ESP_OK)
+            result = nvs_commit(handle);
+        nvs_close(handle);
+    }
+    return result == ESP_OK;
+}
+
+static bool mqtt_publish_pending_restart_notification()
+{
+    if (!s_mqtt_connected.load())
+        return false;
+
+    char payload[512] = "";
+    nvs_handle_t handle = 0;
+    if (nvs_open(restart_NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK)
+        return false;
+
+    size_t payload_size = sizeof(payload);
+    esp_err_t result = nvs_get_str(handle, restart_NVS_KEY_PENDING, payload, &payload_size);
+    if (result == ESP_ERR_NVS_NOT_FOUND)
+    {
+        nvs_close(handle);
+        return false;
+    }
+    if (result != ESP_OK)
+    {
+        nvs_close(handle);
+        return false;
+    }
+
+    s_mqtt_restart_publish_id.store(-1);
+    s_mqtt_restart_publish_completed.store(false);
+    int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain);
+    if (message_id >= 0)
+    {
+        s_mqtt_restart_publish_id.store(message_id);
+        TickType_t wait_started = xTaskGetTickCount();
+        while (!s_mqtt_restart_publish_completed.load() && s_mqtt_connected.load() &&
+               (xTaskGetTickCount() - wait_started) < pdMS_TO_TICKS(MQTT_RESTART_PUBLISH_TIMEOUT_MS))
+            vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    const bool published = s_mqtt_restart_publish_completed.load();
+    s_mqtt_restart_publish_id.store(-1);
+    if (published)
+    {
+        result = nvs_erase_key(handle, restart_NVS_KEY_PENDING);
+        if (result == ESP_OK)
+            result = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return published && result == ESP_OK;
+}
+
 static void mqtt_service_task(void *parameter)
 {
     bool previously_connected = false;
@@ -3271,6 +4236,9 @@ static void mqtt_service_task(void *parameter)
             esp_mqtt_client_publish(s_mqtt_client, s_mqtt_status_topic, "online", 0, MQTT_QOS, 1);
         previously_connected = connected;
 
+        if (connected)
+            mqtt_publish_pending_restart_notification();
+
         if (connected && s_mqtt_queued_messages_count.load() > 0)
             mqtt_send_queued_messages();
 
@@ -3284,36 +4252,7 @@ static void mqtt_service_task(void *parameter)
         vTaskDelay(pdMS_TO_TICKS(MQTT_QUEUED_PUBLISH_DELAY_MS));
 
 #if CALCULATE_MQTT_SERVICE_TASK_STACK_SIZE_ENABLED
-
-        // The following code is used to determine the ideal stack size for this method
-        // it only needs to be setup and run once
-        //
-        // NOTE 1: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
-        //
-        // Below is the code that has now already been used to calculate the ideal stack size:
-        //
-
-        // *** Hard‑coded stack size originally used when creating the task (bytes) ***
-        const size_t allocated_bytes = 22000; // <-- set this to the value passed to xTaskCreatePinnedToCore
-
-        // high watermark is returned in words
-        UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
-        size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
-
-        // compute peak usage and suggested size (25% margin)
-        size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
-        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
-
-        ESP_LOGI("mqtt_service_task",
-                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
-                 (unsigned)allocated_bytes,
-                 (unsigned)high_watermark_bytes,
-                 (unsigned)peak_usage_bytes,
-                 (unsigned)suggested_bytes);
-
-        // Results of this testing:
-        // mqtt_service_task: Stack report: Allocated=22000 bytes, HighWater=19896 bytes unused, PeakUsage=2104 bytes, Suggested=2630 bytes
-
+        report_current_task_stack_usage(MQTT_Service);
 #endif
     }
 }
@@ -3519,8 +4458,8 @@ static void setup_mqtt()
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "MQTT setup. Keep alive set at %u seconds", MQTTFrequencyOfKeepAliveRequest);
 #endif
-    if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", 2630, nullptr, 5, nullptr, 0) != pdPASS ||
-        xTaskCreatePinnedToCore(ethernet_transport_recovery_task, "eth_recovery", 3072, nullptr, 6, nullptr, 0) != pdPASS)
+    if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", MQTT_Service_Task_Stack_Size, nullptr, 5, nullptr, 0) != pdPASS ||
+        xTaskCreatePinnedToCore(ethernet_transport_recovery_task, "eth_recovery", Ethernet_Transport_Recovery_Task_Stack_Size, nullptr, 6, nullptr, 0) != pdPASS)
         s_mqtt_setup_failed.store(true);
 #endif
 }
@@ -3674,6 +4613,23 @@ static bool configure_static_ip()
     return true;
 }
 
+static bool start_ethernet_driver()
+{
+    if (!ETH.enableIPv6())
+    {
+#if DEBUG_ENABLED
+        ESP_LOGE(TAG, "Unable to enable Ethernet IPv6 support");
+#endif
+    }
+
+    return ETH.begin(ETH_PHY_IP101,
+                     ETH_PHY_ADDRESS,
+                     static_cast<int>(ETH_MDC_GPIO),
+                     static_cast<int>(ETH_MDIO_GPIO),
+                     static_cast<int>(ETH_PHY_RST_GPIO),
+                     EMAC_CLK_EXT_IN);
+}
+
 static void setup_ethernet()
 {
     if (s_net_event_group == nullptr)
@@ -3695,19 +4651,7 @@ static void setup_ethernet()
              static_cast<int>(ETH_PHY_RST_GPIO));
 #endif
 
-    if (!ETH.enableIPv6())
-    {
-#if DEBUG_ENABLED
-        ESP_LOGE(TAG, "Unable to enable Ethernet IPv6 support");
-#endif
-    }
-
-    if (!ETH.begin(ETH_PHY_IP101,
-                   ETH_PHY_ADDRESS,
-                   static_cast<int>(ETH_MDC_GPIO),
-                   static_cast<int>(ETH_MDIO_GPIO),
-                   static_cast<int>(ETH_PHY_RST_GPIO),
-                   EMAC_CLK_EXT_IN)) // needed for hardware time stamping
+    if (!start_ethernet_driver()) // needed for hardware time stamping
     {
 #if DEBUG_ENABLED
         ESP_LOGE(TAG, "ETH.begin() failed");
@@ -3717,11 +4661,14 @@ static void setup_ethernet()
 
     if (!ntp_cache_init() ||
         (s_hardware_ntp_transmit_mutex = xSemaphoreCreateMutex()) == nullptr ||
-        xTaskCreatePinnedToCore(ntp_cache_purge_task, "ntp_cache_purge", 2048, nullptr, 5, nullptr, tskNO_AFFINITY) != pdPASS ||
         (s_hardware_ntp_request_queue = xQueueCreate(HARDWARE_NTP_REQUEST_QUEUE_DEPTH, sizeof(hardware_ntp_request_t))) == nullptr ||
-        xTaskCreatePinnedToCore(hardware_ntp_server_task, "hardware_ntp", 4096, nullptr, 20, nullptr, 1) != pdPASS)
+        (s_hardware_ntp_request_buffer_queue = xQueueCreate(HARDWARE_NTP_REQUEST_BUFFER_COUNT, sizeof(uint8_t *))) == nullptr ||
+        !initialize_hardware_ntp_request_buffers() ||
+        xTaskCreatePinnedToCore(ntp_cache_purge_task, "ntp_cache_purge", NTP_Cache_Purge_Task_Stack_Size, nullptr, 5, &s_ntp_cache_purge_task_handle, tskNO_AFFINITY) != pdPASS ||
+        xTaskCreatePinnedToCore(hardware_ntp_server_task, "hardware_ntp", Hardware_NTP_Server_Task_Stack_Size, nullptr, 17, &s_hardware_ntp_server_task_handle, 1) != pdPASS) // do not change the task priority higher than 17 causes conflicts with other mechanisms
     {
         ESP_LOGE(TAG, "Unable to initialize hardware NTP serving");
+        deinitialize_hardware_ntp_server();
     }
     else if (!configure_hardware_timestamps())
     {
@@ -3815,7 +4762,9 @@ void write_open_for_business_messages_to_the_console()
     format_time_to_ISO8601(time(nullptr), s_open_for_business_date_and_time, sizeof(s_open_for_business_date_and_time));
 
     // Note: the console write below is purposefully not guarded by a DEBUG_ENABLE check - it should always be written
-    ESP_LOGI(TAG, "Open for business: %s", s_open_for_business_date_and_time);
+    ESP_LOGI(TAG, "***********************************************");
+    ESP_LOGI(TAG, "* Open for business: %s *", s_open_for_business_date_and_time);
+    ESP_LOGI(TAG, "***********************************************");
 
 #if DEBUG_ENABLED
 #else
@@ -3827,21 +4776,35 @@ void setup_NVM_storage(void)
 {
 
     if (!initialize_nvs_storage())
-        ESP_LOGE(TAG, "NVS initialization failed. GPS module settings persistence is unavailable.");
+        ESP_LOGE(TAG, "NVS initialization failed. GNSS module settings persistence is unavailable.");
 }
 
 void create_mutexes_and_semaphores(void)
 {
 
-#if LIQUID_CRYSTAL_DISPLAY_ENABLED
-    s_lcd_mutex = xSemaphoreCreateMutex();
-#endif
     s_time_mutex = xSemaphoreCreateMutex();
     s_pps_semaphore = xSemaphoreCreateBinary();
     s_pps_timestamp_queue = xQueueCreate(1, sizeof(PpsCaptureEvent));
     s_pps_sync_timestamp_queue = xQueueCreate(1, sizeof(PpsCaptureEvent));
     s_ote_mutex = xSemaphoreCreateMutex();
     s_sync_state_mutex = xSemaphoreCreateMutex();
+
+#if LIQUID_CRYSTAL_DISPLAY_ENABLED
+    s_lcd_mutex = xSemaphoreCreateMutex();
+#endif
+
+#if CALCULATE_ETHERNET_TRANSPORT_RECOVERY_TASK_STACK_SIZE_ENABLED || \
+    CALCULATE_GNSS_RECOVERY_TASK_STACK_SIZE_ENABLED ||               \
+    CALCULATE_GNSS_TIME_SYNC_TASK_STACK_SIZE_ENABLED ||              \
+    CALCULATE_HARDWARE_NTP_SERVER_TASK_STACK_SIZE_ENABLED ||         \
+    CALCULATE_MQTT_SERVICE_TASK_STACK_SIZE_ENABLED ||                \
+    CALCULATE_NTP_CACHE_PURGE_TASK_STACK_SIZE_ENABLED ||             \
+    CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED ||                  \
+    CALCULATE_OTE_SERVICE_TASK_STACK_SIZE_ENABLED ||                 \
+    CALCULATE_PPS_DISCIPLINE_TASK_STACK_SIZE_ENABLED ||              \
+    CALCULATE_UPDATE_DISPLAY_TASK_STACK_SIZE_ENABLED
+    s_task_stack_usage_mutex = xSemaphoreCreateMutex();
+#endif
 }
 
 void initialize_the_display(void)
@@ -4160,39 +5123,7 @@ static void ote_service_task(void *parameter)
         }
 
 #if CALCULATE_OTE_SERVICE_TASK_STACK_SIZE_ENABLED
-
-        // The following code is used to determine the ideal stack size for this method
-        // it only needs to be setup and run once
-        //
-        // NOTE 1: Specific to ote_service_task to get a valid result the code below needed to be running
-        //         with the stack report usage display being examined when an OTE update was underway
-        //
-        // NOTE 2: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
-        //
-        // Below is the code that has now already been used to calculate the ideal stack size:
-        //
-
-        // *** Hard‑coded stack size originally used when creating the task (bytes) ***
-        const size_t allocated_bytes = 16384; // <-- set this to the value passed to xTaskCreatePinnedToCore
-
-        // high watermark is returned in words
-        UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
-        size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
-
-        // compute peak usage and suggested size (25% margin)
-        size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
-        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
-
-        ESP_LOGI("ote_service_task",
-                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
-                 (unsigned)allocated_bytes,
-                 (unsigned)high_watermark_bytes,
-                 (unsigned)peak_usage_bytes,
-                 (unsigned)suggested_bytes);
-
-        // Results of this testing:
-        // ote_service_task: Stack report: Allocated=16384 bytes, HighWater=13536 bytes unused, PeakUsage=2848 bytes, Suggested=3560 bytes
-
+        report_current_task_stack_usage(OTE_Service);
 #endif
     }
 }
@@ -4281,7 +5212,7 @@ void setup_for_ote_updates()
     setup_ota();
 
     // note: this task is intentionally pinned to core 0 (as opposed to tskNO_AFFINITY)
-    xTaskCreatePinnedToCore(ote_service_task, "ote_service", 3560, nullptr, 5, nullptr, 0);
+    xTaskCreatePinnedToCore(ote_service_task, "ote_service", OTE_Service_Task_Stack_Size, nullptr, 5, nullptr, 0);
 
 #endif
 }
@@ -4301,7 +5232,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
         nmea_rmc_time_t nmea_time{};
         if (!wait_for_nmea_rmc_time(&nmea_time, 3000UL))
         {
-            candidate->failures.gps_invalid = true;
+            candidate->failures.gnss_invalid = true;
 #if DEBUG_ENABLED
             ESP_LOGE(TAG, "GNSS invalid checkpoint 1.");
 #endif
@@ -4320,9 +5251,13 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
         }
         else
         {
+
 #if DEBUG_ENABLED
             ESP_LOGE(TAG, "NMEA fallback is running without PPS.");
 #endif
+
+#if FALLBACK_PROCESSING_WITHOUT_PPS_ENABLED
+
             if (!allowFallbackProcessingWithoutPPS)
             {
                 candidate->failures.pps_missing = true;
@@ -4330,6 +5265,13 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
             }
 
             candidate->pps_release_time_us = esp_timer_get_time();
+
+#else
+
+            candidate->failures.pps_missing = true;
+            return false;
+
+#endif
         }
     }
     else
@@ -4343,6 +5285,9 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
 #endif
 
             candidate->failures.pps_missing = true;
+
+#if FALLBACK_PROCESSING_WITHOUT_PPS_ENABLED
+
             if (allowFallbackProcessingWithoutPPS)
             {
 #if DEBUG_ENABLED
@@ -4350,38 +5295,40 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
 #endif
                 s_use_nmea_fallback = true;
             }
+
+#endif
             return false;
         }
 
-        if (!s_gps.getPVT())
+        if (!s_gnss.getPVT())
         {
-            candidate->failures.gps_invalid = true;
+            candidate->failures.gnss_invalid = true;
 #if DEBUG_ENABLED
             ESP_LOGE(TAG, "GNSS invalid - Position - Velocity - Time");
 #endif
             return false;
         }
 
-        uint8_t fix_type = s_gps.getFixType();
-        if ((fix_type != 3 && fix_type != 4 && fix_type != 5) || !s_gps.getGnssFixOk() || !s_gps.getDateValid() || !s_gps.getTimeValid())
+        uint8_t fix_type = s_gnss.getFixType();
+        if ((fix_type != 3 && fix_type != 4 && fix_type != 5) || !s_gnss.getGnssFixOk() || !s_gnss.getDateValid() || !s_gnss.getTimeValid())
         {
-            candidate->failures.gps_invalid = true;
+            candidate->failures.gnss_invalid = true;
 #if DEBUG_ENABLED
             ESP_LOGE(TAG, "GNSS invalid - Fix type.");
 #endif
             return false;
         }
 
-        int year = s_gps.getYear();
-        int month = s_gps.getMonth();
-        int day = s_gps.getDay();
-        int hour = s_gps.getHour();
-        int minute = s_gps.getMinute();
-        int second = s_gps.getSecond();
+        int year = s_gnss.getYear();
+        int month = s_gnss.getMonth();
+        int day = s_gnss.getDay();
+        int hour = s_gnss.getHour();
+        int minute = s_gnss.getMinute();
+        int second = s_gnss.getSecond();
 
         if (year <= 2025 || month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 60)
         {
-            candidate->failures.gps_invalid = true;
+            candidate->failures.gnss_invalid = true;
 #if DEBUG_ENABLED
             ESP_LOGE(TAG, "GNSS invalid - bad date or time.");
 #endif
@@ -4400,6 +5347,9 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
 #endif
 
             candidate->failures.pps_missing = true;
+
+#if FALLBACK_PROCESSING_WITHOUT_PPS_ENABLED
+
             if (allowFallbackProcessingWithoutPPS)
             {
 #if DEBUG_ENABLED
@@ -4407,6 +5357,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
 #endif
                 s_use_nmea_fallback = true;
             }
+#endif
             return false;
         }
 
@@ -4416,7 +5367,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
 
     if ((esp_timer_get_time() - attempt_start_us) > Max_Sync_Attempt_Us)
     {
-        candidate->failures.gps_invalid = true;
+        candidate->failures.gnss_invalid = true;
 #if DEBUG_ENABLED
         ESP_LOGE(TAG, "GNSS invalid checkpoint 2.");
 #endif
@@ -4427,29 +5378,17 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
     return true;
 }
 
-static void gps_runtime_recovery_task(void *parameter)
+static void gnss_runtime_recovery_task(void *parameter)
 {
     TaskHandle_t sync_task_handle = reinterpret_cast<TaskHandle_t>(parameter);
 
-    setup_gps();
+    setup_gnss();
 
-#if CALCULATE_GPS_RECOVERY_TASK_STACK_SIZE_ENABLED
-    // Configured recovery stack; run with a forced runtime recovery to measure the complete path.
-    UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(nullptr);
-    size_t high_watermark_bytes = static_cast<size_t>(high_watermark_words) * sizeof(StackType_t);
-    size_t peak_usage_bytes = GPS_Recovery_Task_Stack_Size > high_watermark_bytes ? GPS_Recovery_Task_Stack_Size - high_watermark_bytes : 0;
-    size_t suggested_bytes = static_cast<size_t>(static_cast<double>(peak_usage_bytes) * 1.25);
-#if DEBUG_ENABLED
-    ESP_LOGI("gps_recovery_task",
-             "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
-             static_cast<unsigned int>(GPS_Recovery_Task_Stack_Size),
-             static_cast<unsigned int>(high_watermark_bytes),
-             static_cast<unsigned int>(peak_usage_bytes),
-             static_cast<unsigned int>(suggested_bytes));
-#endif
+#if CALCULATE_GNSS_RECOVERY_TASK_STACK_SIZE_ENABLED
+    report_current_task_stack_usage(GNSS_Recovery);
 #endif
 
-    s_gps_recovery_in_progress.store(false);
+    s_gnss_recovery_in_progress.store(false);
     xTaskNotifyGive(sync_task_handle);
     vTaskDelete(nullptr);
 }
@@ -4464,19 +5403,19 @@ static void handle_runtime_sync_failure(const sync_faults_t &faults, time_t upda
     if (failure_count >= Sync_Failures_Before_Runtime_Recovery && (failure_count % Sync_Failures_Before_Runtime_Recovery) == 0)
     {
         int64_t now_us = esp_timer_get_time();
-        int64_t last_recovery_us = s_last_gps_recovery_us.load();
-        bool recovery_due = last_recovery_us == 0 || (now_us - last_recovery_us) >= Runtime_Gps_Recovery_Min_Interval_Us;
+        int64_t last_recovery_us = s_last_gnss_recovery_us.load();
+        bool recovery_due = last_recovery_us == 0 || (now_us - last_recovery_us) >= Runtime_gnss_Recovery_Min_Interval_Us;
 
-        if (recovery_due && !s_gps_recovery_in_progress.exchange(true))
+        if (recovery_due && !s_gnss_recovery_in_progress.exchange(true))
         {
 #if DEBUG_ENABLED
-            ESP_LOGW(TAG, "Runtime GPS recovery attempt after %lu consecutive sync failures.", static_cast<unsigned long>(failure_count));
+            ESP_LOGW(TAG, "Runtime GNSS recovery attempt after %lu consecutive sync failures.", static_cast<unsigned long>(failure_count));
 #endif
-            s_last_gps_recovery_us.store(now_us);
+            s_last_gnss_recovery_us.store(now_us);
             TaskHandle_t sync_task_handle = xTaskGetCurrentTaskHandle();
-            BaseType_t created = xTaskCreatePinnedToCore(gps_runtime_recovery_task,
-                                                         "gps_recovery",
-                                                         GPS_Recovery_Task_Stack_Size,
+            BaseType_t created = xTaskCreatePinnedToCore(gnss_runtime_recovery_task,
+                                                         "gnss_recovery",
+                                                         GNSS_Recovery_Task_Stack_Size,
                                                          sync_task_handle,
                                                          15,
                                                          nullptr,
@@ -4488,9 +5427,9 @@ static void handle_runtime_sync_failure(const sync_faults_t &faults, time_t upda
             }
             else
             {
-                s_gps_recovery_in_progress.store(false);
+                s_gnss_recovery_in_progress.store(false);
 #if DEBUG_ENABLED
-                ESP_LOGE(TAG, "Unable to create the GPS recovery task.");
+                ESP_LOGE(TAG, "Unable to create the GNSS recovery task.");
 #endif
             }
         }
@@ -4499,7 +5438,7 @@ static void handle_runtime_sync_failure(const sync_faults_t &faults, time_t upda
     if (snapshot.last_successful_sync_us > 0 && (esp_timer_get_time() - snapshot.last_successful_sync_us) > Sync_Reboot_After_Us)
     {
 #if DEBUG_ENABLED
-        ESP_LOGE(TAG, "Rebooting after extended holdover without a successful GPS resync.");
+        ESP_LOGE(TAG, "Rebooting after extended holdover without a successful GNSS resync.");
 #endif
         vTaskDelay(pdMS_TO_TICKS(200));
 #if MQTT_ENABLED
@@ -4511,7 +5450,7 @@ static void handle_runtime_sync_failure(const sync_faults_t &faults, time_t upda
     vTaskDelay(pdMS_TO_TICKS(retry_delay_ms));
 }
 
-static void gps_time_sync_task(void *parameter)
+static void gnss_time_sync_task(void *parameter)
 {
     bool first_sync = true;
 
@@ -4652,13 +5591,13 @@ static void gps_time_sync_task(void *parameter)
             format_local_date_time(now_utc, date_string, sizeof(date_string), time_string, sizeof(time_string));
 
             if (candidate.used_nmea_fallback)
-                ESP_LOGI(TAG, "GPS time sync ( using NMEA fallback %s ) on %s at %s", candidate.use_pps_alignment ? "with PPS alignment" : "without PPS alignment", date_string, time_string);
+                ESP_LOGI(TAG, "GNSS time sync ( using NMEA fallback %s ) on %s at %s", candidate.use_pps_alignment ? "with PPS alignment" : "without PPS alignment", date_string, time_string);
             else
-                ESP_LOGI(TAG, "GPS time sync on %s at %s", date_string, time_string);
+                ESP_LOGI(TAG, "GNSS time sync on %s at %s", date_string, time_string);
 #endif
 
             uint32_t refresh_start_ms = millis();
-            uint32_t refresh_interval_ms = periodicGPSRefreshEveryThisNumberOfMinutes * 60UL * 1000UL;
+            uint32_t refresh_interval_ms = periodicGNSSRefreshEveryThisNumberOfMinutes * 60UL * 1000UL;
             int64_t invalid_started_us = 0;
 
             while ((millis() - refresh_start_ms) < refresh_interval_ms)
@@ -4693,60 +5632,26 @@ static void gps_time_sync_task(void *parameter)
             }
         }
 
-#if CALCULATE_GPS_TIME_SYNC_TASK_STACK_SIZE_ENABLED
-
-        // The following code is used to determine the ideal stack size for this method
-        //
-        // NOTE 1: Specific to gps_time_sync_task to get a valid result the code below needed to be running
-        //         with the stack report usage display being examined when gnss task sync happens
-        //
-        // NOTE 2: Results were taken after a minute to allow the numbers to settle in
-        //
-        // NOTE 3: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
-        //
-        // Below is the code that has now already been used to calculate the ideal stack size:
-        //
-
-        // Configured task stack; rerun this measurement after changing sync or recovery handling.
-        const size_t allocated_bytes = GPS_Time_Sync_Task_Stack_Size;
-
-        // high watermark is returned in words
-        UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
-        size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
-
-        // compute peak usage and suggested size (25% margin)
-        size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
-
-        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
-
-        ESP_LOGI("gps_time_sync_task",
-                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
-                 (unsigned)allocated_bytes,
-                 (unsigned)high_watermark_bytes,
-                 (unsigned)peak_usage_bytes,
-                 (unsigned)suggested_bytes);
-
-        // Results of this testing (when a PPS event was underway):
-        // gps_time_sync_task: Stack report: Allocated=22000 bytes, HighWater=20108 bytes unused, PeakUsage=1892 bytes, Suggested=2365 bytes
-
+#if CALCULATE_GNSS_Time_Sync_Task_Stack_Size_ENABLED
+        report_current_task_stack_usage(GNSS_Time_Sync);
 #endif
     }
 }
 
-void setup_the_gps()
+void setup_the_gnss()
 {
 
-    display_line(1, "GPS setup underway");
+    display_line(1, "GNSS setup underway");
     display_line(2, "");
 
     apply_timezone_settings();
 
-    setup_gps();
+    setup_gnss();
 
     display_line(1, "Getting date & time");
     display_line(2, "");
 
-    xTaskCreatePinnedToCore(gps_time_sync_task, "gps_time_sync", GPS_Time_Sync_Task_Stack_Size, nullptr, 15, nullptr, tskNO_AFFINITY);
+    xTaskCreatePinnedToCore(gnss_time_sync_task, "gnss_time_sync", GNSS_Time_Sync_Task_Stack_Size, nullptr, 15, nullptr, tskNO_AFFINITY);
 
     xTaskCreatePinnedToCore(pps_discipline_task, "pps_discipline", PPS_Discipline_Task_Stack_Size, nullptr, 14, nullptr, tskNO_AFFINITY);
 
@@ -4757,6 +5662,8 @@ void setup_the_gps()
     display_line(2, "PPS Disciplined");
 }
 
+// Serves standard IPv6 NTP client requests and returns the device’s current synchronized time.
+// Also servers IPv4 NTP client requests that the IPv4 NTP-related traffic the hardware interception path rejects
 static void ntp_server_task(void *parameter)
 {
     int ipv4_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -4850,9 +5757,6 @@ static void ntp_server_task(void *parameter)
 
     for (;;)
     {
-#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
-        uint32_t raw_ntp_requests = 0;
-#endif
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(ipv4_socket, &read_fds);
@@ -4872,29 +5776,30 @@ static void ntp_server_task(void *parameter)
 #if DEBUG_ENABLED
             ESP_LOGW(TAG, "NTP socket select failed: errno %d", errno);
 #endif
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+            report_current_task_stack_usage(NTP_Server);
+#endif
             continue;
         }
         if (ready == 0)
-        {
-#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
-            raw_ntp_requests = s_ntp_stack_report_requests.exchange(0, std::memory_order_acq_rel);
-            if (raw_ntp_requests == 0)
-                continue;
-#else
             continue;
-#endif
-        }
 
         static uint8_t next_socket = 0;
         const int sockets[] = {ipv4_socket, ipv6_socket, ipv6_link_local_socket};
         const size_t socket_count = sizeof(sockets) / sizeof(sockets[0]);
         uint8_t start_socket = next_socket;
+
         for (size_t offset = 0; offset < socket_count; ++offset)
         {
             size_t index = (start_socket + offset) % socket_count;
             int sock = sockets[index];
             if (sock < 0 || !FD_ISSET(sock, &read_fds))
+            {
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+                report_current_task_stack_usage(NTP_Server);
+#endif
                 continue;
+            }
 
             next_socket = static_cast<uint8_t>((index + 1) % socket_count);
             for (size_t batch_count = 0; batch_count < NTP_SOCKET_BATCH_LIMIT; ++batch_count)
@@ -4908,9 +5813,17 @@ static void ntp_server_task(void *parameter)
                 if (len < 0)
                 {
                     if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    {
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+                        report_current_task_stack_usage(NTP_Server);
+#endif
                         break;
+                    }
 #if DEBUG_ENABLED
                     ESP_LOGW(TAG, "recvfrom failed: errno %d", errno);
+#endif
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+                    report_current_task_stack_usage(NTP_Server);
 #endif
                     break;
                 }
@@ -4920,6 +5833,9 @@ static void ntp_server_task(void *parameter)
                 {
 #if MQTT_ENABLED
                     s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+#endif
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+                    report_current_task_stack_usage(NTP_Server);
 #endif
                     continue;
                 }
@@ -4931,6 +5847,9 @@ static void ntp_server_task(void *parameter)
 #if MQTT_ENABLED
                     s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
 #endif
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+                    report_current_task_stack_usage(NTP_Server);
+#endif
                     continue;
                 }
 
@@ -4939,9 +5858,16 @@ static void ntp_server_task(void *parameter)
                 s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
                 mqtt_enqueue_ntp_request(source_addr);
 #endif
+                const struct sockaddr_in *source_ipv4 = nullptr;
                 const struct in6_addr *client_ipv6 = nullptr;
+                ntp_client_record_t client_ipv4_record{};
                 ntp_client_record_ipv6_t client_ipv6_record{};
-                if (source_addr.ss_family == AF_INET6)
+                if (source_addr.ss_family == AF_INET)
+                {
+                    source_ipv4 = reinterpret_cast<const struct sockaddr_in *>(&source_addr);
+                    ntp_cache_find_or_create(ntohl(source_ipv4->sin_addr.s_addr), ntohs(source_ipv4->sin_port), &client_ipv4_record);
+                }
+                else if (source_addr.ss_family == AF_INET6)
                 {
                     client_ipv6 = &reinterpret_cast<const struct sockaddr_in6 *>(&source_addr)->sin6_addr;
                     ntp_cache_find_or_create_ipv6(client_ipv6,
@@ -4974,14 +5900,25 @@ static void ntp_server_task(void *parameter)
                     (static_cast<uint64_t>(request[42]) << 40) | (static_cast<uint64_t>(request[43]) << 32) |
                     (static_cast<uint64_t>(request[44]) << 24) | (static_cast<uint64_t>(request[45]) << 16) |
                     (static_cast<uint64_t>(request[46]) << 8) | request[47];
-                const bool interleaved_reply = client_ipv6 != nullptr && client_ipv6_record.prev_t2 != 0 &&
-                                               client_receive_timestamp != client_transmit_timestamp &&
-                                               client_origin_timestamp == client_ipv6_record.prev_t2;
+                const uint64_t previous_ipv4_t2 = ((NTP_EPOCH_OFFSET + static_cast<uint64_t>(client_ipv4_record.prev_t2_sec)) << 32) |
+                                                  ((static_cast<uint64_t>(client_ipv4_record.prev_t2_ns) << 32) / 1000000000ULL);
+                const uint64_t previous_ipv4_t3 = ((NTP_EPOCH_OFFSET + static_cast<uint64_t>(client_ipv4_record.prev_t3_sec)) << 32) |
+                                                  ((static_cast<uint64_t>(client_ipv4_record.prev_t3_ns) << 32) / 1000000000ULL);
+                const uint64_t ipv4_t2_difference = client_origin_timestamp >= previous_ipv4_t2
+                                                        ? client_origin_timestamp - previous_ipv4_t2
+                                                        : previous_ipv4_t2 - client_origin_timestamp;
+                const bool ipv4_interleaved_reply = source_ipv4 != nullptr && client_ipv4_record.prev_t2_sec != 0 &&
+                                                    client_receive_timestamp != client_transmit_timestamp &&
+                                                    ipv4_t2_difference <= NTP_CACHE_TIMESTAMP_MATCH_TOLERANCE;
+                const bool ipv6_interleaved_reply = client_ipv6 != nullptr && client_ipv6_record.prev_t2 != 0 &&
+                                                    client_receive_timestamp != client_transmit_timestamp &&
+                                                    client_origin_timestamp == client_ipv6_record.prev_t2;
+                const bool interleaved_reply = ipv4_interleaved_reply || ipv6_interleaved_reply;
                 const uint64_t transmit_time = get_current_time_in_ntp64_format();
                 if (interleaved_reply)
                 {
                     write_ntp_timestamp(reply, 24, client_receive_timestamp);
-                    write_ntp_timestamp(reply, 40, client_ipv6_record.prev_t3);
+                    write_ntp_timestamp(reply, 40, ipv4_interleaved_reply ? previous_ipv4_t3 : client_ipv6_record.prev_t3);
                 }
                 else
                 {
@@ -4989,11 +5926,22 @@ static void ntp_server_task(void *parameter)
                 }
 
                 int sent = sendto(sock, reply, sizeof(reply), 0, reinterpret_cast<struct sockaddr *>(&source_addr), source_addr_len);
-                if (sent == static_cast<int>(sizeof(reply)) && client_ipv6 != nullptr)
+                if (sent == static_cast<int>(sizeof(reply)))
                 {
-                    ntp_cache_update_ipv6(client_ipv6,
-                                          ntohs(reinterpret_cast<const struct sockaddr_in6 *>(&source_addr)->sin6_port),
-                                          receive_time, transmit_time);
+                    if (source_ipv4 != nullptr)
+                    {
+                        ntp_cache_update(ntohl(source_ipv4->sin_addr.s_addr), ntohs(source_ipv4->sin_port),
+                                         static_cast<uint32_t>((receive_time >> 32) - NTP_EPOCH_OFFSET),
+                                         static_cast<uint32_t>((receive_time & 0xFFFFFFFFULL) * 1000000000ULL >> 32),
+                                         static_cast<uint32_t>((transmit_time >> 32) - NTP_EPOCH_OFFSET),
+                                         static_cast<uint32_t>((transmit_time & 0xFFFFFFFFULL) * 1000000000ULL >> 32));
+                    }
+                    else if (client_ipv6 != nullptr)
+                    {
+                        ntp_cache_update_ipv6(client_ipv6,
+                                              ntohs(reinterpret_cast<const struct sockaddr_in6 *>(&source_addr)->sin6_port),
+                                              receive_time, transmit_time);
+                    }
                 }
 #if MQTT_ENABLED
                 if (sent == static_cast<int>(sizeof(reply)))
@@ -5006,54 +5954,268 @@ static void ntp_server_task(void *parameter)
                 if (format_socket_address(source_addr, source_address, sizeof(source_address)))
                     ESP_LOGI(TAG, "NTP -> %s", source_address);
 #endif
-            }
-        }
-
 #if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
-
-        // The following code is used to determine the ideal stack size for this method
-        // it only needs to be setup and run once
-        //
-        // NOTE 1: specific to ntp_server_task, the stack report below will only be issued if an NTP request is received.
-        //
-        // NOTE 2: a NTP stress test should be run when monitoring this task
-        //         for this the open source program (also my me) may be used: https://github.com/roblatour/TimeServerStressTest
-        //         recommended usage: Start a single stress test, for a duration of 5 seconds, with 100 Concurrent requests
-        //         (you may see a higher than normal failure rate, but this will drop when CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED and DEBUG_ENABLED are both disabled)
-        //
-        // NOTE 3: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
-        //
-        // Below is the code that has now already been used to calculate the ideal stack size:
-        //
-
-        // *** Hard‑coded stack size originally used when creating the task (bytes) ***
-        const size_t allocated_bytes = 22000; // <-- set this to the value passed to xTaskCreatePinnedToCore
-
-        // high watermark is returned in words
-        UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
-        size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
-
-        // compute peak usage and suggested size (25% margin)
-        size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
-        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.5); // add 50% for safety
-
-        ESP_LOGI("ntp_server_task",
-                 "Stack report: RawRequests=%lu, Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
-                 static_cast<unsigned long>(raw_ntp_requests),
-                 (unsigned)allocated_bytes,
-                 (unsigned)high_watermark_bytes,
-                 (unsigned)peak_usage_bytes,
-                 (unsigned)suggested_bytes);
-
-        vTaskDelay(pdMS_TO_TICKS(50));
-
-        // Results of this testing:
-        // ntp_server_task: Stack report: Allocated=22000 bytes, HighWater=19784 bytes unused, PeakUsage=2216 bytes, Suggested=3324 bytes
-        // ntp_server_task: Stack report: Allocated=22000 bytes, HighWater=19932 bytes unused, PeakUsage=2068 bytes, Suggested=3102 byte
-
+                report_current_task_stack_usage(NTP_Server);
+#endif
+            }
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+            report_current_task_stack_usage(NTP_Server);
+#endif
+        }
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+        report_current_task_stack_usage(NTP_Server);
 #endif
     }
+#if CALCULATE_NTP_SERVER_TASK_STACK_SIZE_ENABLED
+    report_current_task_stack_usage(NTP_Server);
+#endif
 }
+
+#if STARTUP_HEALTH_TEST_ENABLED
+static constexpr uint32_t Startup_Health_Test_Ready_Timeout_Ms = 30000;
+static constexpr uint32_t Startup_Health_Test_Response_Timeout_Ms = 1000;
+static constexpr uint32_t Startup_Health_Test_Standard_Retries = 3;
+static constexpr uint64_t Startup_Health_Test_Interleaved_Tolerance = (1ULL << 32) * 5ULL / 1000ULL;
+static constexpr uint32_t Startup_Health_Test_Completion_Timeout_Ms = 60000;
+static constexpr size_t Startup_Health_Test_Task_Stack_Size = 4096;
+
+struct startup_health_endpoint_results_t
+{
+    bool ntpv3_standard = false;
+    bool ntpv4_standard = false;
+    bool ntpv4_interleaved = false;
+};
+
+struct startup_health_test_results_t
+{
+    bool prerequisites_ready = false;
+    startup_health_endpoint_results_t ipv4_loopback{};
+    startup_health_endpoint_results_t ipv4_assigned{};
+    startup_health_endpoint_results_t ipv6_loopback{};
+    startup_health_endpoint_results_t ipv6_assigned{};
+};
+
+struct startup_health_exchange_t
+{
+    uint64_t t1 = 0;
+    uint64_t t2 = 0;
+    uint64_t t3 = 0;
+    uint64_t t4 = 0;
+};
+
+static constexpr size_t Startup_Health_Test_Log_Capacity = 64;
+static constexpr size_t Startup_Health_Test_Log_Message_Size = 192;
+
+struct startup_health_log_entry_t
+{
+    esp_log_level_t level = ESP_LOG_INFO;
+    char message[Startup_Health_Test_Log_Message_Size] = "";
+};
+
+static startup_health_test_results_t s_startup_health_test_results{};
+static startup_health_log_entry_t *s_startup_health_test_log = nullptr;
+static size_t s_startup_health_test_log_count = 0;
+static uint32_t s_startup_health_test_number = 0;
+
+static void queue_startup_health_log(esp_log_level_t level, const char *format, ...)
+{
+    if (s_startup_health_test_log == nullptr || s_startup_health_test_log_count >= Startup_Health_Test_Log_Capacity)
+        return;
+
+    startup_health_log_entry_t &entry = s_startup_health_test_log[s_startup_health_test_log_count++];
+    entry.level = level;
+    va_list arguments;
+    va_start(arguments, format);
+    vsnprintf(entry.message, sizeof(entry.message), format, arguments);
+    va_end(arguments);
+}
+
+static void queue_startup_health_test_result(const char *endpoint, const char *test_name, bool passed)
+{
+    ++s_startup_health_test_number;
+    queue_startup_health_log(passed ? ESP_LOG_INFO : ESP_LOG_WARN,
+                             "Health Check %02lu - %s: %s - %s",
+                             static_cast<unsigned long>(s_startup_health_test_number), endpoint, test_name,
+                             passed ? "Passed" : "Failed");
+}
+
+static void flush_startup_health_log()
+{
+    for (size_t index = 0; index < s_startup_health_test_log_count; ++index)
+        ESP_LOG_LEVEL(s_startup_health_test_log[index].level, TAG, "%s", s_startup_health_test_log[index].message);
+    s_startup_health_test_log_count = 0;
+}
+
+static bool receive_startup_health_response(int socket_fd, uint8_t *reply, uint64_t *arrival_time)
+{
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(socket_fd, &read_fds);
+    struct timeval timeout{};
+    timeout.tv_sec = Startup_Health_Test_Response_Timeout_Ms / 1000;
+    timeout.tv_usec = static_cast<suseconds_t>(Startup_Health_Test_Response_Timeout_Ms % 1000) * 1000;
+    if (select(socket_fd + 1, &read_fds, nullptr, nullptr, &timeout) != 1)
+        return false;
+
+    int reply_length = recvfrom(socket_fd, reply, NTP_PACKET_SIZE, 0, nullptr, nullptr);
+    if (reply_length != static_cast<int>(NTP_PACKET_SIZE))
+        return false;
+
+    *arrival_time = get_current_time_in_ntp64_format();
+    return true;
+}
+
+static bool run_standard_startup_health_test(int socket_fd, const struct sockaddr *destination, socklen_t destination_length,
+                                             uint8_t version, startup_health_exchange_t *exchange)
+{
+    uint8_t request[NTP_PACKET_SIZE] = {};
+    uint8_t reply[NTP_PACKET_SIZE] = {};
+    exchange->t1 = get_current_time_in_ntp64_format();
+    request[0] = static_cast<uint8_t>(version << 3) | 3;
+    write_ntp_timestamp(request, 40, exchange->t1);
+
+    for (uint32_t attempt = 0; attempt < Startup_Health_Test_Standard_Retries; ++attempt)
+    {
+        if (sendto(socket_fd, request, sizeof(request), 0, destination, destination_length) != static_cast<int>(sizeof(request)))
+            continue;
+
+        if (!receive_startup_health_response(socket_fd, reply, &exchange->t4))
+            continue;
+
+        if (((reply[0] >> 3) & 0x07) != version || (reply[0] & 0x07) != 4 || read_ntp_timestamp(reply, 24) != exchange->t1)
+            continue;
+
+        exchange->t2 = read_ntp_timestamp(reply, 32);
+        exchange->t3 = read_ntp_timestamp(reply, 40);
+        return exchange->t2 != 0 && exchange->t3 != 0;
+    }
+
+    return false;
+}
+
+static bool run_interleaved_startup_health_test(int socket_fd, const struct sockaddr *destination, socklen_t destination_length,
+                                                uint8_t version, const startup_health_exchange_t &previous_exchange)
+{
+    uint8_t request[NTP_PACKET_SIZE] = {};
+    uint8_t reply[NTP_PACKET_SIZE] = {};
+    uint64_t arrival_time = 0;
+    request[0] = static_cast<uint8_t>(version << 3) | 3;
+    write_ntp_timestamp(request, 24, previous_exchange.t2);
+    write_ntp_timestamp(request, 32, previous_exchange.t4);
+    write_ntp_timestamp(request, 40, previous_exchange.t1);
+
+    if (sendto(socket_fd, request, sizeof(request), 0, destination, destination_length) != static_cast<int>(sizeof(request)) ||
+        !receive_startup_health_response(socket_fd, reply, &arrival_time))
+        return false;
+
+    const uint64_t reply_transmit_time = read_ntp_timestamp(reply, 40);
+    const uint64_t transmit_difference = reply_transmit_time >= previous_exchange.t3
+                                             ? reply_transmit_time - previous_exchange.t3
+                                             : previous_exchange.t3 - reply_transmit_time;
+    return ((reply[0] >> 3) & 0x07) == version && (reply[0] & 0x07) == 4 &&
+           read_ntp_timestamp(reply, 24) == previous_exchange.t4 &&
+           transmit_difference <= Startup_Health_Test_Interleaved_Tolerance;
+}
+
+static startup_health_endpoint_results_t run_startup_health_endpoint_test(const char *name, const struct sockaddr *destination,
+                                                                          socklen_t destination_length, sa_family_t family)
+{
+    startup_health_endpoint_results_t results{};
+    int socket_fd = socket(family, SOCK_DGRAM, IPPROTO_UDP);
+    if (socket_fd < 0)
+    {
+        queue_startup_health_log(ESP_LOG_WARN, "Health Check %s: unable to create socket: errno %d", name, errno);
+        queue_startup_health_test_result(name, "NTPv3 standard    ", false);
+        queue_startup_health_test_result(name, "NTPv4 standard    ", false);
+        queue_startup_health_test_result(name, "NTPv4 interleaved ", false);
+        return results;
+    }
+
+    startup_health_exchange_t ntpv3_exchange{};
+    startup_health_exchange_t ntpv4_exchange{};
+    results.ntpv3_standard = run_standard_startup_health_test(socket_fd, destination, destination_length, 3, &ntpv3_exchange);
+    results.ntpv4_standard = run_standard_startup_health_test(socket_fd, destination, destination_length, 4, &ntpv4_exchange);
+    if (results.ntpv4_standard)
+        results.ntpv4_interleaved = run_interleaved_startup_health_test(socket_fd, destination, destination_length, 4, ntpv4_exchange);
+
+    closesocket(socket_fd);
+    queue_startup_health_test_result(name, "NTPv3 standard    ", results.ntpv3_standard);
+    queue_startup_health_test_result(name, "NTPv4 standard    ", results.ntpv4_standard);
+    queue_startup_health_test_result(name, "NTPv4 interleaved ", results.ntpv4_interleaved);
+    return results;
+}
+
+static startup_health_test_results_t run_startup_health_tests()
+{
+    startup_health_test_results_t results{};
+    const EventBits_t ready_bits = ETH_CONNECTED_BIT | ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT;
+    const EventBits_t ready = xEventGroupWaitBits(s_net_event_group, ready_bits, pdFALSE, pdTRUE,
+                                                  pdMS_TO_TICKS(Startup_Health_Test_Ready_Timeout_Ms));
+    if ((ready & ready_bits) != ready_bits || !s_time_has_been_set.load(std::memory_order_acquire) ||
+        !s_pps_discipline_active.load(std::memory_order_acquire))
+    {
+        queue_startup_health_log(ESP_LOG_ERROR, "Health Check prerequisites were not ready before timeout");
+        return results;
+    }
+
+    results.prerequisites_ready = true;
+    struct sockaddr_in ipv4_loopback{};
+    ipv4_loopback.sin_family = AF_INET;
+    ipv4_loopback.sin_port = htons(NTP_PORT);
+    ipv4_loopback.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    results.ipv4_loopback = run_startup_health_endpoint_test("IPv4 loopback", reinterpret_cast<const struct sockaddr *>(&ipv4_loopback), sizeof(ipv4_loopback), AF_INET);
+
+    struct sockaddr_in ipv4_assigned{};
+    ipv4_assigned.sin_family = AF_INET;
+    ipv4_assigned.sin_port = htons(NTP_PORT);
+    if (inet_pton(AF_INET, s_ipv4_address, &ipv4_assigned.sin_addr) == 1)
+        results.ipv4_assigned = run_startup_health_endpoint_test("IPv4 assigned", reinterpret_cast<const struct sockaddr *>(&ipv4_assigned), sizeof(ipv4_assigned), AF_INET);
+    else
+        queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv4 assigned: invalid address");
+
+    struct sockaddr_in6 ipv6_loopback{};
+    ipv6_loopback.sin6_family = AF_INET6;
+    ipv6_loopback.sin6_port = htons(NTP_PORT);
+    if (inet_pton(AF_INET6, "::1", &ipv6_loopback.sin6_addr) != 1)
+    {
+        queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv6 loopback: unable to initialize address");
+        return results;
+    }
+    results.ipv6_loopback = run_startup_health_endpoint_test("IPv6 loopback", reinterpret_cast<const struct sockaddr *>(&ipv6_loopback), sizeof(ipv6_loopback), AF_INET6);
+
+    struct sockaddr_in6 ipv6_assigned{};
+    ipv6_assigned.sin6_family = AF_INET6;
+    ipv6_assigned.sin6_port = htons(NTP_PORT);
+    ipv6_assigned.sin6_scope_id = esp_netif_get_netif_impl_index(ETH.netif());
+    if (inet_pton(AF_INET6, s_ipv6_address, &ipv6_assigned.sin6_addr) == 1)
+        results.ipv6_assigned = run_startup_health_endpoint_test("IPv6 assigned", reinterpret_cast<const struct sockaddr *>(&ipv6_assigned), sizeof(ipv6_assigned), AF_INET6);
+    else
+        queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv6 assigned: invalid address");
+
+    return results;
+}
+
+static void startup_health_test_task(void *parameter)
+{
+    s_startup_health_test_log = static_cast<startup_health_log_entry_t *>(calloc(Startup_Health_Test_Log_Capacity, sizeof(startup_health_log_entry_t)));
+    if (s_startup_health_test_log == nullptr)
+    {
+        ESP_LOGE(TAG, "Health Check could not allocate its log buffer");
+        xTaskNotifyGive(static_cast<TaskHandle_t>(parameter));
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    queue_startup_health_log(ESP_LOG_INFO, "Health Check started");
+    s_startup_health_test_results = run_startup_health_tests();
+    queue_startup_health_log(ESP_LOG_INFO, "Health Check %s", s_startup_health_test_results.prerequisites_ready ? "completed" : "failed before testing");
+    flush_startup_health_log();
+    free(s_startup_health_test_log);
+    s_startup_health_test_log = nullptr;
+    xTaskNotifyGive(static_cast<TaskHandle_t>(parameter));
+    vTaskDelete(nullptr);
+}
+#endif
 
 static void update_display_task(void *parameter)
 
@@ -5115,7 +6277,7 @@ static void update_display_task(void *parameter)
 
             // Regarding: sync_snapshot.holdover_mode
             // In timekeeping terminology, holdover is the state where a time server continues providing time from its internal
-            // oscillator after losing its external reference (in this case, GNSS/GPS). The device is no longer actively
+            // oscillator after losing its external reference (in this case the GNSS). The device is no longer actively
             // synchronized but is "coasting" on its last-known good time.
             // Holdover mode is not expressly reported on the LCD's top line as it is implied when
             // Sanity check mismatch, PPS missing, GNSS missing or invalid, GNSS snyc stale, or GNSS unlocked
@@ -5143,7 +6305,7 @@ static void update_display_task(void *parameter)
                 {
                     required_top_line_message = 5;
                 }
-                else if (sync_snapshot.faults.gps_invalid)
+                else if (sync_snapshot.faults.gnss_invalid)
                 {
                     required_top_line_message = 6;
                 }
@@ -5227,35 +6389,7 @@ static void update_display_task(void *parameter)
         vTaskDelay(pdMS_TO_TICKS(50));
 
 #if CALCULATE_UPDATE_DISPLAY_TASK_STACK_SIZE_ENABLED
-
-        // The following code is used to determine the ideal stack size for this method
-        // it only needs to be setup and run once
-        //
-        // NOTE 1: if in the future this program changes significantly the suggested stack size value generated in this testing may need to be redone
-        //
-        // Below is the code that has now already been used to calculate the ideal stack size:
-
-        // *** Hard‑coded stack size originally used when creating the task (bytes) ***
-        const size_t allocated_bytes = 22000; // <-- set this to the value passed to xTaskCreatePinnedToCore
-
-        // high watermark is returned in words
-        UBaseType_t high_watermark_words = uxTaskGetStackHighWaterMark(NULL);
-        size_t high_watermark_bytes = (size_t)high_watermark_words * sizeof(StackType_t);
-
-        // compute peak usage and suggested size (25% margin)
-        size_t peak_usage_bytes = (allocated_bytes > high_watermark_bytes) ? (allocated_bytes - high_watermark_bytes) : 0;
-        size_t suggested_bytes = (size_t)((double)peak_usage_bytes * 1.25);
-
-        ESP_LOGI("update_display_task",
-                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
-                 (unsigned)allocated_bytes,
-                 (unsigned)high_watermark_bytes,
-                 (unsigned)peak_usage_bytes,
-                 (unsigned)suggested_bytes);
-
-        // Results of this testing:
-        // update_display_task: Stack report: Allocated=22000 bytes, HighWater=20032 bytes unused, PeakUsage=1968 bytes, Suggested=2460 bytes
-
+        report_current_task_stack_usage(Update_Display);
 #endif
     }
 #else
@@ -5291,13 +6425,25 @@ extern "C" void app_main()
 
     setup_for_ote_updates();
 
-    setup_the_gps();
+    setup_the_gnss();
 
     setup_mqtt();
 
-    xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", 3102, nullptr, 20, nullptr, tskNO_AFFINITY);
+    xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", NTP_Server_Task_Stack_Size, nullptr, 20, nullptr, tskNO_AFFINITY);
 
-    xTaskCreatePinnedToCore(update_display_task, "display_service", 2750, nullptr, 10, nullptr, tskNO_AFFINITY);
+#if STARTUP_HEALTH_TEST_ENABLED
+    if (xTaskCreatePinnedToCore(startup_health_test_task, "startup_health", Startup_Health_Test_Task_Stack_Size,
+                                xTaskGetCurrentTaskHandle(), 5, nullptr, tskNO_AFFINITY) != pdPASS)
+    {
+        ESP_LOGE(TAG, "Health Check could not start");
+    }
+    else if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(Startup_Health_Test_Completion_Timeout_Ms)) == 0)
+    {
+        ESP_LOGW(TAG, "Health Check did not complete before the startup timeout");
+    }
+#endif
+
+    xTaskCreatePinnedToCore(update_display_task, "display_service", Update_Display_Task_Stack_Size, nullptr, 10, nullptr, tskNO_AFFINITY);
 
     write_open_for_business_messages_to_the_console();
 }

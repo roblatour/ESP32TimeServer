@@ -1,7 +1,11 @@
+// ESP32 Time Server 
+// Copyright Rob Latour, 2026
+// License: MIT
+// Website: https://github.com/roblatour/ESP32TimeServer
+//
+
 #include "ntp_cache.h"
-
 #include <string.h>
-
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -24,6 +28,15 @@ bool ntp_cache_init(void)
     }
     s_mutex = xSemaphoreCreateMutex();
     return s_mutex != NULL;
+}
+
+void ntp_cache_deinit(void)
+{
+    if (s_mutex != NULL)
+    {
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+    }
 }
 
 bool ntp_cache_find_or_create(uint32_t ip, uint16_t port, ntp_client_record_t *record)
@@ -74,29 +87,51 @@ bool ntp_cache_find_or_create(uint32_t ip, uint16_t port, ntp_client_record_t *r
 
 bool ntp_cache_update(uint32_t ip, uint16_t port, uint32_t t2_sec, uint32_t t2_ns, uint32_t t3_sec, uint32_t t3_ns)
 {
-    ntp_client_record_t record;
-    if (!ntp_cache_find_or_create(ip, port, &record) || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE)
+    if (s_mutex == NULL || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE)
     {
         return false;
     }
+
+    const int64_t now_ms = current_time_ms();
+    size_t selected = 0;
+    bool found = false;
+    int64_t oldest_ms = INT64_MAX;
 
     for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV4; ++i)
     {
         if (s_ipv4_records[i].is_active && s_ipv4_records[i].client_ip == ip)
         {
-            s_ipv4_records[i].client_port = port;
-            s_ipv4_records[i].prev_t2_sec = t2_sec;
-            s_ipv4_records[i].prev_t2_ns = t2_ns;
-            s_ipv4_records[i].prev_t3_sec = t3_sec;
-            s_ipv4_records[i].prev_t3_ns = t3_ns;
-            s_ipv4_records[i].last_seen_ms = current_time_ms();
-            xSemaphoreGive(s_mutex);
-            return true;
+            selected = i;
+            found = true;
+            break;
+        }
+        if (!s_ipv4_records[i].is_active)
+        {
+            selected = i;
+            oldest_ms = INT64_MIN;
+        }
+        else if (oldest_ms != INT64_MIN && s_ipv4_records[i].last_seen_ms < oldest_ms)
+        {
+            selected = i;
+            oldest_ms = s_ipv4_records[i].last_seen_ms;
         }
     }
 
+    if (!found)
+    {
+        memset(&s_ipv4_records[selected], 0, sizeof(s_ipv4_records[selected]));
+        s_ipv4_records[selected].client_ip = ip;
+        s_ipv4_records[selected].is_active = true;
+    }
+
+    s_ipv4_records[selected].client_port = port;
+    s_ipv4_records[selected].prev_t2_sec = t2_sec;
+    s_ipv4_records[selected].prev_t2_ns = t2_ns;
+    s_ipv4_records[selected].prev_t3_sec = t3_sec;
+    s_ipv4_records[selected].prev_t3_ns = t3_ns;
+    s_ipv4_records[selected].last_seen_ms = now_ms;
     xSemaphoreGive(s_mutex);
-    return false;
+    return true;
 }
 
 bool ntp_cache_find_or_create_ipv6(const struct in6_addr *ip, uint16_t port, ntp_client_record_ipv6_t *record)
@@ -194,14 +229,4 @@ void ntp_cache_purge_expired(void)
         }
     }
     xSemaphoreGive(s_mutex);
-}
-
-void ntp_cache_purge_task(void *parameter)
-{
-    (void)parameter;
-    for (;;)
-    {
-        vTaskDelay(pdMS_TO_TICKS(60000));
-        ntp_cache_purge_expired();
-    }
 }

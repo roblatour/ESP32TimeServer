@@ -1,3 +1,9 @@
+// ESP32 Time Server  
+// Copyright Rob Latour, 2026
+// License: MIT
+// Website: https://github.com/roblatour/ESP32TimeServer
+//
+
 #include "app_metadata.h"
 
 static const app_metadata_t metadata = {

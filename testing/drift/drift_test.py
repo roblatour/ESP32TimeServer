@@ -14,9 +14,9 @@ import sys
 External_Pool_1 = "time.nrc.ca"
 External_Pool_2 = "0.ca.pool.ntp.org"
 ESP32TimerServer_master = "192.168.7.24"
-ESP32TimeServer_reference = "192.168.1.24"
-overall_report_duration_minutes = 120
-number_of_test_series = 4
+ESP32TimeServer_reference = "192.168.1.214"
+overall_report_duration_minutes = 180
+number_of_test_series = 6
 
 # Function to check if a value is a valid integer
 def is_valid_integer(value):
