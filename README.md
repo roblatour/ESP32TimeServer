@@ -70,7 +70,7 @@ A full write-up of the original (version 1) project is available on
 - **TF card support** — (version 2.6) enabling queueing of vastly greater
   amounts of MQTT reporting data should broker communications be lost
 - **Home Assistant** - (version 2.6) added Home Assistant entity and 
-  dashboard setup instructions [here](./Homeassistant/README.md).
+  dashboard setup instructions [here](https://github.com/roblatour/ESP32TimeServer/blob/main/HomeAssistant/README.md).
 - **Improved accuracy** - (version 2.7) greater accuracy setting the 
   precise time every second.
 - **Improved throughput** - (versions 2.7 & 2.8) increased maximum 
