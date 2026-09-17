@@ -31,8 +31,8 @@ A full write-up of the original (version 1) project is available on
   of the Olimex ESP32-PoE-ISO. The ESP32-P4 is more modern and faster than the
   ESP32-WROOM-32/32E used in v1.
 
-  Also (as of version 2.9) the [ESP32-P4-WIFI6-POE-ETH](https://www.waveshare.com/esp32-p4-wifi6-poe-eth.htm?sku=32832) 
-  is supported. The WaveShare ESP32-P4-WIFI6-POE-ETH uses an ESP32-P4 v3.2 chip, 
+  Also (as of version 2.9) the [ESP32-P4-WIFI6-ETH](https://www.waveshare.com/esp32-p4-wifi6-poe-eth.htm?sku=32832) 
+  is supported. The WaveShare ESP32-P4-WIFI6-ETH uses an ESP32-P4 v3.2 chip, 
   while the WaveShare ESP32-P4-ETH uses a ESP32-P4 v1.3 chip. Although the 1.3 
   chip works very well for this project it is not recommended by Espressif for
   new designs. The v3.2 chip works even better for this project, 
@@ -116,11 +116,11 @@ A full write-up of the original (version 1) project is available on
 
 
 
-> ⚠️ **WARNING — Do NOT power the ESP32-P4-ETH via both its USB-C connector and
-> a PoE powered Ethernet cable at the same time.** Powering from both
-> simultaneously may damage the ESP32-P4-ETH board, POE switch, or device
-> providing USB power. Either power source alone is sufficient to power the
-> board, GPS module, and LCD screen.
+> ⚠️ **WARNING — Do NOT power the ESP32-P4-POE-ETH or the ESP32-P4-WIFI6-POE-ETH
+> via both its USB-C connector and a PoE powered Ethernet cable at the same time.**
+> Powering from both simultaneously may damage the ESP32-P4-ETH board, POE switch,
+> or device providing USB power. Either power source alone is sufficient to
+> power the board, GPS module, and LCD screen.
 
 <sup>1</sup> See notes in the 'What's New in Version 2' section above.
 
