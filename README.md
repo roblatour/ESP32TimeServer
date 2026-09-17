@@ -144,9 +144,10 @@ that folder for more information.
 | TXD     | GPIO 21 (RX)     |
 | RXD     | GPIO 22 (TX)     |
 
-**Hint:**
-
-A small capacitor between VCC and GND very close to the GPS module pins increases stability and can decrease startup time.
+**Pro Tip:** (Optionally) Adding a capacitor between the GNSS module's Vcc and GND power pins,
+placed as close as possible to those pins, can improve GNSS power supply stability. Use a
+100nf (aka 0.1μf, aka 104) ceramic capacitor, rated at least 50v, 
+such as [this one](https://www.aliexpress.com/item/1005004469852680.html).
 
 **Important:**
  
