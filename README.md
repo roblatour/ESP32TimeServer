@@ -228,6 +228,9 @@ Here is where you can find more information about them and get your copies:
 - **[Visual Studio Code](https://code.visualstudio.com/)**
 - **[Espressif ESP-IDF Extension for VS Code](https://marketplace.visualstudio.com/items?itemName=espressif.esp-idf-extension)**
 
+#### **For Linux users:**
+A kind user of this project has shared more detailed environment setup, build and flash instructions specific to Linux (Debian 13) - these can be found [here](/Linux_specific_setup_instructions.md)
+
 
 ### Dependencies
 
