@@ -1,4 +1,4 @@
-## Setup - **Linux (Debian)**
+## Setup - **Linux (Debian 13)**
 
 **Setup Step 0 - Prerequisites**
 
