@@ -863,7 +863,7 @@ entities:
     name: Last synchronized & disciplined
     icon: mdi:update
   - entity: sensor.last_gnss_unsynchronized_formatted
-    name: last gnss unsynchronized
+    name: Last GNSS unsynchronized
     icon: mdi:update
   - entity: sensor.last_pps_undisciplined_formatted
     name: Last PPS undisciplined
