@@ -94,7 +94,7 @@ For ESP32-P4 modules at revision 3.1 and above (including the WaveShare ESP32-P4
 
 Before you can flash the ESP32, you need to find out what port Linux knows it as.  /dev/ttyACM0 is generally a good assumption, but it is also easy to find.  Look in the /dev directory for devices that are in the dialout group.  Devices that start with ttyS are serial ports, you probably do not want those.  This example is from my system:
 ```
-**ls -al /dev | grep -i dialout**
+ls -al /dev | grep -i dialout
 
 crw-rw----   1 root dialout 166,     0 Sep 15 21:34 ttyACM0
 crw-rw----   1 root dialout   4,    64 Sep 13 22:03 ttyS0
