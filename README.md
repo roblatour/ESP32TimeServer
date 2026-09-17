@@ -201,7 +201,7 @@ can tweak the design to suit your needs.
 
 ## Software
 
-### Build and development Environment
+### Build and development environment
 
 
 **To build and flash ESP32TimeServer** you will need **Espressif's ESP-IDF v6.1** or above. 
