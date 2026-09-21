@@ -152,6 +152,13 @@ then you may be able to use the old pin specifications if you want to avoid
 rewiring your project. Please see the ESP32TimeServerSettings.h file for more
 information.
 
+#### Up time / Reset button → ESP32-P4-ETH _(optional)_
+
+| Button             | ESP32-P4-ETH pin |
+| ------------------ | ---------------- |
+| One terminal       | GND              |
+| The other terminal | GPIO 3           |
+
 
 #### RGB LED (PY-016) _(optional)_
 
@@ -168,15 +175,8 @@ information.
 | ------- | ---------------- |
 | GND     | GND              |
 | VCC     | 3V3              |
-| SDA     | GPIO 8           |
 | SLC/SCL | GPIO 7           |
-
-#### Up time / Reset button → ESP32-P4-ETH _(optional)_
-
-| Button             | ESP32-P4-ETH pin |
-| ------------------ | ---------------- |
-| One terminal       | GND              |
-| The other terminal | GPIO 3           |
+| SDA     | GPIO 8           |
 
 Refer to the pin definitions in
 [`main/ESP32TimeServerSettings.h`](./main/ESP32TimeServerSettings.h).
