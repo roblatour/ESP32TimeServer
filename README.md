@@ -152,6 +152,16 @@ then you may be able to use the old pin specifications if you want to avoid
 rewiring your project. Please see the ESP32TimeServerSettings.h file for more
 information.
 
+
+#### RGB LED (PY-016) _(optional)_
+
+| LCD pin | ESP32-P4-ETH pin |
+| ------- | ---------------- |
+| GND     | GND              |
+| BLUE    | GPIO 4           |
+| GREEN   | GPIO 5           |
+| RED     | GPIO 6           |
+
 #### LCD 2004 (HD44780 + PCF8574 I²C backpack) → ESP32-P4-ETH _(optional)_
 
 | LCD pin | ESP32-P4-ETH pin |
