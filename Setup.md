@@ -168,6 +168,8 @@ Server:
 
    ```cmd
    net stop ntpd
+   ```
+   ```cmd
    net start ntpd
    ```
 
