@@ -233,10 +233,11 @@ distros) or a full `ntpd` / `chrony` installation.
    ```bash
    # Debian / Ubuntu
    sudo apt install chrony
-
+   ```
+   ```bash
    # Fedora / RHEL / CentOS
    sudo dnf install chrony
-   ```
+  ```
 
 2. Edit the chrony configuration:
 
@@ -260,6 +261,8 @@ distros) or a full `ntpd` / `chrony` installation.
 
    ```bash
    chronyc tracking
+   ```
+   ```bash
    chronyc sources -v
    ```
 
@@ -273,7 +276,8 @@ distros) or a full `ntpd` / `chrony` installation.
    ```bash
    # Debian / Ubuntu
    sudo apt install ntp
-
+   ```
+   ```bash
    # Fedora / RHEL / CentOS
    sudo dnf install ntp
    ```
@@ -338,10 +342,12 @@ You can also configure the NTP server from the terminal:
 ```bash
 # Set the NTP server
 sudo systemsetup -setnetworktimeserver 192.168.1.50
-
+```
+```bash 
 # Enable network time sync
 sudo systemsetup -setusingnetworktime on
-
+```
+```bash
 # Verify
 sudo systemsetup -getnetworktimeserver
 ```
