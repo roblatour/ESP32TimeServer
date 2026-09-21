@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 2.9)
+# ESP32 NTP Stratum 1 Time Server (version 2.9.1)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -26,72 +26,53 @@ A full write-up of the original (version 1) project is available on
 
 ## What's New in [Version 2](https://github.com/roblatour/ESP32TimeServer/releases)
 
-- **New microcontroller board** — built around the
-  [WaveShare ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm) instead
-  of the Olimex ESP32-PoE-ISO. The ESP32-P4 is more modern and faster than the
-  ESP32-WROOM-32/32E used in v1.
+Version 2 is a ground-up rewrite that brings a faster, more capable board and
+a long list of accuracy, reliability, and convenience improvements over
+version 1:
 
-  Also (as of version 2.9) the [ESP32-P4-WIFI6-ETH](https://www.waveshare.com/esp32-p4-wifi6-poe-eth.htm?sku=32832) 
-  is supported. The WaveShare ESP32-P4-WIFI6-ETH uses an ESP32-P4 v3.2 chip, 
-  while the WaveShare ESP32-P4-ETH uses a ESP32-P4 v1.3 chip. Although the 1.3 
-  chip works very well for this project it is not recommended by Espressif for
-  new designs. The v3.2 chip works even better for this project, 
-  but in ways unlikely to be a differentiator for most homelabs.   
-- **More accurate NTP responses** — PPS (Pulse Per Second) pin support is now
-  fully exploited to discipline the time reference, delivering sub-millisecond
-  accuracy when using a PPS-capable GPS module.
-- **Over-the-Ethernet OTA updates** — firmware can now be updated over the
-  Ethernet connection directly from VS Code, with on-screen progress shown on
-  the LCD.
-- **LCD is now optional** — in v1 an LCD 2004 screen was required; in v2 it is
-  entirely optional.
-- **Optional up time / reset button** — carry-over from v1, still supported.
-- **Updated 3D printed case** — the enclosure files have been updated for the
-  new WaveShare ESP32-P4-ETH board.
-- **Built with ESP-IDF** — rewritten from the ground up in C++ on ESP-IDF.
-- **NVS-backed GPS state** — the GPS module identity and baud rate are persisted
-  across reboots so following the initial setup startup speed is quick.
-- **Broader GNSS module support** — still works great with the SparkFun MAX-M10S
-  (recommended), but now also supports lower-cost, generic GNSS modules, even
-  those (although not recommended) that do not expose a PPS pin.
-- **Ability to set a custom MAC Address** — (version 2.2) allows the use of the
-  default ESP32-P4's MAC address or for a custom MAC address to be set.
-- **Ability to set a Static IP Address** — (version 2.3) allows the use of a
-  DHCP assigned or static IP address.
-- **Handles greater throughput and number of concurrent requests** - (progressively 
-  through versions 2.4, 2.7, 2.8, and 2.9).  
-- **IPv6 support** - (version 2.5) IPv6 support has been added.
-- **MQTT publishing** — (version 2.5) optional MQTT publishing of time server
-  stats is now available. For more information see
-  [misc/esp32timeserver_json_doc.md](misc/esp32timeserver_json_doc.md)
-- **Improved GNSS Satellite lock and PPS discipline tracking and recovery** -
-  (version 2.5) with returned results being tagged as Stratum 16 (undefined)
-  until a lost lock and/or failed PPS discipline is recovered.
-- **TF card support** — (version 2.6) enabling queueing of vastly greater
-  amounts of MQTT reporting data should broker communications be lost
-- **Home Assistant** - (version 2.6) added Home Assistant entity and 
-  dashboard setup instructions [here](https://github.com/roblatour/ESP32TimeServer/blob/main/HomeAssistant/README.md).
-- **Improved accuracy** - (version 2.7) greater accuracy setting the 
-  precise time every second.
-- **Improved throughput** - (versions 2.7 & 2.8) increased maximum 
-  requests per second.
-- **Support for RFC 9769-compatible interleaved responses** - (version 2.8)
-  for NTPv4 requests over IPv4 and IPv6.
-- **Hardware time stamping** (version 2.8) added for both NTPv3 and NTPv4 
-  requests over IPv4 and (version 2.9) IPv6. This drastically reduces jitter
-  (the variation in successive clock offset measurements) between a client
-  and server using RFC 9769-compliant NTP requests.
-- **Testing instructions, tools, and links added** - (versions 2.8) added
-  instructions, tools, and links for determining / testing: jitter,
-  drift, RFC 9769 compliance, memory, and server performance under stress.  
-- **(optional) Startup Health Check** - (version 2.9) allowing the program 
-  to selftest its core functionality at startup.
-- **Experimental support for non UBlox compliant GNSS receivers** - (version 
-  2.9) working with the [GT-U16](https://www.aliexpress.com/item/1005008288311771.html)
-  which has better reception than some other receivers at the same, or higher, price points
-  (see release notes for more information).
-- **WaveShare's ESP32-P4-WIFI6-POE-ETH (ESP32-P4 v3.2 chip)** (version 2.9) fully
-  tested and working exceptionally well.
+- **Higher accuracy, lower jitter** — full use of the GPS module's PPS
+  (Pulse Per Second) pin disciplines the clock for sub-millisecond accuracy,
+  with hardware time stamping and RFC 9769-compatible interleaved responses
+  further reducing jitter for both NTPv3 and NTPv4 requests.
+- **Faster, more modern hardware** — built around the WaveShare ESP32-P4-ETH
+  (or the newer ESP32-P4-WIFI6-ETH), a significant step up from the
+  ESP32-WROOM-32/32E used in v1.
+- **Broader GNSS module support** — still works great with the recommended
+  SparkFun MAX-M10S, but also supports lower-cost generic GNSS modules and now
+  has experimental support for the GT-U16, which offers better reception than
+  some competing receivers at the same or higher price points.
+- **Wireless firmware updates** — Over-the-Ethernet OTA updates let you push
+  new firmware directly from VS Code, with on-screen progress shown on the
+  LCD, so you rarely need to plug in a cable after the first flash.
+- **Handles more traffic** — greatly increased throughput and concurrent
+  request handling, so the server keeps up even on busy networks.
+- **IPv6 support** — the server now responds to NTP requests over IPv6 as
+  well as IPv4.
+- **Flexible networking** — set a custom MAC address or a static IP, instead
+  of always relying on the device's default address and DHCP.
+- **Optional LCD support** — a 4x20 LCD screen was required in v1; 
+  in v2 it's entirely optional, along with an optional up time / reset button.
+- **Optional RGB LED support added** — [here](misc/flashing_lights.md)
+  is how that is used.
+- **Smart GNSS lock tracking** — improved satellite lock and PPS discipline
+  tracking, with results correctly reported as Stratum 16 (undefined) if lock
+  or discipline is temporarily lost, and automatic recovery once it's
+  restored.
+- **Quick restarts** — GPS module identity and baud rate are saved to
+  non-volatile storage, so the server starts up quickly after the initial
+  setup.
+- **MQTT publishing** — optionally publish time server stats to an MQTT
+  broker, with TF card support for queueing far more messages if the broker
+  connection drops.
+- **Home Assistant integration** — ready-made entity and dashboard setup
+  instructions for pulling time server stats into Home Assistant.
+- **Built-in self-test** — an optional startup health check lets the server
+  verify its own core functionality every time it boots.
+- **Testing tools and guidance** — instructions, tools, and links for
+  measuring jitter, drift, RFC 9769 compliance, memory usage, and server
+  performance under stress.
+- **Updated 3D printed case** — enclosure files refreshed for the new
+  WaveShare ESP32-P4-ETH board.
 
 > The source code for **Version 1** (Arduino / PlatformIO) remains available at:
 > [https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0)
@@ -102,17 +83,18 @@ A full write-up of the original (version 1) project is available on
 
 
 
-| Qty | Item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | WaveShare [ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm?sku=32086) or [ESP32-P4-WIFI6-ETH](https://www.waveshare.com/esp32-p4-wifi6-poe-eth.htm?sku=32832) development board (with or without optional PoE) <sup>1 2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 1   | GPS/GNSS module [Recommended: SparkFun GNSS Receiver Breakout - MAX-M10S (Qwiic)](https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html) <sup>2</sup>. Additionally, experimental support for the [GT U16](https://www.aliexpress.com/item/1005008288311771.html) has been added in version 2.9 - this receiver offers superior reception when coupled with the right antenna (see notes below).  Additionally, while some lower-cost generic modules UBlox compliant receivers are supported, those without a PPS pin are no longer supported. |
-| 1   | GPS/GNSS antenna with SMA connector ([SparkFun GPS/GNSS Magnetic Mount Antenna - 3m (SMA)](https://www.sparkfun.com/products/14986)) <sup>2</sup>. Alternatively the GT U16 with an L1/L5 antenna offers superior reception.  However, in my testing I used the [3M SMA W70C](https://www.aliexpress.com/item/1005008421771962.html?spm=a2g0o.order_list.order_list_main.11.7a7f1802GCXbvZ) L1/L2/L5 antenna an [IPEX to SMA adapter](https://www.aliexpress.com/item/1005009047225776.html) and got very good results (I have the antenna bundled with the GT U16 (link above) on order and when I get it and test it I will update this page).                                                            |
-| 1   | _(Optional)_ TF Card, formatted as FAT32, if you're using MQTT and want more than four messages queued should broker communications be down) <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 1   | _(Optional)_ 4×20 I²C LCD display with HD44780 controller with PCF8574 I²C backpack ([AliExpress](https://www.aliexpress.com/item/1005006829045609.html)) <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 1   | _(Optional)_ Momentary push button for displaying up time and triggering a reset ([AliExpress](https://www.aliexpress.com/item/1005004066257419.html)) <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 1   | _(Optional)_ USB C extension cable (with right angle end) ([AliExpress](https://www.aliexpress.com/item/1005006584965187.html)) <sup>2</sup> + two M3*8                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| —   | Miscellaneous: Ethernet cable, female dupont connection wires, small 4" .1" zip ties, solder <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| —   | A PoE-capable switch, PoE injector, **or** USB-C power supply and USB-C cable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Qty | Item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | WaveShare [ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm?sku=32086) or [ESP32-P4-WIFI6-ETH](https://www.waveshare.com/esp32-p4-wifi6-poe-eth.htm?sku=32832) development board (with or without optional PoE) <sup>1 2</sup>                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 1   | GPS/GNSS module [Recommended: SparkFun GNSS Receiver Breakout - MAX-M10S (Qwiic)](https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html) <sup>2</sup>. Additionally, experimental support for the [GT U16](https://www.aliexpress.com/item/1005008288311771.html) has been added in version 2.9 - this receiver offers superior reception when coupled with the right antenna (see notes below).  Additionally, while some lower-cost generic modules UBlox compliant receivers are supported, those without a PPS pin are no longer supported.                                                                           |
+| 1   | GPS/GNSS antenna with SMA connector ([SparkFun GPS/GNSS Magnetic Mount Antenna - 3m (SMA)](https://www.sparkfun.com/products/14986)) <sup>2</sup>. Alternatively the GT U16 with an L1/L5 antenna offers superior reception.  However, in my testing I used the [3M SMA W70C](https://www.aliexpress.com/item/1005008421771962.html?spm=a2g0o.order_list.order_list_main.11.7a7f1802GCXbvZ) L1/L2/L5 antenna an [IPEX to SMA adapter](https://www.aliexpress.com/item/1005009047225776.html) and got very good results (I have the antenna bundled with the GT U16 (link above) on order and when I get it and test it I will update this page). |
+| 1   | _(Optional)_ TF Card, formatted as FAT32, if you're using MQTT and want more than four messages queued should broker communications be down) <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1   | _(Optional)_ RGB LED (KY-016) ([AliExpress](https://www.aliexpress.com/item/32763280158.html))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1   | _(Optional)_ 4×20 I²C LCD display with HD44780 controller with PCF8574 I²C backpack ([AliExpress](https://www.aliexpress.com/item/1005006829045609.html)) <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 1   | _(Optional)_ Momentary push button for displaying up time and triggering a reset ([AliExpress](https://www.aliexpress.com/item/1005004066257419.html)) <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1   | _(Optional)_ USB C extension cable (with right angle end) ([AliExpress](https://www.aliexpress.com/item/1005006584965187.html)) <sup>2</sup> + two M3*8                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| —   | Miscellaneous: Ethernet cable, female dupont connection wires, small 4" .1" zip ties, solder <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| —   | A PoE-capable switch, PoE injector, **or** USB-C power supply and USB-C cable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 
 

@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.9
+// ESP32 Time Server v2.9.1
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -13,19 +13,44 @@
 #define DEBUG_ENABLED 0 // 0 = Disabled; 1 = Enabled
 static constexpr int serialMonitorSpeed = 115200;
 
-// (optional) uptime / reset momentary button support
-#define UPTIME_RESTART_BUTTON_ENABLED 1 // 0 = Disabled; 1 = Enabled
-static constexpr int upTimeRestartPin = 3;
-static constexpr unsigned long holdUpTimeRestartButtonForThisManySecondsToTriggerAReset = 10UL;
-static constexpr int upTimeDisplayWillStayActiveForThisManySeconds = 10;
+// (optional) KY-016 RGB LED support
+#define RBG_LED_ENABLED 0 // 0 = Disabled; 1 = Enabled
+
+enum class RGB_LED_Color : uint8_t
+{
+    off,
+    red,
+    green,
+    blue,
+    yellow,
+    white
+};
+
+static constexpr RGB_LED_Color LED_startup = RGB_LED_Color::blue;
+static constexpr RGB_LED_Color LED_normal = RGB_LED_Color::green;
+static constexpr RGB_LED_Color LED_sync = RGB_LED_Color::white;
+static constexpr RGB_LED_Color LED_warning = RGB_LED_Color::yellow;
+static constexpr RGB_LED_Color LED_critical = RGB_LED_Color::red;
+
+// GPIO pin definitions for the KY-016 RGB LED
+static constexpr int LEDBluePin = 4;
+static constexpr int LEDGreenPin = 5;
+static constexpr int LEDRedPin = 6;
 
 // (optional) attached LCD support
 #define LIQUID_CRYSTAL_DISPLAY_ENABLED 1 // 0 = Disabled; 1 = Enabled
-static constexpr int lcdI2CAddressPrimary = 0x27;
-static constexpr int lcdI2CAddressSecondary = 0x3F;
 static constexpr int lcdColumns = 20;
 static constexpr int lcdRows = 4;
 static constexpr bool displayTimeZone = false;
+static constexpr int lcdI2CAddressPrimary = 0x27;
+static constexpr int lcdI2CAddressSecondary = 0x3F;
+
+// (optional) uptime / reset momentary button support
+#define UPTIME_RESTART_BUTTON_ENABLED 1 // 0 = Disabled; 1 = Enabled
+static constexpr unsigned long holdUpTimeRestartButtonForThisManySecondsToTriggerAReset = 10UL;
+static constexpr int upTimeDisplayWillStayActiveForThisManySeconds = 10;
+// GPIO pin definitions for the uptime / reset momentary button
+static constexpr int upTimeRestartPin = 3;
 
 // (optional) Over The Ethernet updates support
 #define OTE_UPDATES_ENABLED 1 // 0 = Disabled; 1 = Enabled
@@ -101,31 +126,26 @@ static constexpr int PreferIPvX = 4; // 0 - no preference between IPv4 and IPv6
 // (required) Time zone setting for your region - for more information see https://gist.github.com/alwynallan/24d96091655391107939
 static constexpr const char *timeZoneSpec = "EST5EDT,M3.2.0/2,M11.1.0/2";
 
+// Unless you know what you are doing, the options below should be left as is
+
 // This project was designed and tested to work with a SparkFun GNSS Receiver Breakout board which uses a u-blox - MAX-M10S module.
 // ( https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html )
 // However, the code has fallback logic for non/cloned/older u-blox gnss modules and has been tested with one such device as well.
 //
 // The setting below determines if the code should provide processing for other (than the MAX-M10S) gnss module - even if they are less capable/potentially less accurate.
 
-// Note: even if fallback processing is set to true below, accuracy should  still be fine as long as PPS is also supported by the hardware and used.
+// Note: even if fallback processing is set to true below, accuracy should still be fine as long as PPS is disciplined.
 // For more information here are some detailed timing accuracy notes:
 // - This firmware timestamps NTP responses using gettimeofday() system call, which is backed by the ESP32-P4's high-resolution timer
 //   driven by the built-in 40 MHz external XTAL via the APB clock (~10 ppm). This is the most accurate clock available
 //   on this chip; no external 32.768 kHz RTC crystal is needed or beneficial for NTP timestamping purposes.
-// - Without PPS: time is corrected only at each GNSS resync (every 5 min by default). The ~10 ppm APB drift yields up to ~3 ms of
-//   accumulated error between syncs; temperature variation can push this toward ~6-9 ms worst case.
-// - With PPS: the PPS discipline task applies continuous sub-second corrections via adjtime() on every GNSS pulse.
+// - The PPS discipline task applies continuous sub-second corrections on every GNSS PPS pulse.
 //   This reduces inter-sync error to well under 1 ms, limited mainly by interrupt latency (~10-100 us).
-//   Accordingly, the use of PPS is highly recommended
 // - Preferred GNSS (MAX-M10S) connects at 921600 baud, minimizing serial latency and enabling faster, more precise time
 //   message processing. Fallback modules may be limited to 9600 baud, introducing additional parsing delay and reducing
 //   the accuracy of the time set at each GNSS resync.
 
-//  Recommendation: below this line do not change these unless you know what you are doing
-
 static constexpr bool allowFallbackProcessing = true;
-
-static constexpr bool allowFallbackProcessingWithoutPPS = false; // This feature is no longer supported and this setting will be removed in a future release
 
 static constexpr uint32_t periodicGNSSRefreshEveryThisNumberOfMinutes = 5UL; // resync with GNSS every 5 minutes (recommended)
 
@@ -144,10 +164,6 @@ static constexpr bool rebootIfSanityCheckFails = true; // Further to the above,
 
 // (required) GNSS support; do not change these unless you know what you are doing
 
-#define UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED 1 // 0 = Disabled; 1 = Enabled
-// The following only needs to be set if your receiver does not use a U-Blox or U-Block clone GNSS chip
-static constexpr uint32_t baudRateForUbloxNonCompliantGNSSReceiver = 115200;
-
 // IMPORTANT NOTES: ***************************************************************************************
 // Some GNSS receivers and breakout boards provide a 3.3v PPS (Pulse-Per-Second) output pin               *
 // while others provide a 5v PPS output pin.                                                              *
@@ -158,12 +174,18 @@ static constexpr uint32_t baudRateForUbloxNonCompliantGNSSReceiver = 115200;
 // 3. The GNSS GND must be connected to the ESP32 GND                                                     *
 // ********************************************************************************************************
 
-// (required) pin definitions for the Waveshare ESP32-P4-ETH and ESP32-P4-WIFI6-POE-ETH 
+#define UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED 1 // 0 = Disabled; 1 = Enabled
+// The following only needs to be set if your receiver does not use a U-Blox or U-Block clone GNSS chip
+static constexpr uint32_t baudRateForUbloxNonCompliantGNSSReceiver = 115200;
+
+// (required) GPIO pin definitions for the GNSS module
 static constexpr int TXPin = 22;  // note: prior to release 2.4 pin 16 was used for TX
 static constexpr int RXPin = 21;  // note: prior to release 2.4 pin 17 was used for RX
 static constexpr int PPSPin = 20; // note: prior to release 2.4 pin 18 was used for PPS
 
-// (required) pin definitions for the Waveshare ESP32-P4-ETH and ESP32-P4-WIFI6-POE-ETH ; if your using these board do not change these
+// (required) GPIO pin definitions for the Waveshare:
+// ESP32-P4-ETH, ESP32-P4-POE-ETH, ESP32-P4-WIFI-ETH, ESP32-P4-WIFI-POE-ETH
+// if your using this board do not change these
 static constexpr int TFCardCommandPin = 44;
 static constexpr int TFCardClockPin = 43;
 static constexpr int TFCardData3Pin = 42;

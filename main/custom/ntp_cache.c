@@ -1,4 +1,4 @@
-// ESP32 Time Server 
+// ESP32 Time Server
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -53,7 +53,7 @@ bool ntp_cache_find_or_create(uint32_t ip, uint16_t port, ntp_client_record_t *r
 
     for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV4; ++i)
     {
-        if (s_ipv4_records[i].is_active && s_ipv4_records[i].client_ip == ip)
+        if (s_ipv4_records[i].is_active && s_ipv4_records[i].client_ip == ip && s_ipv4_records[i].client_port == port)
         {
             selected = i;
             found = true;
@@ -85,7 +85,7 @@ bool ntp_cache_find_or_create(uint32_t ip, uint16_t port, ntp_client_record_t *r
     return true;
 }
 
-bool ntp_cache_update(uint32_t ip, uint16_t port, uint32_t t2_sec, uint32_t t2_ns, uint32_t t3_sec, uint32_t t3_ns)
+bool ntp_cache_update(uint32_t ip, uint16_t port, uint64_t t2, uint64_t t3)
 {
     if (s_mutex == NULL || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE)
     {
@@ -99,7 +99,7 @@ bool ntp_cache_update(uint32_t ip, uint16_t port, uint32_t t2_sec, uint32_t t2_n
 
     for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV4; ++i)
     {
-        if (s_ipv4_records[i].is_active && s_ipv4_records[i].client_ip == ip)
+        if (s_ipv4_records[i].is_active && s_ipv4_records[i].client_ip == ip && s_ipv4_records[i].client_port == port)
         {
             selected = i;
             found = true;
@@ -125,10 +125,8 @@ bool ntp_cache_update(uint32_t ip, uint16_t port, uint32_t t2_sec, uint32_t t2_n
     }
 
     s_ipv4_records[selected].client_port = port;
-    s_ipv4_records[selected].prev_t2_sec = t2_sec;
-    s_ipv4_records[selected].prev_t2_ns = t2_ns;
-    s_ipv4_records[selected].prev_t3_sec = t3_sec;
-    s_ipv4_records[selected].prev_t3_ns = t3_ns;
+    s_ipv4_records[selected].prev_t2 = t2;
+    s_ipv4_records[selected].prev_t3 = t3;
     s_ipv4_records[selected].last_seen_ms = now_ms;
     xSemaphoreGive(s_mutex);
     return true;
@@ -148,7 +146,8 @@ bool ntp_cache_find_or_create_ipv6(const struct in6_addr *ip, uint16_t port, ntp
 
     for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV6; ++i)
     {
-        if (s_ipv6_records[i].is_active && memcmp(&s_ipv6_records[i].client_ip, ip, sizeof(*ip)) == 0)
+        if (s_ipv6_records[i].is_active && s_ipv6_records[i].client_port == port &&
+            memcmp(&s_ipv6_records[i].client_ip, ip, sizeof(*ip)) == 0)
         {
             selected = i;
             found = true;
@@ -190,7 +189,8 @@ bool ntp_cache_update_ipv6(const struct in6_addr *ip, uint16_t port, uint64_t t2
 
     for (size_t i = 0; i < MAX_TRACKED_CLIENTS_IPV6; ++i)
     {
-        if (s_ipv6_records[i].is_active && memcmp(&s_ipv6_records[i].client_ip, ip, sizeof(*ip)) == 0)
+        if (s_ipv6_records[i].is_active && s_ipv6_records[i].client_port == port &&
+            memcmp(&s_ipv6_records[i].client_ip, ip, sizeof(*ip)) == 0)
         {
             s_ipv6_records[i].client_port = port;
             s_ipv6_records[i].prev_t2 = t2;
