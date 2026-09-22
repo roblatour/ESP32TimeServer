@@ -303,7 +303,9 @@ Edit this file to match your desired hardware setup before building.
 Open a Command Prompt, load the ESP-IDF 6.1 environment, and remove any
 existing generated configuration before building. The first build downloads the
 Component Manager dependencies into `managed_components`; this generated folder
-is not part of the repository.
+is not part of the repository. 
+
+Enter the commands below to setup the build environment and build the project:
 
 ```cmd
 call C:\esp\v6.1\esp-idf\export.bat
@@ -312,28 +314,38 @@ call C:\esp\v6.1\esp-idf\export.bat
 if exist sdkconfig del sdkconfig
 ```
 
-The ESP32-P4 has different revisions; use the command matching your module.
+You will need to know your ESP32-P4 chip's revision number to build the program. To determine it connect your ESP32-P4 development board to your computer via a USB cable and enter the following command:
 
+```cmd
+esptool.py -p COMx flash-id
+```
 
+> Note: Replace `COMx` with your actual serial port. For example: COM6
 
-- For older ESP32-P4 modules with revisions prior to version 3.0 (**including the
-  Waveshare ESP32-P4-ETH**):
+The output of the above includes chip type and revision number.
+
+Next, use the command below matching your ESP32-P4's chip revision number to build the project:
+
+- For ESP32-P4 chips at revision 3.1 and above (including the 
+  **WaveShare ESP32-P4-WIFI6-POE-ETH and newer WaveShare 
+  ESP32-P4-ETH** development boards):
+
+  ```cmd
+  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_1.defaults" set-target esp32p4 build
+  ```
+- For ESP32-P4 chips at revision 3.0:
+
+  ```cmd
+  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_0.defaults" set-target esp32p4 build
+  ```
+- For older ESP32-P4 chips with revisions prior to version 3.0 (including older 
+  **Waveshare ESP32-P4-ETH** development boards):
 
   ```cmd
   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_pre_v3.defaults" set-target esp32p4 build
   ```
 
-- For ESP32-P4 modules at revision 3.0:
-
-  ```cmd
-  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_0.defaults" set-target esp32p4 build
-  ```
-- For ESP32-P4 modules at revision 3.1 and above (**including the 
-  WaveShare ESP32-P4-WIFI6-POE-ETH**):
-
-  ```cmd
-  idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;config/esp32p4_rev_v3_1.defaults" set-target esp32p4 build
-  ```
+  
 
 
 
