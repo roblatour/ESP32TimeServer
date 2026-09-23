@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(ESP32TimeServer
-        VERSION 2.9.1
+        VERSION 2.9.2
         SPDX_LICENSE MIT
         DESCRIPTION "ESP32 NTP Stratum 1 Time Server for your home network"
 )

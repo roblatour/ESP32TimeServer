@@ -7,6 +7,9 @@ When MQTT is enabled a JSON message will be published to `<MQTT_TOPIC>/report`
 every `MQTT_Reporting_Period` seconds. Other configuration settings determine
 the reporting content as described in more detail below.
 
+Additionally, near the end of this document there is a description of 
+controlled restart events and an example of a MQTT message for one.
+
 ## Example report
 
 ```json
@@ -226,3 +229,20 @@ under `gnss_receiver_last`:
 Historical timestamps use the same format as `current - time` (above). A
 timestamp is published as an empty string when no corresponding event time is
 available.
+
+## Controlled restart messages
+
+Controlled restarts are triggered in specific events:
+1. A manual restart was requested via uptime/restart button ("manual_restart")
+2. An Over the Ethernet firmware update was requested ("over_the_ethernet_update")
+3. There were more consecutive time syncs failures than the allowable threshold permits ("more_than_x_consecutive_time_sync_failures")
+4. The time sync update failed the sanity check and the option to reboot for such an event was true ("time_sync_failed_sanity_check")
+5. The Ethernet transport layer was stalled (became overwhelmed) while processing incoming requests - usually on a scale of over 10K, or more, requests per second over an extended time frame ("ethernet_transport_stalled")
+
+```json
+{
+    "event": "controlled_restart",
+    "reason": "ethernet_transport_stalled"
+}
+```
+

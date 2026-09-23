@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.9.1
+// ESP32 Time Server v2.9.2
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -540,7 +540,7 @@ static std::atomic<bool> s_ntp_server_ready{false};
 #if RBG_LED_ENABLED
 static std::atomic<bool> s_open_for_business_message_written{false};
 static std::atomic<bool> s_gnss_pps_startup_qualification_in_progress{false};
-static void control_KY_016_RGB_LED(RGB_LED_Color color, bool enabled);
+static void control_KY_016_RGB_LED(RGB_LED_Colour Colour, bool enabled);
 #endif
 static std::atomic<int64_t> s_last_hardware_ntp_response_us{0};
 static SemaphoreHandle_t s_hardware_ntp_transmit_mutex = nullptr;
@@ -659,6 +659,7 @@ static size_t s_mqtt_client_count = 0;
 static int64_t s_mqtt_last_link_up_us = 0;
 static mqtt_report_t s_mqtt_reports[MQTT_REPORT_QUEUE_DEPTH]{};
 static char s_mqtt_payload[MQTT_MAX_REPORT_SIZE] = "";
+static char s_mqtt_final_payload[MQTT_REPORT_SIZE] = "";
 static size_t s_mqtt_report_head = 0;
 static std::atomic<size_t> s_mqtt_queued_messages_count{0};
 static uint32_t s_mqtt_queued_messages_discarded = 0;
@@ -672,9 +673,10 @@ static char s_mqtt_report_topic[128] = "";
 static char s_mqtt_status_topic[128] = "";
 
 static void mqtt_publish_final_report();
-static bool mqtt_publish_or_queue_restart_notification(const char *reason);
 static void mqtt_enqueue_ntp_request(const struct sockaddr_storage &source_address);
 #endif
+
+static void controlled_restart(const char *reason);
 
 static HardwareSerial s_gnss_serial(1);
 static SFE_UBLOX_GNSS_SERIAL s_gnss;
@@ -1554,13 +1556,7 @@ static bool check_uptime_request()
     else if (millis() - button_press_start_ms >= holdUpTimeRestartButtonForThisManySecondsToTriggerAReset * 1000UL)
     {
         clear_gnss_nvs_data();
-#if DEBUG_ENABLED
-        ESP_LOGI(TAG, "Uptime/reset button restart requested: cleared stored GNSS NVS values.");
-#endif
-#if MQTT_ENABLED
-        mqtt_publish_final_report();
-#endif
-        esp_restart();
+        controlled_restart("manual_restart");
     }
 
     return true;
@@ -2323,13 +2319,7 @@ static void recover_ethernet_transport()
     s_hardware_ntp_accepting.store(false, std::memory_order_release);
     xSemaphoreGive(s_hardware_ntp_transmit_mutex);
 
-    if (mqtt_publish_or_queue_restart_notification("ethernet_transport_stalled"))
-    {
-        ESP_LOGW(TAG, "Restarting after NTP transport stall");
-        esp_restart();
-    }
-
-    ESP_LOGE(TAG, "Ethernet transport restart notification could not be published or queued");
+    controlled_restart("ethernet_transport_stalled");
 }
 
 static void ethernet_transport_recovery_task(void *parameter)
@@ -4371,7 +4361,7 @@ static void mqtt_build_report(char *payload, size_t payload_size)
 
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "Published:");
-    ESP_LOGI(TAG, "\n\r%s", payload);
+    ESP_LOGI(TAG, "%s", payload);
 #endif
 }
 
@@ -4380,12 +4370,11 @@ static void mqtt_publish_final_report()
     if (!s_mqtt_connected.load())
         return;
 
-    char payload[MQTT_REPORT_SIZE] = "";
-    mqtt_build_report(payload, sizeof(payload));
+    mqtt_build_report(s_mqtt_final_payload, sizeof(s_mqtt_final_payload));
 
     s_mqtt_restart_publish_id.store(-1);
     s_mqtt_restart_publish_completed.store(false);
-    int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain);
+    int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, s_mqtt_final_payload, 0, MQTT_QOS, MQTTBrokerRetain);
     if (message_id < 0)
         return;
 
@@ -4396,46 +4385,6 @@ static void mqtt_publish_final_report()
         vTaskDelay(pdMS_TO_TICKS(10));
 
     s_mqtt_restart_publish_id.store(-1);
-}
-
-static bool mqtt_publish_or_queue_restart_notification(const char *reason)
-{
-    char payload[128] = "";
-    snprintf(payload, sizeof(payload), "{\"event\":\"controlled_restart\",\"reason\":\"%s\"}", reason);
-
-    bool published = false;
-    if (s_mqtt_connected.load())
-    {
-        s_mqtt_restart_publish_id.store(-1);
-        s_mqtt_restart_publish_completed.store(false);
-        int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain);
-        if (message_id >= 0)
-        {
-            s_mqtt_restart_publish_id.store(message_id);
-            TickType_t wait_started = xTaskGetTickCount();
-            while (!s_mqtt_restart_publish_completed.load() && s_mqtt_connected.load() &&
-                   (xTaskGetTickCount() - wait_started) < pdMS_TO_TICKS(MQTT_RESTART_PUBLISH_TIMEOUT_MS))
-                vTaskDelay(pdMS_TO_TICKS(10));
-            published = s_mqtt_restart_publish_completed.load();
-        }
-        s_mqtt_restart_publish_id.store(-1);
-    }
-
-    if (published)
-        return true;
-    if (s_tf_queue_available.load())
-        return mqtt_enqueue_report(payload);
-
-    nvs_handle_t handle = 0;
-    esp_err_t result = nvs_open(restart_NVS_NAMESPACE, NVS_READWRITE, &handle);
-    if (result == ESP_OK)
-    {
-        result = nvs_set_str(handle, restart_NVS_KEY_PENDING, payload);
-        if (result == ESP_OK)
-            result = nvs_commit(handle);
-        nvs_close(handle);
-    }
-    return result == ESP_OK;
 }
 
 static bool mqtt_publish_pending_restart_notification()
@@ -4461,27 +4410,38 @@ static bool mqtt_publish_pending_restart_notification()
         return false;
     }
 
-    s_mqtt_restart_publish_id.store(-1);
-    s_mqtt_restart_publish_completed.store(false);
-    int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain);
-    if (message_id >= 0)
+    bool delivered_or_queued = false;
+    if (MQTT_QOS == 0)
     {
-        s_mqtt_restart_publish_id.store(message_id);
-        TickType_t wait_started = xTaskGetTickCount();
-        while (!s_mqtt_restart_publish_completed.load() && s_mqtt_connected.load() &&
-               (xTaskGetTickCount() - wait_started) < pdMS_TO_TICKS(MQTT_RESTART_PUBLISH_TIMEOUT_MS))
-            vTaskDelay(pdMS_TO_TICKS(10));
+        delivered_or_queued = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain) >= 0;
     }
-    const bool published = s_mqtt_restart_publish_completed.load();
-    s_mqtt_restart_publish_id.store(-1);
-    if (published)
+    else
+    {
+        s_mqtt_restart_publish_id.store(-1);
+        s_mqtt_restart_publish_completed.store(false);
+        int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain);
+        if (message_id >= 0)
+        {
+            s_mqtt_restart_publish_id.store(message_id);
+            TickType_t wait_started = xTaskGetTickCount();
+            while (!s_mqtt_restart_publish_completed.load() && s_mqtt_connected.load() &&
+                   (xTaskGetTickCount() - wait_started) < pdMS_TO_TICKS(MQTT_RESTART_PUBLISH_TIMEOUT_MS))
+                vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        delivered_or_queued = s_mqtt_restart_publish_completed.load();
+        s_mqtt_restart_publish_id.store(-1);
+        if (!delivered_or_queued)
+            delivered_or_queued = mqtt_enqueue_report(payload);
+    }
+
+    if (delivered_or_queued)
     {
         result = nvs_erase_key(handle, restart_NVS_KEY_PENDING);
         if (result == ESP_OK)
             result = nvs_commit(handle);
     }
     nvs_close(handle);
-    return published && result == ESP_OK;
+    return delivered_or_queued && result == ESP_OK;
 }
 
 static void mqtt_service_task(void *parameter)
@@ -4548,6 +4508,103 @@ static void mqtt_log_tf_directory(const char *path)
 }
 
 #endif
+
+static void controlled_restart(const char *reason)
+// Publish a controlled restart notification via MQTT or queue it if not connected.
+{
+
+#if DEBUG_ENABLED
+    ESP_LOGW(TAG, "Controlled restart requested: %s", reason);
+    vTaskDelay(pdMS_TO_TICKS(200));
+#endif
+
+#if MQTT_ENABLED
+
+    mqtt_publish_final_report();
+
+    char payload[128] = "";
+    snprintf(payload, sizeof(payload), "{\"event\":\"controlled_restart\",\"reason\":\"%s\"}", reason);
+
+    bool published = false;
+    if (s_mqtt_connected.load())
+    {
+        if (MQTT_QOS == 0)
+        {
+            published = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain) >= 0;
+            if (published)
+                vTaskDelay(pdMS_TO_TICKS(MQTT_RESTART_PUBLISH_TIMEOUT_MS));
+        }
+        else
+        {
+            s_mqtt_restart_publish_id.store(-1);
+            s_mqtt_restart_publish_completed.store(false);
+            int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain);
+            if (message_id >= 0)
+            {
+                s_mqtt_restart_publish_id.store(message_id);
+                TickType_t wait_started = xTaskGetTickCount();
+                while (!s_mqtt_restart_publish_completed.load() && s_mqtt_connected.load() &&
+                       (xTaskGetTickCount() - wait_started) < pdMS_TO_TICKS(MQTT_RESTART_PUBLISH_TIMEOUT_MS))
+                    vTaskDelay(pdMS_TO_TICKS(10));
+                published = s_mqtt_restart_publish_completed.load();
+            }
+            s_mqtt_restart_publish_id.store(-1);
+        }
+    }
+
+    if (published)
+    {
+#if DEBUG_ENABLED
+        ESP_LOGI(TAG, "Published from controlled restart:");
+        ESP_LOGI(TAG, "%s", payload);
+        vTaskDelay(pdMS_TO_TICKS(200));
+#endif
+    }
+    else
+    {
+
+        if (MQTT_QOS > 0)
+        {
+            if (!mqtt_enqueue_report(payload))
+            {
+#if DEBUG_ENABLED
+                ESP_LOGW(TAG, "Failed to enqueue restart report, falling back to NVS storage");
+                vTaskDelay(pdMS_TO_TICKS(200));
+#endif
+
+                nvs_handle_t handle = 0;
+                esp_err_t result = nvs_open(restart_NVS_NAMESPACE, NVS_READWRITE, &handle);
+                if (result == ESP_OK)
+                {
+                    result = nvs_set_str(handle, restart_NVS_KEY_PENDING, payload);
+                    if (result == ESP_OK)
+                        result = nvs_commit(handle);
+                    nvs_close(handle);
+                }
+
+#if DEBUG_ENABLED
+
+                if (result != ESP_OK)
+                {
+                    ESP_LOGE(TAG, "Restart notification could not be published or queued:");
+                    ESP_LOGE(TAG, "%s", payload);
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                }
+
+#endif
+            }
+        }
+    }
+#endif
+
+#if DEBUG_ENABLED
+    ESP_LOGI(TAG, "Restarting now.");
+    vTaskDelay(pdMS_TO_TICKS(200));
+#endif
+    esp_restart();
+
+    return;
+}
 
 static void setup_mqtt_tf_queue()
 {
@@ -5423,12 +5480,7 @@ static void ote_service_task(void *parameter)
 
         vTaskDelay(loop_delay_ticks);
         if (should_reboot)
-        {
-#if MQTT_ENABLED
-            mqtt_publish_final_report();
-#endif
-            esp_restart();
-        }
+            controlled_restart("over_the_ethernet_update");
 
 #if CALCULATE_STACK_SIZES_ENABLED
         report_current_task_stack_usage(OTE_Service);
@@ -5707,16 +5759,7 @@ static void handle_runtime_sync_failure(const sync_faults_t &faults, time_t upda
     }
 
     if (snapshot.last_successful_sync_us > 0 && (esp_timer_get_time() - snapshot.last_successful_sync_us) > Sync_Reboot_After_Us)
-    {
-#if DEBUG_ENABLED
-        ESP_LOGE(TAG, "Rebooting after extended holdover without a successful GNSS resync.");
-#endif
-        vTaskDelay(pdMS_TO_TICKS(200));
-#if MQTT_ENABLED
-        mqtt_publish_final_report();
-#endif
-        esp_restart();
-    }
+        controlled_restart(("more_than_" + std::to_string(Sync_Failures_Before_Runtime_Recovery) + "_consecutive_time_sync_failures").c_str());
 
     vTaskDelay(pdMS_TO_TICKS(retry_delay_ms));
 }
@@ -5815,16 +5858,7 @@ static void gnss_time_sync_task(void *parameter)
                 sync_state_note_failure({false, false, true, false}, update_delta);
 
                 if (rebootIfSanityCheckFails)
-                {
-#if DEBUG_ENABLED
-                    ESP_LOGE(TAG, "Restarting according to settings.");
-#endif
-                    vTaskDelay(pdMS_TO_TICKS(200));
-#if MQTT_ENABLED
-                    mqtt_publish_final_report();
-#endif
-                    esp_restart();
-                }
+                    controlled_restart("time_sync_failed_sanity_check");
 
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 continue;
@@ -6530,12 +6564,12 @@ static int get_required_top_line_message()
 }
 
 #if RBG_LED_ENABLED
-static void control_KY_016_RGB_LED(RGB_LED_Color color, bool enabled)
+static void control_KY_016_RGB_LED(RGB_LED_Colour Colour, bool enabled)
 {
-    const bool illuminate = enabled && color != RGB_LED_Color::off;
-    const bool red = illuminate && (color == RGB_LED_Color::red || color == RGB_LED_Color::yellow || color == RGB_LED_Color::white);
-    const bool green = illuminate && (color == RGB_LED_Color::green || color == RGB_LED_Color::yellow || color == RGB_LED_Color::white);
-    const bool blue = illuminate && (color == RGB_LED_Color::blue || color == RGB_LED_Color::white);
+    const bool illuminate = enabled && Colour != RGB_LED_Colour::off;
+    const bool red = illuminate && (Colour == RGB_LED_Colour::red || Colour == RGB_LED_Colour::yellow || Colour == RGB_LED_Colour::white);
+    const bool green = illuminate && (Colour == RGB_LED_Colour::green || Colour == RGB_LED_Colour::yellow || Colour == RGB_LED_Colour::white);
+    const bool blue = illuminate && (Colour == RGB_LED_Colour::blue || Colour == RGB_LED_Colour::white);
 
     gpio_set_level(static_cast<gpio_num_t>(LEDRedPin), red ? 1 : 0);
     gpio_set_level(static_cast<gpio_num_t>(LEDGreenPin), green ? 1 : 0);
@@ -6544,7 +6578,7 @@ static void control_KY_016_RGB_LED(RGB_LED_Color color, bool enabled)
 
 static void update_RGB_LED()
 {
-    RGB_LED_Color color = LED_startup;
+    RGB_LED_Colour Colour = LED_startup;
     bool flashing = false;
 
     if (!s_open_for_business_message_written.load(std::memory_order_acquire))
@@ -6557,18 +6591,18 @@ static void update_RGB_LED()
         switch (get_required_top_line_message())
         {
         case 9:
-            color = LED_critical;
+            Colour = LED_critical;
             flashing = true;
             break;
         case 99:
-            color = LED_sync;
+            Colour = LED_sync;
             break;
         case 1:
-            color = LED_critical;
+            Colour = LED_critical;
             break;
         case 2:
         case 3:
-            color = LED_warning;
+            Colour = LED_warning;
             flashing = true;
             break;
         case 4:
@@ -6576,16 +6610,16 @@ static void update_RGB_LED()
         case 6:
         case 7:
         case 8:
-            color = LED_warning;
+            Colour = LED_warning;
             break;
         default:
-            color = LED_normal;
+            Colour = LED_normal;
             break;
         }
     }
 
     const bool enabled = !flashing || ((esp_timer_get_time() / 1000000LL) % 2 == 0);
-    control_KY_016_RGB_LED(color, enabled);
+    control_KY_016_RGB_LED(Colour, enabled);
 }
 #endif
 

@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.9.1
+// ESP32 Time Server v2.9.2
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -7,6 +7,7 @@
 #pragma once
 #include <cstdint>
 #include <ctime>
+#include "custom/rgb_led_colours.c"
 
 // (optional) debug support
 // NOTE: setting DEBUG_ENABLED to 1 (Enabled) will degrade accuracy and performance during periods of high volume ntp requests
@@ -15,22 +16,11 @@ static constexpr int serialMonitorSpeed = 115200;
 
 // (optional) KY-016 RGB LED support
 #define RBG_LED_ENABLED 0 // 0 = Disabled; 1 = Enabled
-
-enum class RGB_LED_Color : uint8_t
-{
-    off,
-    red,
-    green,
-    blue,
-    yellow,
-    white
-};
-
-static constexpr RGB_LED_Color LED_startup = RGB_LED_Color::blue;
-static constexpr RGB_LED_Color LED_normal = RGB_LED_Color::green;
-static constexpr RGB_LED_Color LED_sync = RGB_LED_Color::white;
-static constexpr RGB_LED_Color LED_warning = RGB_LED_Color::yellow;
-static constexpr RGB_LED_Color LED_critical = RGB_LED_Color::red;
+static constexpr RGB_LED_Colour LED_startup = RGB_LED_Colour::blue;
+static constexpr RGB_LED_Colour LED_normal = RGB_LED_Colour::green;
+static constexpr RGB_LED_Colour LED_sync = RGB_LED_Colour::white;
+static constexpr RGB_LED_Colour LED_warning = RGB_LED_Colour::yellow;
+static constexpr RGB_LED_Colour LED_critical = RGB_LED_Colour::red;
 
 // GPIO pin definitions for the KY-016 RGB LED
 static constexpr int LEDBluePin = 4;
