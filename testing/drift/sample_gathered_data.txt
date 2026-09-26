@@ -1,138 +1,161 @@
 **** Test Series 1 ****
 ntpdate -q time.nrc.ca
-server 132.246.11.237, stratum 2, offset +0.008166, delay 0.07152
-server 132.246.11.229, stratum 2, offset +0.007670, delay 0.06543
-server 132.246.11.238, stratum 2, offset +0.008179, delay 0.06630
-server 132.246.11.227, stratum 2, offset +0.007915, delay 0.06992
-16 Sep 07:04:02 ntpdate[42520]: adjust time server 132.246.11.229 offset +0.007670 sec
+server 132.246.11.227, stratum 1, offset +0.004554, delay 0.03802
+server 132.246.11.238, stratum 1, offset +0.003083, delay 0.03505
+server 132.246.11.229, stratum 1, offset +0.003806, delay 0.03671
+server 132.246.11.237, stratum 1, offset +0.003201, delay 0.03537
+26 Sep 11:58:30 ntpdate[4852]: adjust time server 132.246.11.238 offset +0.003083 sec
 
 ntpdate -q 0.ca.pool.ntp.org
-server 162.159.200.1, stratum 3, offset +0.006819, delay 0.05646
-server 23.132.28.58, stratum 3, offset +0.006577, delay 0.05476
-server 23.159.16.194, stratum 2, offset +0.018960, delay 0.08572
-server 216.232.132.21, stratum 2, offset +0.006167, delay 0.11276
-16 Sep 07:04:03 ntpdate[31992]: adjust time server 23.159.16.194 offset +0.018960 sec
+server 54.39.104.183, stratum 1, offset +0.004714, delay 0.03838
+server 206.108.0.131, stratum 1, offset +0.003179, delay 0.03531
+server 142.167.4.85, stratum 1, offset +0.003173, delay 0.03523
+server 216.232.132.63, stratum 1, offset +0.003213, delay 0.03558
+26 Sep 11:58:31 ntpdate[49836]: adjust time server 142.167.4.85 offset +0.003173 sec
 
 ntpdate -q 192.168.7.24
-server 192.168.7.24, stratum 1, offset +0.003734, delay 0.03807
-16 Sep 07:04:03 ntpdate[28376]: adjust time server 192.168.7.24 offset +0.003734 sec
+server 192.168.7.24, stratum 1, offset +0.004132, delay 0.03848
+26 Sep 11:58:31 ntpdate[26136]: adjust time server 192.168.7.24 offset +0.004132 sec
 
-ntpdate -q 192.168.1.214
-server 192.168.1.214, stratum 1, offset +0.003850, delay 0.03798
-16 Sep 07:04:04 ntpdate[7640]: adjust time server 192.168.1.214 offset +0.003850 sec
+ntpdate -q 192.168.1.24
+server 192.168.1.24, stratum 1, offset +0.004480, delay 0.03789
+26 Sep 11:58:32 ntpdate[7492]: adjust time server 192.168.1.24 offset +0.004480 sec
 
 **** Test Series 2 ****
 ntpdate -q time.nrc.ca
-server 132.246.11.227, stratum 2, offset +0.011818, delay 0.07281
-server 132.246.11.237, stratum 2, offset +0.012123, delay 0.07117
-server 132.246.11.238, stratum 2, offset +0.008900, delay 0.06607
-server 132.246.11.229, stratum 2, offset +0.010347, delay 0.06996
-16 Sep 07:34:05 ntpdate[43420]: adjust time server 132.246.11.238 offset +0.008900 sec
+server 132.246.11.238, stratum 1, offset +0.005102, delay 0.03891
+server 132.246.11.237, stratum 1, offset +0.003332, delay 0.03513
+server 132.246.11.227, stratum 1, offset +0.003899, delay 0.03627
+server 132.246.11.229, stratum 1, offset +0.004084, delay 0.03667
+26 Sep 12:28:30 ntpdate[53156]: adjust time server 132.246.11.237 offset +0.003332 sec
 
 ntpdate -q 0.ca.pool.ntp.org
-server 216.232.132.18, stratum 2, offset +0.010266, delay 0.11005
-server 199.182.221.110, stratum 2, offset +0.008341, delay 0.10480
-server 174.142.148.226, stratum 2, offset +0.009205, delay 0.05164
-server 142.4.192.253, stratum 2, offset +0.011645, delay 0.06709
-16 Sep 07:34:06 ntpdate[41036]: adjust time server 174.142.148.226 offset +0.009205 sec
+server 199.182.221.110, stratum 1, offset +0.008498, delay 0.04573
+server 198.181.199.86, stratum 1, offset +0.003710, delay 0.03587
+server 206.108.0.132, stratum 1, offset +0.003387, delay 0.03520
+server 198.50.127.72, stratum 1, offset +0.003844, delay 0.03616
+26 Sep 12:28:31 ntpdate[44900]: adjust time server 206.108.0.132 offset +0.003387 sec
 
 ntpdate -q 192.168.7.24
-server 192.168.7.24, stratum 1, offset +0.006461, delay 0.03755
-16 Sep 07:34:06 ntpdate[46540]: adjust time server 192.168.7.24 offset +0.006461 sec
+server 192.168.7.24, stratum 1, offset +0.006013, delay 0.04048
+26 Sep 12:28:31 ntpdate[43828]: adjust time server 192.168.7.24 offset +0.006013 sec
 
-ntpdate -q 192.168.1.214
-server 192.168.1.214, stratum 1, offset +0.006507, delay 0.03758
-16 Sep 07:34:07 ntpdate[41048]: adjust time server 192.168.1.214 offset +0.006507 sec
+ntpdate -q 192.168.1.24
+server 192.168.1.24, stratum 1, offset +0.004625, delay 0.03767
+26 Sep 12:28:32 ntpdate[51436]: adjust time server 192.168.1.24 offset +0.004625 sec
 
 **** Test Series 3 ****
 ntpdate -q time.nrc.ca
-server 132.246.11.237, stratum 2, offset +0.012288, delay 0.06883
-server 132.246.11.238, stratum 2, offset +0.010835, delay 0.06897
-server 132.246.11.229, stratum 2, offset +0.012420, delay 0.07298
-server 132.246.11.227, stratum 2, offset +0.011679, delay 0.06779
-16 Sep 08:04:08 ntpdate[33704]: adjust time server 132.246.11.227 offset +0.011679 sec
+server 132.246.11.237, stratum 1, offset +0.004701, delay 0.03757
+server 132.246.11.229, stratum 1, offset +0.003631, delay 0.03540
+server 132.246.11.227, stratum 1, offset +0.004197, delay 0.03635
+server 132.246.11.238, stratum 1, offset +0.003657, delay 0.03529
+26 Sep 12:58:30 ntpdate[53500]: adjust time server 132.246.11.238 offset +0.003657 sec
 
 ntpdate -q 0.ca.pool.ntp.org
-server 216.232.132.102, stratum 1, offset +0.012924, delay 0.11441
-server 23.128.92.19, stratum 2, offset +0.010600, delay 0.08849
-server 216.232.132.21, stratum 2, offset +0.011385, delay 0.11250
-server 198.50.127.72, stratum 3, offset +0.007473, delay 0.05255
-16 Sep 08:04:09 ntpdate[29172]: adjust time server 216.232.132.102 offset +0.012924 sec
+server 174.94.155.224, stratum 1, offset +0.008445, delay 0.04491
+server 162.159.200.123, stratum 1, offset +0.003328, delay 0.03583
+server 158.69.247.84, stratum 1, offset +0.003215, delay 0.03613
+server 54.39.104.183, stratum 1, offset +0.003620, delay 0.03543
+26 Sep 12:58:31 ntpdate[57528]: adjust time server 54.39.104.183 offset +0.003620 sec
 
 ntpdate -q 192.168.7.24
-server 192.168.7.24, stratum 1, offset +0.007250, delay 0.03787
-16 Sep 08:04:09 ntpdate[39896]: adjust time server 192.168.7.24 offset +0.007250 sec
+server 192.168.7.24, stratum 1, offset +0.005050, delay 0.03809
+26 Sep 12:58:31 ntpdate[30232]: adjust time server 192.168.7.24 offset +0.005050 sec
 
-ntpdate -q 192.168.1.214
-server 192.168.1.214, stratum 1, offset +0.007376, delay 0.03799
-16 Sep 08:04:09 ntpdate[37752]: adjust time server 192.168.1.214 offset +0.007376 sec
+ntpdate -q 192.168.1.24
+server 192.168.1.24, stratum 1, offset +0.005393, delay 0.03870
+26 Sep 12:58:32 ntpdate[57320]: adjust time server 192.168.1.24 offset +0.005393 sec
 
 **** Test Series 4 ****
 ntpdate -q time.nrc.ca
-server 132.246.11.238, stratum 2, offset +0.013361, delay 0.06996
-server 132.246.11.229, stratum 2, offset +0.011651, delay 0.06557
-server 132.246.11.237, stratum 2, offset +0.010380, delay 0.07021
-server 132.246.11.227, stratum 2, offset +0.009606, delay 0.07129
-16 Sep 08:34:11 ntpdate[46932]: adjust time server 132.246.11.229 offset +0.011651 sec
+server 132.246.11.238, stratum 1, offset +0.005633, delay 0.03914
+server 132.246.11.237, stratum 1, offset +0.004569, delay 0.03706
+server 132.246.11.229, stratum 1, offset +0.004636, delay 0.03714
+server 132.246.11.227, stratum 1, offset +0.004166, delay 0.03638
+26 Sep 13:28:30 ntpdate[37692]: adjust time server 132.246.11.227 offset +0.004166 sec
 
 ntpdate -q 0.ca.pool.ntp.org
-server 162.159.200.123, stratum 3, offset +0.011481, delay 0.05272
-server 162.159.200.1, stratum 3, offset +0.009259, delay 0.05595
-server 149.56.19.163, stratum 2, offset +0.010860, delay 0.06642
-server 216.232.132.102, stratum 1, offset +0.010845, delay 0.11353
-16 Sep 08:34:12 ntpdate[39036]: adjust time server 216.232.132.102 offset +0.010845 sec
+server 216.232.132.19, stratum 1, offset +0.004438, delay 0.04172
+server 142.4.192.253, stratum 1, offset +0.004875, delay 0.03758
+server 208.81.1.244, stratum 1, offset +0.003937, delay 0.03583
+server 158.69.193.108, stratum 1, offset +0.004322, delay 0.03651
+26 Sep 13:28:31 ntpdate[57044]: adjust time server 208.81.1.244 offset +0.003937 sec
 
 ntpdate -q 192.168.7.24
-server 192.168.7.24, stratum 1, offset +0.007779, delay 0.03831
-16 Sep 08:34:12 ntpdate[8436]: adjust time server 192.168.7.24 offset +0.007779 sec
+server 192.168.7.24, stratum 1, offset +0.007275, delay 0.04239
+26 Sep 13:28:31 ntpdate[42724]: adjust time server 192.168.7.24 offset +0.007275 sec
 
-ntpdate -q 192.168.1.214
-server 192.168.1.214, stratum 1, offset +0.007716, delay 0.03812
-16 Sep 08:34:13 ntpdate[35040]: adjust time server 192.168.1.214 offset +0.007716 sec
+ntpdate -q 192.168.1.24
+server 192.168.1.24, stratum 1, offset +0.005868, delay 0.03955
+26 Sep 13:28:32 ntpdate[51432]: adjust time server 192.168.1.24 offset +0.005868 sec
 
 **** Test Series 5 ****
 ntpdate -q time.nrc.ca
-server 132.246.11.227, stratum 2, offset +0.013508, delay 0.06972
-server 132.246.11.229, stratum 2, offset +0.011145, delay 0.07010
-server 132.246.11.237, stratum 2, offset +0.011622, delay 0.06857
-server 132.246.11.238, stratum 2, offset +0.012746, delay 0.07047
-16 Sep 09:04:14 ntpdate[47912]: adjust time server 132.246.11.237 offset +0.011622 sec
+server 132.246.11.229, stratum 1, offset +0.004802, delay 0.03737
+server 132.246.11.227, stratum 1, offset +0.004676, delay 0.03683
+server 132.246.11.238, stratum 1, offset +0.003816, delay 0.03539
+server 132.246.11.237, stratum 1, offset +0.004334, delay 0.03648
+26 Sep 13:58:30 ntpdate[57932]: adjust time server 132.246.11.238 offset +0.003816 sec
 
 ntpdate -q 0.ca.pool.ntp.org
-server 23.159.16.194, stratum 2, offset +0.023487, delay 0.08708
-server 66.70.172.17, stratum 2, offset +0.011917, delay 0.06451
-server 23.128.92.19, stratum 2, offset +0.012279, delay 0.08583
-server 198.181.199.82, stratum 1, offset +0.007252, delay 0.10028
-16 Sep 09:04:15 ntpdate[23356]: adjust time server 198.181.199.82 offset +0.007252 sec
+server 23.159.16.194, stratum 1, offset +0.004808, delay 0.03735
+server 206.108.0.133, stratum 1, offset +0.004063, delay 0.03561
+server 216.232.132.21, stratum 1, offset +0.004652, delay 0.03685
+server 162.159.200.123, stratum 1, offset +0.004723, delay 0.03703
+26 Sep 13:58:31 ntpdate[51072]: adjust time server 206.108.0.133 offset +0.004063 sec
 
 ntpdate -q 192.168.7.24
-server 192.168.7.24, stratum 1, offset +0.007626, delay 0.03755
-16 Sep 09:04:15 ntpdate[15412]: adjust time server 192.168.7.24 offset +0.007626 sec
+server 192.168.7.24, stratum 1, offset +0.004794, delay 0.03720
+26 Sep 13:58:32 ntpdate[52508]: adjust time server 192.168.7.24 offset +0.004794 sec
 
-ntpdate -q 192.168.1.214
-server 192.168.1.214, stratum 1, offset +0.008247, delay 0.03868
-16 Sep 09:04:15 ntpdate[44732]: adjust time server 192.168.1.214 offset +0.008247 sec
+ntpdate -q 192.168.1.24
+server 192.168.1.24, stratum 1, offset +0.005247, delay 0.03799
+26 Sep 13:58:32 ntpdate[33868]: adjust time server 192.168.1.24 offset +0.005247 sec
 
 **** Test Series 6 ****
 ntpdate -q time.nrc.ca
-server 132.246.11.227, stratum 2, offset +0.012522, delay 0.06987
-server 132.246.11.238, stratum 2, offset +0.011968, delay 0.06694
-server 132.246.11.229, stratum 2, offset +0.012290, delay 0.06749
-server 132.246.11.237, stratum 2, offset +0.007866, delay 0.07840
-16 Sep 09:34:17 ntpdate[40548]: adjust time server 132.246.11.238 offset +0.011968 sec
+server 132.246.11.229, stratum 1, offset +0.004679, delay 0.03702
+server 132.246.11.238, stratum 1, offset +0.004226, delay 0.03589
+server 132.246.11.237, stratum 1, offset +0.004260, delay 0.03601
+server 132.246.11.227, stratum 1, offset +0.004188, delay 0.03592
+26 Sep 14:28:30 ntpdate[46844]: adjust time server 132.246.11.238 offset +0.004226 sec
 
 ntpdate -q 0.ca.pool.ntp.org
-server 199.182.221.110, stratum 2, offset +0.010218, delay 0.10628
-server 206.108.0.131, stratum 1, offset +0.010105, delay 0.05882
-server 216.232.132.19, stratum 2, offset +0.011675, delay 0.11128
-server 147.189.136.126, stratum 2, offset +0.011248, delay 0.05779
-16 Sep 09:34:18 ntpdate[16460]: adjust time server 206.108.0.131 offset +0.010105 sec
+server 148.113.173.205, stratum 1, offset +0.005074, delay 0.03763
+server 146.190.241.218, stratum 1, offset +0.004907, delay 0.03732
+server 149.56.19.163, stratum 1, offset +0.002016, delay 0.04308
+server 23.132.28.58, stratum 1, offset +0.004166, delay 0.03638
+26 Sep 14:28:31 ntpdate[57528]: adjust time server 23.132.28.58 offset +0.004166 sec
 
 ntpdate -q 192.168.7.24
-server 192.168.7.24, stratum 1, offset +0.007604, delay 0.03810
-16 Sep 09:34:18 ntpdate[4452]: adjust time server 192.168.7.24 offset +0.007604 sec
+server 192.168.7.24, stratum 1, offset +0.005771, delay 0.03900
+26 Sep 14:28:32 ntpdate[32324]: adjust time server 192.168.7.24 offset +0.005771 sec
 
-ntpdate -q 192.168.1.214
-server 192.168.1.214, stratum 1, offset +0.008041, delay 0.03899
-16 Sep 09:34:18 ntpdate[29512]: adjust time server 192.168.1.214 offset +0.008041 sec
+ntpdate -q 192.168.1.24
+server 192.168.1.24, stratum 1, offset +0.005320, delay 0.03809
+26 Sep 14:28:32 ntpdate[21104]: adjust time server 192.168.1.24 offset +0.005320 sec
+
+**** Test Series 7 ****
+ntpdate -q time.nrc.ca
+server 132.246.11.229, stratum 1, offset +0.004913, delay 0.03705
+server 132.246.11.227, stratum 1, offset +0.004398, delay 0.03621
+server 132.246.11.237, stratum 1, offset +0.004593, delay 0.03661
+server 132.246.11.238, stratum 1, offset +0.004233, delay 0.03568
+26 Sep 14:58:30 ntpdate[51108]: adjust time server 132.246.11.238 offset +0.004233 sec
+
+ntpdate -q 0.ca.pool.ntp.org
+server 162.159.200.123, stratum 1, offset +0.005522, delay 0.03821
+server 54.39.23.64, stratum 1, offset +0.004135, delay 0.03543
+server 216.232.132.95, stratum 1, offset +0.004783, delay 0.03702
+server 216.232.132.18, stratum 1, offset +0.004479, delay 0.03639
+26 Sep 14:58:31 ntpdate[53256]: adjust time server 54.39.23.64 offset +0.004135 sec
+
+ntpdate -q 192.168.7.24
+server 192.168.7.24, stratum 1, offset +0.005224, delay 0.03769
+26 Sep 14:58:32 ntpdate[41236]: adjust time server 192.168.7.24 offset +0.005224 sec
+
+ntpdate -q 192.168.1.24
+server 192.168.1.24, stratum 1, offset +0.005489, delay 0.03815
+26 Sep 14:58:32 ntpdate[53152]: adjust time server 192.168.1.24 offset +0.005489 sec
 

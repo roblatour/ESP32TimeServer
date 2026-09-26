@@ -14,9 +14,8 @@ import sys
 External_Pool_1 = "time.nrc.ca"
 External_Pool_2 = "0.ca.pool.ntp.org"
 ESP32TimerServer_master = "192.168.7.24"
-ESP32TimeServer_reference = "192.168.1.214"
+ESP32TimeServer_reference = "192.168.1.24"
 overall_report_duration_minutes = 180
-number_of_test_series = 6
 
 # Function to check if a value is a valid integer
 def is_valid_integer(value):
@@ -43,39 +42,12 @@ if overall_report_duration_minutes > 2880:
     print("Error: overall_report_duration_minutes is greater than 2880 (2 days).")
     sys.exit(1)
 
-# Validate number_of_test_series
-if not is_valid_integer(number_of_test_series):
-    print("Error: number_of_test_series is not numeric.")
-    sys.exit(1)
-
-if number_of_test_series != int(number_of_test_series):
-    print("Error: number_of_test_series is not an integer.")
-    sys.exit(1)
-
-if number_of_test_series < 2:
-    print("Error: number_of_test_series is less than 2.")
-    sys.exit(1)
-
-# Calculate pause between test series
-pause_between_series = (overall_report_duration_minutes * 60) / number_of_test_series
-
-# Calculate the number of tests per hour
-tests_per_hour = (number_of_test_series * 60) / overall_report_duration_minutes
-
-# Validate that more than 2 tests would not be run an hour
-# see https://www.ntppool.org/tos.html item 4 b
-if tests_per_hour > 2:
-    print("Error: More than 2 tests would be run an hour.")
-    sys.exit(1)
-
-# Calculate estimated completion time
-estimated_completion_time = datetime.now() + timedelta(minutes=overall_report_duration_minutes)
+number_of_test_series = overall_report_duration_minutes // 30 + 1
+pause_between_series = 30 * 60
+estimated_duration_minutes = (number_of_test_series - 1) * 30
 
 # Define the report file name
 report_file = "gathered_data.txt"
-
-# Print estimated completion time
-print(f"Estimated completion time: {estimated_completion_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 # Check if the report file exists and delete it if it does
 if os.path.exists(report_file):
@@ -103,6 +75,10 @@ def run_ntpdate_and_log(server, report_file):
             file.write("\n")
 
 # Main test series loop
+start_datetime = datetime.now()
+start_time = time.monotonic()
+estimated_completion_time = start_datetime + timedelta(minutes=estimated_duration_minutes)
+print(f"Estimated completion time: {estimated_completion_time.strftime('%Y-%m-%d %H:%M:%S')}")
 for series_number in range(1, number_of_test_series + 1):
     # Append test series header to the report file
     with open(report_file, 'a') as file:
@@ -114,8 +90,11 @@ for series_number in range(1, number_of_test_series + 1):
     run_ntpdate_and_log(ESP32TimerServer_master, report_file)
     run_ntpdate_and_log(ESP32TimeServer_reference, report_file)
 
-    # Wait for the calculated pause between test series
-    time.sleep(pause_between_series)
+    if series_number < number_of_test_series:
+        next_test_time = start_datetime + timedelta(seconds=series_number * pause_between_series)
+        print(f"Test {series_number} of {number_of_test_series} completed.  Next test will be at {next_test_time.strftime('%Y-%m-%d %H:%M:%S')}.")
+        time.sleep(max(0, start_time + series_number * pause_between_series - time.monotonic()))
+    else:
+        print(f"Test {series_number} of {number_of_test_series} completed.")
 
-# The script will exit after completing all test series
-print("All test series have been completed. Check the gathered_data.txt file for results.")
+print(f"Tests complete, results available within {os.path.abspath(report_file)}")

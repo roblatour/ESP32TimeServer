@@ -1,13 +1,17 @@
-// ESP32 Time Server v2.9.2
+// ESP32 Time Server v3
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
 //
+// Note: some additional settings are defined in the ESP32TimeServerSettingsSecrets.h file
+//
 
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <ctime>
-#include "custom/rgb_led_colours.c"
+#include "custom/setting_types.c"
+#include "ESP32TimeServerSettingsSecrets.h"
 
 // (optional) debug support
 // NOTE: setting DEBUG_ENABLED to 1 (Enabled) will degrade accuracy and performance during periods of high volume ntp requests
@@ -21,7 +25,6 @@ static constexpr RGB_LED_Colour LED_normal = RGB_LED_Colour::green;
 static constexpr RGB_LED_Colour LED_sync = RGB_LED_Colour::white;
 static constexpr RGB_LED_Colour LED_warning = RGB_LED_Colour::yellow;
 static constexpr RGB_LED_Colour LED_critical = RGB_LED_Colour::red;
-
 // GPIO pin definitions for the KY-016 RGB LED
 static constexpr int LEDBluePin = 4;
 static constexpr int LEDGreenPin = 5;
@@ -43,26 +46,34 @@ static constexpr int upTimeDisplayWillStayActiveForThisManySeconds = 10;
 static constexpr int upTimeRestartPin = 3;
 
 // (optional) Over The Ethernet updates support
+// Please also see ESP32TimeServerSettingsSecretes.h for the configuration of the OTE password.
 #define OTE_UPDATES_ENABLED 1 // 0 = Disabled; 1 = Enabled
 static constexpr char DeviceName[] = "ESP32TimeServer";
-static constexpr char OTEPassword[] = "ESP32TimeServerpw";
 static constexpr uint16_t OTEPort = 3232;
 
+// (optional) NTPv4 symmetric-key packet authentication.
+// When enabled, only authenticated NTPv4 requests with a valid configured key receive signed replies.
+// However, non-authenticated NTPv4 requests are still processed as normal requests without authentication.
+// Please also see ESP32TimeServerSettingsSecretes.h for the configuration of symmetric keys.
+#define SYMMETRIC_KEY_AUTHENTICATION_ENABLED 0 // 0 = Disabled; 1 = Enabled
+
 // (optional) MQTT reporting support
-// MQTT_ENABLED provides for current system status and activity reporting on information such as: uptime, number of active satellites, ntp request counts, etc.
+// MQTT_ENABLED provides for current system status and activity reporting on information such as:
+// uptime, number of active satellites, ntp request counts, etc.
 // Additional detailed related to client activity, memory usage, and historical information can be optionally included
-#define MQTT_ENABLED 1                                         // 0 = Disabled; 1 = Enabled
-#define MQTT_CLIENT_REPORTING_ENABLED 1                        // 0 = Disabled; 1 = Enabled
-#define MQTT_MEMORY_REPORTING_ENABLED 1                        // 0 = Disabled; 1 = Enabled
-#define MQTT_HISTORICAL_REPORTING_ENABLED 1                    // 0 = Disabled; 1 = Enabled
-static constexpr char MQTTServerIPAddress[] = "";              // For example 192.168.1.15
+// When symmetric-key authentication is enabled, MQTT reporting can distinguish between authenticated and unauthenticated requests as well
+// Please also see ESP32TimeServerSettingsSecretes.h for the configuration of the MQTT credentials.
+#define MQTT_ENABLED 1                                     // 0 = Disabled; 1 = Enabled
+#define MQTT_CLIENT_REPORTING_ENABLED 1                    // 0 = Disabled; 1 = Enabled
+#define MQTT_MEMORY_REPORTING_ENABLED 1                    // 0 = Disabled; 1 = Enabled
+#define MQTT_HISTORICAL_REPORTING_ENABLED 1                // 0 = Disabled; 1 = Enabled
+#define MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED 0 // 0 = Disabled; 1 = Enabled
+static constexpr char MQTTServerIPAddress[] = "";          // For example 192.168.1.15
 static constexpr uint16_t MQTTPort = 1883;
-static constexpr char MQTTUsername[] = "";
-static constexpr char MQTTPassword[] = ""; 
 static constexpr char MQTTTopic[] = "ESP32TimeServer";
 static constexpr uint16_t MQTTBrokerRetain = 1;                 // 0 = tell the broker not to retain the most current message; 1 = tell the broker to retain the most current message
-static constexpr uint32_t MQTTReportingPeriod = 900;            // in seconds  
-static constexpr uint32_t MQTTFrequencyOfKeepAliveRequest = 30; // in seconds
+static constexpr uint32_t MQTTReportingPeriod = 900;            // in seconds
+static constexpr uint32_t MQTTFrequencyOfKeepAliveRequest = 60; // in seconds
 // QoS 0 delivers at most once and does not retain reports while disconnected
 // QoS 1 delivers at least once and queues reports while disconnected
 // QoS 2 delivers exactly once and queues reports while disconnected
@@ -84,12 +95,12 @@ static constexpr int MQTT_QOS = 0;
 //         This requires a manual recalculation of MQTT_MAX_REPORT_SIZE based on the new MQTT_TF_Client_Limit.
 //         The reason this value is shown in the settings but MQTT_MAX_REPORT_SIZE is not is simply to draw
 //         your attention to the limit below - and if you're ok with it great - otherwise there is more work to do.
-static constexpr size_t MQTT_TF_Client_Limit = 500; 
+static constexpr size_t MQTT_TF_Client_Limit = 500;
 
 // (optional) setting of the ESP32-P4's MAC address support
 // set the value below to "" to use the ESP32-P4's default MAC address, or
 // set the value below to a desired MAC address, such as "80:f1:b2:d1:d9:18"
-static constexpr char MACAddress[] = ""; 
+static constexpr char MACAddress[] = "";
 
 // (optional) setting a static IP address for the ESP32-P4 support
 // set StaticIPAddress to "" to use DHCP (the default behaviour), which allows the router to

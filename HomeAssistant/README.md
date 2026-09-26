@@ -182,6 +182,22 @@ Use this option if you do **not** already have an `mqtt.yaml` file.
     - name: "NTP Requests Invalid"
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.requests.invalid }}"
+      
+    - name: "NTP Requests Authenticated Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.authenticated.valid }}"
+
+    - name: "NTP Requests Authenticated Invalid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.authenticated.invalid }}"
+
+          - name: "NTP Requests Unauthenticated Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.unauthenticated.valid }}"
+
+    - name: "NTP Requests Unauthenticated Invalid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.unauthenticated.invalid }}"
 
     - name: "NTP Telemetry Dropped"
       state_topic: "ESP32TimeServer/report"
@@ -379,6 +395,22 @@ Use this option if you already have an `mqtt.yaml` file that contains a
     - name: "NTP Requests Invalid"
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.requests.invalid }}"
+
+          - name: "NTP Requests Authenticated Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.authenticated.valid }}"
+
+    - name: "NTP Requests Authenticated Invalid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.authenticated.invalid }}"
+
+    - name: "NTP Requests Unauthenticated Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.unauthenticated.valid }}"
+
+    - name: "NTP Requests Unauthenticated Invalid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.unauthenticated.invalid }}"
 
     - name: "NTP Telemetry Dropped"
       state_topic: "ESP32TimeServer/report"
@@ -579,6 +611,22 @@ lists (no top-level `sensor:` key).
     - name: "NTP Requests Invalid"
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.requests.invalid }}"
+
+    - name: "NTP Requests Authenticated Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.authenticated.valid }}"
+
+    - name: "NTP Requests Authenticated Invalid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.authenticated.invalid }}"
+
+    - name: "NTP Requests Unauthenticated Valid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.unauthenticated.valid }}"
+
+    - name: "NTP Requests Unauthenticated Invalid"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.unauthenticated.invalid }}"
 
     - name: "NTP Telemetry Dropped"
       state_topic: "ESP32TimeServer/report"
@@ -873,7 +921,32 @@ entities:
     icon: mdi:update
 ```
 
+**Note**: when SYMMETRIC_KEY_AUTHENTICATION_ENABLED and MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED are both enabled
+replace the following from above:
+```
+  - entity: sensor.ntp_requests_valid
+    name: Valid requests
+    icon: mdi:bookmark-check-outline
+  - entity: sensor.ntp_requests_invalid
+    name: Invalid requests
+    icon: mdi:bookmark-remove-outline
+```
+with:
 
+```
+  - entity: sensor.ntp_requests_authenticated_valid
+    name: Authenticated valid requests
+    icon: mdi:bookmark-check-outline
+  - entity: sensor.ntp_requests_authenticated_invalid
+    name: Authenticated invalid requests
+    icon: mdi:bookmark-remove-outline
+  - entity: sensor.ntp_requests_unauthenticated_valid
+    name: Unauthenticated valid requests
+    icon: mdi:bookmark-check-outline
+  - entity: sensor.ntp_requests_unauthenticated_invalid
+    name: Unauthenticated invalid requests
+    icon: mdi:bookmark-remove-outline
+ ``` 
 
 4. Click **Save**. The card will appear on your dashboard displaying last
    published report from the ESP32 Time Server.

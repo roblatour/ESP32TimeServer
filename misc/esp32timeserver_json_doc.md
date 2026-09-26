@@ -230,6 +230,37 @@ Historical timestamps use the same format as `current - time` (above). A
 timestamp is published as an empty string when no corresponding event time is
 available.
 
+### `Symmetric key authentication details`
+
+When both SYMMETRIC_KEY_AUTHENTICATION_ENABLED **and** MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED are enabled then use:
+ 
+```json
+ "ntp": {
+            "requests": {
+                "authenticated": {
+                    "valid": 4,
+                    "invalid": 0
+                },
+                "unauthenticated": {
+                    "valid": 0,
+                    "invalid": 0
+                },
+                "telemetry_dropped": 0,
+                "max_per_second": 1
+            },
+```
+as a replacement for 
+```json
+ "ntp": {
+            "requests": {
+                "valid": 4,
+                "invalid": 0,
+                "telemetry_dropped": 0,
+                "max_per_second": 1
+            },
+```
+as shown above.
+
 ## Controlled restart messages
 
 Controlled restarts are triggered in specific events:

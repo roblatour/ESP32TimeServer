@@ -39,8 +39,7 @@ pip install scipy
    External_Pool_2 = "0.ca.pool.ntp.org"
    ESP32TimerServer_master = "192.168.7.24"
    ESP32TimeServer_reference = "192.168.1.24"
-   overall_report_duration_minutes = 120
-   number_of_test_series = 8
+   overall_report_duration_minutes = 120 
    ```
 
 3. Stop any system-wide network time service (such as with OPNsense).
@@ -55,6 +54,9 @@ pip install scipy
    py drift_test.py
    ```
    - When run, it will immediately show you when the test is expected to conclude.
+   - tests series will be run immediately when the script starts, and every half hour afterwards
+   - As it runs, it will provide a status update of its progress
+   - When complete, the script will show you that it is complete.
    - This will (re)create a file called `gathered_data.txt`.
    - When complete, the script will show you that it is complete.
 

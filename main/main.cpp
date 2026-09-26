@@ -1,4 +1,4 @@
-// ESP32 Time Server v2.9.2
+// ESP32 Time Server v3
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -6,12 +6,12 @@
 // ESP32 Dev Board:     ESP32-P4-ETH https://www.waveshare.com/esp32-p4-eth.htm
 //                                   https://www.waveshare.com/wiki/ESP32-P4-ETH?srsltid=AfmBOoo6nZm5hsPAhtpzT6lWSHd2zhWNPM_mqgbNvyoESbjvbO7uykcH
 //
-//                      NOTE: Powering the ESP32-P4_ETH by either a USB C cable or, with its optional POE had installed,
-//                      a POE Ethernet cable is sufficient to power the ESP32-P4-ETH, GNSS module and LCD screen.
+//                      NOTE: Powering a Waveshare ESP32-P4 POE development board by either a USB C cable or
+//                      via POE Ethernet cable is sufficient to power this project,
 //
-//                      ************************************************************************************************
-//                      * HOWEVER DO NOT POWER THE ESP32-P4_ETH VIA BOTH ITS USB C CONNECTION AND POE AT THE SAME TIME *
-//                      ************************************************************************************************
+//                      *****************************************************************************************************
+//                      * HOWEVER DO NOT POWER THE DEVELOPMENT BOARD VIA BOTH ITS USB C CONNECTION AND POE AT THE SAME TIME *
+//                      *****************************************************************************************************
 //
 // GNSS (recommended):  SparkFun GNSS Receiver Breakout - MAX-M10S  https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html
 //
@@ -57,6 +57,9 @@
 #include "SparkFun_u-blox_GNSS_v3.h"
 #include "ESP32TimeServerSettings.h"
 #include "custom/app_metadata.h"
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#include "custom/ntp_auth.h"
+#endif
 #include "custom/ntp_cache.h"
 
 extern "C"
@@ -127,20 +130,46 @@ static const char *TAG = "main_cpp";
 // Here is what a successful startup health test looks like in the logs:
 /*
 
-I (27880) main_cpp: Health Check started
-I (27880) main_cpp: Health Check 01 - IPv4 loopback: NTPv3 standard    - Passed
-I (27880) main_cpp: Health Check 02 - IPv4 loopback: NTPv4 standard    - Passed
-I (27886) main_cpp: Health Check 03 - IPv4 loopback: NTPv4 interleaved - Passed
-I (27893) main_cpp: Health Check 04 - IPv4 assigned: NTPv3 standard    - Passed
-I (27901) main_cpp: Health Check 05 - IPv4 assigned: NTPv4 standard    - Passed
-I (27908) main_cpp: Health Check 06 - IPv4 assigned: NTPv4 interleaved - Passed
-I (27915) main_cpp: Health Check 07 - IPv6 loopback: NTPv3 standard    - Passed
-I (27922) main_cpp: Health Check 08 - IPv6 loopback: NTPv4 standard    - Passed
-I (27929) main_cpp: Health Check 09 - IPv6 loopback: NTPv4 interleaved - Passed
-I (27936) main_cpp: Health Check 10 - IPv6 assigned: NTPv3 standard    - Passed
-I (27943) main_cpp: Health Check 11 - IPv6 assigned: NTPv4 standard    - Passed
-I (27950) main_cpp: Health Check 12 - IPv6 assigned: NTPv4 interleaved - Passed
-I (27957) main_cpp: Health Check completed
+
+I (39724) main_cpp: Health Check started
+I (39725) main_cpp: Health Check 01 - IPv4 loopback: NTPv3 standard      - Passed
+I (39725) main_cpp: Health Check 02 - IPv4 loopback: NTPv4 standard      - Passed
+I (39731) main_cpp: Health Check 03 - IPv4 loopback: NTPv4 interleaved   - Passed
+I (39739) main_cpp: Health Check 04 - IPv4 loopback: NTPv4 auth standard - Passed
+I (39746) main_cpp: Health Check 05 - IPv4 loopback: NTPv4 auth interlv  - Passed
+I (39753) main_cpp: Health Check 06 - IPv4 loopback: NTPv4 invalid auth  - Passed
+I (39760) main_cpp: Health Check 07 - IPv4 loopback: NTPv4 unknown key   - Passed
+I (39767) main_cpp: Health Check 08 - IPv4 loopback: NTPv4 truncated MAC - Passed
+I (39775) main_cpp: Health Check 09 - IPv4 loopback: NTPv4 altered reply - Passed
+I (39782) main_cpp: Health Check 10 - IPv4 assigned: NTPv3 standard      - Passed
+I (39789) main_cpp: Health Check 11 - IPv4 assigned: NTPv4 standard      - Passed
+I (39796) main_cpp: Health Check 12 - IPv4 assigned: NTPv4 interleaved   - Passed
+I (39803) main_cpp: Health Check 13 - IPv4 assigned: NTPv4 auth standard - Passed
+I (39811) main_cpp: Health Check 14 - IPv4 assigned: NTPv4 auth interlv  - Passed
+I (39818) main_cpp: Health Check 15 - IPv4 assigned: NTPv4 invalid auth  - Passed
+I (39825) main_cpp: Health Check 16 - IPv4 assigned: NTPv4 unknown key   - Passed
+I (39832) main_cpp: Health Check 17 - IPv4 assigned: NTPv4 truncated MAC - Passed
+I (39839) main_cpp: Health Check 18 - IPv4 assigned: NTPv4 altered reply - Passed
+I (39847) main_cpp: Health Check 19 - IPv6 loopback: NTPv3 standard      - Passed
+I (39854) main_cpp: Health Check 20 - IPv6 loopback: NTPv4 standard      - Passed
+I (39861) main_cpp: Health Check 21 - IPv6 loopback: NTPv4 interleaved   - Passed
+I (39868) main_cpp: Health Check 22 - IPv6 loopback: NTPv4 auth standard - Passed
+I (39876) main_cpp: Health Check 23 - IPv6 loopback: NTPv4 auth interlv  - Passed
+I (39883) main_cpp: Health Check 24 - IPv6 loopback: NTPv4 invalid auth  - Passed
+I (39890) main_cpp: Health Check 25 - IPv6 loopback: NTPv4 unknown key   - Passed
+I (39897) main_cpp: Health Check 26 - IPv6 loopback: NTPv4 truncated MAC - Passed
+I (39904) main_cpp: Health Check 27 - IPv6 loopback: NTPv4 altered reply - Passed
+I (39912) main_cpp: Health Check 28 - IPv6 assigned: NTPv3 standard      - Passed
+I (39919) main_cpp: Health Check 29 - IPv6 assigned: NTPv4 standard      - Passed
+I (39926) main_cpp: Health Check 30 - IPv6 assigned: NTPv4 interleaved   - Passed
+I (39933) main_cpp: Health Check 31 - IPv6 assigned: NTPv4 auth standard - Passed
+I (39940) main_cpp: Health Check 32 - IPv6 assigned: NTPv4 auth interlv  - Passed
+I (39948) main_cpp: Health Check 33 - IPv6 assigned: NTPv4 invalid auth  - Passed
+I (39955) main_cpp: Health Check 34 - IPv6 assigned: NTPv4 unknown key   - Passed
+I (39962) main_cpp: Health Check 35 - IPv6 assigned: NTPv4 truncated MAC - Passed
+I (39969) main_cpp: Health Check 36 - IPv6 assigned: NTPv4 altered reply - Passed
+I (39976) main_cpp: Health Check 37 - MQTT metrics                       - Passed
+I (39984) main_cpp: Health Check completed
 
 */
 
@@ -160,12 +189,12 @@ static constexpr size_t Ethernet_Transport_Recovery_Task_Stack_Size = 3072;
 static constexpr size_t GNSS_Recovery_Task_Stack_Size = 12288;
 static constexpr size_t GNSS_Time_Sync_Task_Stack_Size = 2517;
 static constexpr size_t Hardware_NTP_Server_Task_Stack_Size = 4096;
-static constexpr size_t LED_LCD_Button_Task_Stack_Size = 3100;
+static constexpr size_t LED_LCD_Button_Task_Stack_Size = 3217;
 static constexpr size_t MQTT_Service_Task_Stack_Size = 3512;
 static constexpr size_t NTP_Cache_Purge_Task_Stack_Size = 2304;
 static constexpr size_t NTP_Server_Task_Stack_Size = 3560;
 static constexpr size_t OTE_Service_Task_Stack_Size = 3560; // unlikely to exceed this stack size (based on current implementation)
-static constexpr size_t PPS_Discipline_Task_Stack_Size = 2347;
+static constexpr size_t PPS_Discipline_Task_Stack_Size = 2390;
 
 static constexpr unsigned int Default_Safety_Margin_Percent = 30; // unless otherwise specified add this percentage to the highest stack usage as a safety margin
 
@@ -447,6 +476,11 @@ static constexpr gpio_num_t LCD_I2C_SCL_GPIO = GPIO_NUM_7;
 
 static constexpr uint16_t NTP_PORT = 123;
 static constexpr size_t NTP_PACKET_SIZE = 48;
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+static constexpr size_t NTP_MAX_PACKET_SIZE = NTP_PACKET_SIZE + NTP_AUTH_TRAILER_SIZE;
+#else
+static constexpr size_t NTP_MAX_PACKET_SIZE = NTP_PACKET_SIZE;
+#endif
 static constexpr uint64_t NTP_EPOCH_OFFSET = 2208988800ULL;
 static constexpr int8_t NTP_PRECISION_EXPONENT = -13;
 static constexpr uint32_t NTP_ROOT_DISPERSION = 66;
@@ -615,6 +649,10 @@ static std::atomic<uint32_t> s_pps_pulses{0};
 static std::atomic<uint32_t> s_ntp_requests_this_second{0};
 static std::atomic<uint32_t> s_ntp_valid_requests{0};
 static std::atomic<uint32_t> s_ntp_invalid_requests{0};
+static std::atomic<uint32_t> s_ntp_authenticated_valid_requests{0};
+static std::atomic<uint32_t> s_ntp_authenticated_invalid_requests{0};
+static std::atomic<uint32_t> s_ntp_unauthenticated_valid_requests{0};
+static std::atomic<uint32_t> s_ntp_unauthenticated_invalid_requests{0};
 static std::atomic<uint32_t> s_ntp_responses{0};
 static std::atomic<uint32_t> s_ntp_responses_synchronized_and_disciplined{0};
 static std::atomic<uint32_t> s_ntp_responses_gnss_unsynchronized{0};
@@ -1271,10 +1309,8 @@ static bool initialize_nvs_storage()
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {
-        err = nvs_flash_erase();
-        if (err != ESP_OK)
-            return false;
-        err = nvs_flash_init();
+        ESP_LOGE(TAG, "NVS recovery requires operator action; automatic erase is disabled to preserve authentication storage");
+        return false;
     }
 
     if (err != ESP_OK)
@@ -1681,11 +1717,11 @@ static constexpr size_t ETH_HEADER_SIZE = 14;
 static constexpr size_t IPV4_HEADER_SIZE = 20;
 static constexpr size_t IPV6_HEADER_SIZE = 40;
 static constexpr size_t UDP_HEADER_SIZE = 8;
-static constexpr size_t RAW_NTP_FRAME_SIZE = ETH_HEADER_SIZE + IPV4_HEADER_SIZE + UDP_HEADER_SIZE + NTP_PACKET_SIZE;
-static constexpr size_t RAW_IPV6_NTP_FRAME_SIZE = ETH_HEADER_SIZE + IPV6_HEADER_SIZE + UDP_HEADER_SIZE + NTP_PACKET_SIZE;
+static constexpr size_t RAW_NTP_FRAME_SIZE = ETH_HEADER_SIZE + IPV4_HEADER_SIZE + UDP_HEADER_SIZE + NTP_MAX_PACKET_SIZE;
+static constexpr size_t RAW_IPV6_NTP_FRAME_SIZE = ETH_HEADER_SIZE + IPV6_HEADER_SIZE + UDP_HEADER_SIZE + NTP_MAX_PACKET_SIZE;
 static constexpr size_t HARDWARE_NTP_REQUEST_QUEUE_DEPTH = 256;
 static constexpr size_t HARDWARE_NTP_REQUEST_BUFFER_COUNT = 64; // Do not increase this value, larger pools caused unacceptable internal/DMA-memory pressure
-static constexpr size_t HARDWARE_NTP_REQUEST_BUFFER_SIZE = ETH_HEADER_SIZE + IPV6_HEADER_SIZE + 60 + UDP_HEADER_SIZE + NTP_PACKET_SIZE;
+static constexpr size_t HARDWARE_NTP_REQUEST_BUFFER_SIZE = ETH_HEADER_SIZE + IPV6_HEADER_SIZE + 60 + UDP_HEADER_SIZE + NTP_MAX_PACKET_SIZE;
 static constexpr uint32_t HARDWARE_NTP_TRANSMIT_RETRY_COUNT = 3;
 static constexpr uint32_t HARDWARE_NTP_TRANSMIT_RETRY_DELAY_US = 10;
 static constexpr uint32_t ETHERNET_RECOVERY_DELAY_MS = 100;
@@ -1786,7 +1822,7 @@ static bool timestamp_is_valid(const eth_mac_time_t *timestamp)
 
 static bool is_ipv4_ntp_request(const uint8_t *frame, uint32_t length, size_t *ip_offset, size_t *udp_offset)
 {
-    if (frame == nullptr || length < RAW_NTP_FRAME_SIZE || frame[12] != 0x08 || frame[13] != 0x00)
+    if (frame == nullptr || length < ETH_HEADER_SIZE + IPV4_HEADER_SIZE + UDP_HEADER_SIZE + NTP_PACKET_SIZE || frame[12] != 0x08 || frame[13] != 0x00)
         return false;
 
     const size_t ipv4_offset = ETH_HEADER_SIZE;
@@ -1800,7 +1836,8 @@ static bool is_ipv4_ntp_request(const uint8_t *frame, uint32_t length, size_t *i
     const size_t udp_header_offset = ipv4_offset + header_length;
     const uint16_t udp_length = static_cast<uint16_t>((frame[udp_header_offset + 4] << 8) | frame[udp_header_offset + 5]);
     const uint16_t destination_port = static_cast<uint16_t>((frame[udp_header_offset + 2] << 8) | frame[udp_header_offset + 3]);
-    if (destination_port != NTP_PORT || udp_length != UDP_HEADER_SIZE + NTP_PACKET_SIZE)
+    if (destination_port != NTP_PORT || udp_length < UDP_HEADER_SIZE + NTP_PACKET_SIZE ||
+        udp_length > UDP_HEADER_SIZE + NTP_MAX_PACKET_SIZE || udp_header_offset + udp_length > length)
         return false;
 
     *ip_offset = ipv4_offset;
@@ -1815,7 +1852,7 @@ static bool is_ipv6_extension_header(uint8_t next_header)
 
 static bool is_ipv6_ntp_request(const uint8_t *frame, uint32_t length, size_t *ip_offset, size_t *udp_offset)
 {
-    if (frame == nullptr || length < RAW_IPV6_NTP_FRAME_SIZE || frame[12] != 0x86 || frame[13] != 0xDD)
+    if (frame == nullptr || length < ETH_HEADER_SIZE + IPV6_HEADER_SIZE + UDP_HEADER_SIZE + NTP_PACKET_SIZE || frame[12] != 0x86 || frame[13] != 0xDD)
         return false;
 
     const size_t ipv6_offset = ETH_HEADER_SIZE;
@@ -1847,7 +1884,8 @@ static bool is_ipv6_ntp_request(const uint8_t *frame, uint32_t length, size_t *i
 
     const uint16_t udp_length = static_cast<uint16_t>((frame[offset + 4] << 8) | frame[offset + 5]);
     const uint16_t destination_port = static_cast<uint16_t>((frame[offset + 2] << 8) | frame[offset + 3]);
-    if (destination_port != NTP_PORT || udp_length != UDP_HEADER_SIZE + NTP_PACKET_SIZE ||
+    if (destination_port != NTP_PORT || udp_length < UDP_HEADER_SIZE + NTP_PACKET_SIZE ||
+        udp_length > UDP_HEADER_SIZE + NTP_MAX_PACKET_SIZE ||
         offset + udp_length != payload_end)
         return false;
 
@@ -1889,7 +1927,7 @@ static bool is_internal_ntp_client(const struct sockaddr_storage &address)
 
 static uint16_t ipv6_udp_checksum(const uint8_t *source, const uint8_t *destination, const uint8_t *udp, size_t udp_length)
 {
-    uint8_t checksum_data[IPV6_HEADER_SIZE + UDP_HEADER_SIZE + NTP_PACKET_SIZE] = {};
+    uint8_t checksum_data[IPV6_HEADER_SIZE + UDP_HEADER_SIZE + NTP_MAX_PACKET_SIZE] = {};
     memcpy(checksum_data, source, 16);
     memcpy(checksum_data + 16, destination, 16);
     checksum_data[35] = static_cast<uint8_t>(udp_length);
@@ -1922,6 +1960,28 @@ static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *
         return ESP_OK;
     }
 
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+    const size_t request_length = static_cast<size_t>((frame[udp_offset + 4] << 8) | frame[udp_offset + 5]) - UDP_HEADER_SIZE;
+    uint32_t authentication_key_id = 0;
+    const ntp_auth_result_t authentication_result = ntp_auth_verify_request(request, request_length, version, &authentication_key_id);
+    if (authentication_result != ntp_auth_result_t::unauthenticated && authentication_result != ntp_auth_result_t::valid)
+    {
+#if MQTT_ENABLED
+        s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+        if (version == 4)
+            s_ntp_authenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+        else
+            s_ntp_unauthenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+        s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
+#endif
+        release_hardware_ntp_request_buffer(frame);
+        return ESP_OK;
+    }
+    const bool authenticated_request = authentication_result == ntp_auth_result_t::valid;
+#else
+    const bool authenticated_request = false;
+#endif
+
     const uint32_t client_ip = (static_cast<uint32_t>(frame[ip_offset + 12]) << 24) |
                                (static_cast<uint32_t>(frame[ip_offset + 13]) << 16) |
                                (static_cast<uint32_t>(frame[ip_offset + 14]) << 8) |
@@ -1942,9 +2002,13 @@ static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *
     source_ipv4_address->sin_port = htons(client_port);
     memcpy(&source_ipv4_address->sin_addr, frame + ip_offset + 12, sizeof(source_ipv4_address->sin_addr));
     s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
+    if (authenticated_request)
+        s_ntp_authenticated_valid_requests.fetch_add(1, std::memory_order_relaxed);
+    else
+        s_ntp_unauthenticated_valid_requests.fetch_add(1, std::memory_order_relaxed);
     mqtt_enqueue_ntp_request(source_address);
 #endif
-    uint8_t reply[NTP_PACKET_SIZE] = {};
+    uint8_t reply[NTP_MAX_PACKET_SIZE] = {};
     const ntp_reply_status_t status = get_ntp_reply_status();
 #if MQTT_ENABLED
     if (status.gnss_synchronized && status.pps_disciplined)
@@ -2009,7 +2073,7 @@ static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *
     udp[3] = frame[udp_offset + 1];
     udp[4] = 0;
     udp[5] = UDP_HEADER_SIZE + NTP_PACKET_SIZE;
-    memcpy(udp + UDP_HEADER_SIZE, reply, sizeof(reply));
+    memcpy(udp + UDP_HEADER_SIZE, reply, NTP_PACKET_SIZE);
 
     esp_err_t result = ESP_ERR_INVALID_STATE;
     if (s_hardware_ntp_accepting.load(std::memory_order_acquire) &&
@@ -2024,10 +2088,25 @@ static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *
                     if (!interleaved_reply)
                     {
                         write_ntp_timestamp(reply, 40, get_current_time_in_ntp64_format());
-                        memcpy(udp + UDP_HEADER_SIZE, reply, sizeof(reply));
                     }
 
-                    result = esp_eth_transmit(handle, response_frame, sizeof(response_frame));
+                    size_t reply_length = NTP_PACKET_SIZE;
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+                    if (authenticated_request && !ntp_auth_append_response(reply, sizeof(reply), &reply_length, authentication_key_id))
+                        break;
+#endif
+                    ip[2] = static_cast<uint8_t>((IPV4_HEADER_SIZE + UDP_HEADER_SIZE + reply_length) >> 8);
+                    ip[3] = static_cast<uint8_t>(IPV4_HEADER_SIZE + UDP_HEADER_SIZE + reply_length);
+                    ip[10] = 0;
+                    ip[11] = 0;
+                    const uint16_t refreshed_ip_checksum = internet_checksum(ip, IPV4_HEADER_SIZE);
+                    ip[10] = static_cast<uint8_t>(refreshed_ip_checksum >> 8);
+                    ip[11] = static_cast<uint8_t>(refreshed_ip_checksum);
+                    udp[4] = static_cast<uint8_t>((UDP_HEADER_SIZE + reply_length) >> 8);
+                    udp[5] = static_cast<uint8_t>(UDP_HEADER_SIZE + reply_length);
+                    memcpy(udp + UDP_HEADER_SIZE, reply, reply_length);
+
+                    result = esp_eth_transmit(handle, response_frame, ETH_HEADER_SIZE + IPV4_HEADER_SIZE + UDP_HEADER_SIZE + reply_length);
                     if (result != ESP_ERR_NO_MEM)
                         break;
                     esp_rom_delay_us(HARDWARE_NTP_TRANSMIT_RETRY_DELAY_US);
@@ -2082,6 +2161,28 @@ static esp_err_t process_hardware_ipv6_ntp_request(esp_eth_handle_t handle, uint
         return ESP_OK;
     }
 
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+    const size_t request_length = static_cast<size_t>((frame[udp_offset + 4] << 8) | frame[udp_offset + 5]) - UDP_HEADER_SIZE;
+    uint32_t authentication_key_id = 0;
+    const ntp_auth_result_t authentication_result = ntp_auth_verify_request(request, request_length, version, &authentication_key_id);
+    if (authentication_result != ntp_auth_result_t::unauthenticated && authentication_result != ntp_auth_result_t::valid)
+    {
+#if MQTT_ENABLED
+        s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+        if (version == 4)
+            s_ntp_authenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+        else
+            s_ntp_unauthenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+        s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
+#endif
+        release_hardware_ntp_request_buffer(frame);
+        return ESP_OK;
+    }
+    const bool authenticated_request = authentication_result == ntp_auth_result_t::valid;
+#else
+    const bool authenticated_request = false;
+#endif
+
     struct in6_addr client_ip{};
     memcpy(&client_ip, frame + ip_offset + 8, sizeof(client_ip));
     const uint16_t client_port = static_cast<uint16_t>((frame[udp_offset] << 8) | frame[udp_offset + 1]);
@@ -2101,9 +2202,13 @@ static esp_err_t process_hardware_ipv6_ntp_request(esp_eth_handle_t handle, uint
     source_ipv6_address->sin6_scope_id = esp_netif_get_netif_impl_index(static_cast<esp_netif_t *>(netif));
     source_ipv6_address->sin6_addr = client_ip;
     s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
+    if (authenticated_request)
+        s_ntp_authenticated_valid_requests.fetch_add(1, std::memory_order_relaxed);
+    else
+        s_ntp_unauthenticated_valid_requests.fetch_add(1, std::memory_order_relaxed);
     mqtt_enqueue_ntp_request(source_address);
 #endif
-    uint8_t reply[NTP_PACKET_SIZE] = {};
+    uint8_t reply[NTP_MAX_PACKET_SIZE] = {};
     const ntp_reply_status_t status = get_ntp_reply_status();
 #if MQTT_ENABLED
     if (status.gnss_synchronized && status.pps_disciplined)
@@ -2148,7 +2253,7 @@ static esp_err_t process_hardware_ipv6_ntp_request(esp_eth_handle_t handle, uint
     udp[2] = frame[udp_offset];
     udp[3] = frame[udp_offset + 1];
     udp[5] = UDP_HEADER_SIZE + NTP_PACKET_SIZE;
-    memcpy(udp + UDP_HEADER_SIZE, reply, sizeof(reply));
+    memcpy(udp + UDP_HEADER_SIZE, reply, NTP_PACKET_SIZE);
     const uint16_t checksum = ipv6_udp_checksum(ip + 8, ip + 24, udp, UDP_HEADER_SIZE + NTP_PACKET_SIZE);
     udp[6] = static_cast<uint8_t>(checksum >> 8);
     udp[7] = static_cast<uint8_t>(checksum);
@@ -2164,14 +2269,23 @@ static esp_err_t process_hardware_ipv6_ntp_request(esp_eth_handle_t handle, uint
                 if (!interleaved_reply)
                 {
                     write_ntp_timestamp(reply, 40, get_current_time_in_ntp64_format());
-                    memcpy(udp + UDP_HEADER_SIZE, reply, sizeof(reply));
-                    udp[6] = 0;
-                    udp[7] = 0;
-                    const uint16_t refreshed_checksum = ipv6_udp_checksum(ip + 8, ip + 24, udp, UDP_HEADER_SIZE + NTP_PACKET_SIZE);
-                    udp[6] = static_cast<uint8_t>(refreshed_checksum >> 8);
-                    udp[7] = static_cast<uint8_t>(refreshed_checksum);
                 }
-                result = esp_eth_transmit(handle, response_frame, sizeof(response_frame));
+                size_t reply_length = NTP_PACKET_SIZE;
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+                if (authenticated_request && !ntp_auth_append_response(reply, sizeof(reply), &reply_length, authentication_key_id))
+                    break;
+#endif
+                ip[4] = static_cast<uint8_t>((UDP_HEADER_SIZE + reply_length) >> 8);
+                ip[5] = static_cast<uint8_t>(UDP_HEADER_SIZE + reply_length);
+                udp[4] = static_cast<uint8_t>((UDP_HEADER_SIZE + reply_length) >> 8);
+                udp[5] = static_cast<uint8_t>(UDP_HEADER_SIZE + reply_length);
+                memcpy(udp + UDP_HEADER_SIZE, reply, reply_length);
+                udp[6] = 0;
+                udp[7] = 0;
+                const uint16_t refreshed_checksum = ipv6_udp_checksum(ip + 8, ip + 24, udp, UDP_HEADER_SIZE + reply_length);
+                udp[6] = static_cast<uint8_t>(refreshed_checksum >> 8);
+                udp[7] = static_cast<uint8_t>(refreshed_checksum);
+                result = esp_eth_transmit(handle, response_frame, ETH_HEADER_SIZE + IPV6_HEADER_SIZE + UDP_HEADER_SIZE + reply_length);
                 if (result != ESP_ERR_NO_MEM)
                     break;
                 esp_rom_delay_us(HARDWARE_NTP_TRANSMIT_RETRY_DELAY_US);
@@ -2303,9 +2417,14 @@ static void hardware_ntp_server_task(void *parameter)
 #if MQTT_ENABLED
 static void recover_ethernet_transport()
 {
-    if (ETH.handle() == nullptr || s_hardware_ntp_transmit_mutex == nullptr ||
+    if (!s_ethernet_connected.load(std::memory_order_acquire) || ETH.handle() == nullptr || s_hardware_ntp_transmit_mutex == nullptr ||
         xSemaphoreTake(s_hardware_ntp_transmit_mutex, portMAX_DELAY) != pdTRUE)
         return;
+    if (!s_ethernet_connected.load(std::memory_order_acquire))
+    {
+        xSemaphoreGive(s_hardware_ntp_transmit_mutex);
+        return;
+    }
 
     ESP_LOGW(TAG, "MQTT and NTP transport stalled; restarting Ethernet");
     s_hardware_ntp_accepting.store(false, std::memory_order_release);
@@ -2330,7 +2449,9 @@ static void ethernet_transport_recovery_task(void *parameter)
         const int64_t now_us = esp_timer_get_time();
         const int64_t disconnected_since_us = s_mqtt_disconnected_since_us.load(std::memory_order_acquire);
         const int64_t last_ntp_response_us = s_last_hardware_ntp_response_us.load(std::memory_order_acquire);
-        if (s_mqtt_has_connected.load(std::memory_order_acquire) &&
+        if (s_ethernet_connected.load(std::memory_order_acquire) &&
+            (xEventGroupGetBits(s_net_event_group) & (ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT)) != 0 &&
+            s_mqtt_has_connected.load(std::memory_order_acquire) &&
             !s_mqtt_connected.load(std::memory_order_acquire) && disconnected_since_us > 0 &&
             now_us - disconnected_since_us >= NTP_TRANSPORT_STALL_TIMEOUT_US &&
             last_ntp_response_us > 0 && now_us - last_ntp_response_us >= NTP_TRANSPORT_STALL_TIMEOUT_US)
@@ -4279,8 +4400,21 @@ static void mqtt_build_report(char *payload, size_t payload_size)
     len += snprintf(payload + len, payload_size - len, "},");
     len += snprintf(payload + len, payload_size - len, "\"ntp\":{");
     len += snprintf(payload + len, payload_size - len, "\"requests\":{");
-    len += snprintf(payload + len, payload_size - len, "\"valid\":%lu,", (unsigned long)s_ntp_valid_requests.exchange(0));
-    len += snprintf(payload + len, payload_size - len, "\"invalid\":%lu,", (unsigned long)s_ntp_invalid_requests.exchange(0));
+    const uint32_t authenticated_valid = s_ntp_authenticated_valid_requests.exchange(0);
+    const uint32_t authenticated_invalid = s_ntp_authenticated_invalid_requests.exchange(0);
+    const uint32_t unauthenticated_valid = s_ntp_unauthenticated_valid_requests.exchange(0);
+    const uint32_t unauthenticated_invalid = s_ntp_unauthenticated_invalid_requests.exchange(0);
+    s_ntp_valid_requests.exchange(0);
+    s_ntp_invalid_requests.exchange(0);
+
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED && MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED
+    len += snprintf(payload + len, payload_size - len, "\"authenticated\":{\"valid\":%lu,\"invalid\":%lu},", (unsigned long)authenticated_valid, (unsigned long)authenticated_invalid);
+    len += snprintf(payload + len, payload_size - len, "\"unauthenticated\":{\"valid\":%lu,\"invalid\":%lu},", (unsigned long)unauthenticated_valid, (unsigned long)unauthenticated_invalid);
+#else
+    len += snprintf(payload + len, payload_size - len, "\"valid\":%lu,", (unsigned long)(authenticated_valid + unauthenticated_valid));
+    len += snprintf(payload + len, payload_size - len, "\"invalid\":%lu,", (unsigned long)(authenticated_invalid + unauthenticated_invalid));
+#endif
+
     len += snprintf(payload + len, payload_size - len, "\"telemetry_dropped\":%lu,", (unsigned long)s_ntp_telemetry_events_dropped.exchange(0));
     len += snprintf(payload + len, payload_size - len, "\"max_per_second\":%lu", (unsigned long)most_requests_per_second);
     len += snprintf(payload + len, payload_size - len, "},");
@@ -4804,6 +4938,8 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
         s_ethernet_connected.store(true);
 #if MQTT_ENABLED
         s_eth_link_connected_us.store(esp_timer_get_time());
+        if (s_mqtt_has_connected.load(std::memory_order_acquire))
+            s_mqtt_disconnected_since_us.store(esp_timer_get_time(), std::memory_order_release);
 #endif
 #if DEBUG_ENABLED
         ESP_LOGI(TAG, "Ethernet link connected");
@@ -4814,6 +4950,10 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
     case ARDUINO_EVENT_ETH_GOT_IP:
         snprintf(s_ipv4_address, sizeof(s_ipv4_address), IPSTR, IP2STR(&info.got_ip.ip_info.ip));
         update_selected_ip_address();
+#if MQTT_ENABLED
+        if (s_mqtt_has_connected.load(std::memory_order_acquire) && !s_mqtt_connected.load(std::memory_order_acquire))
+            s_mqtt_disconnected_since_us.store(esp_timer_get_time(), std::memory_order_release);
+#endif
 #if DEBUG_ENABLED
         ESP_LOGI(TAG,
                  "Ethernet IPv4 acquired: ip=" IPSTR ", mask=" IPSTR ", gw=" IPSTR,
@@ -4828,6 +4968,10 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
         if (inet_ntop(AF_INET6, &info.got_ip6.ip6_info.ip, s_ipv6_address, sizeof(s_ipv6_address)) == nullptr)
             s_ipv6_address[0] = '\0';
         update_selected_ip_address();
+#if MQTT_ENABLED
+        if (s_mqtt_has_connected.load(std::memory_order_acquire) && !s_mqtt_connected.load(std::memory_order_acquire))
+            s_mqtt_disconnected_since_us.store(esp_timer_get_time(), std::memory_order_release);
+#endif
 #if DEBUG_ENABLED
         ESP_LOGI(TAG, "Ethernet IPv6 acquired: %s", s_ipv6_address);
 #endif
@@ -5058,6 +5202,12 @@ void write_opening_messages_to_the_console()
     ESP_LOGW(TAG, "Over the Ethernet update support: Disabled");
 #endif
 
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+    ESP_LOGI(TAG, "Symmetric-key authentication support: Enabled");
+#else
+    ESP_LOGW(TAG, "Symmetric-key authentication support: Disabled");
+#endif
+
 #if MQTT_ENABLED
     ESP_LOGI(TAG, "MQTT support: Enabled");
 
@@ -5083,6 +5233,12 @@ void write_opening_messages_to_the_console()
     ESP_LOGW(TAG, "MQTT support: Disabled");
 #endif
 
+#if MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED
+    ESP_LOGI(TAG, "MQTT distinguish authenticated and unauthenticated reporting: Enabled");
+#else
+    ESP_LOGW(TAG, "MQTT distinguish authenticated and unauthenticated reporting: Disabled");
+#endif
+
     ESP_LOGI(TAG, "");
 }
 
@@ -5103,6 +5259,31 @@ void write_open_for_business_messages_to_the_console()
     //    although at least one has been recently available as evidence by at least one acquired IP address
     //
 
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+
+    if (ntp_auth_key_count() != 0)
+    {
+        char authentication_key_hex[NTP_AUTH_MAX_KEY_SIZE * 2 + 1] = "";
+        uint32_t authentication_key_id = 0;
+        ESP_LOGI(TAG, "Authorization key(s) for use with Meinberg (set in the client's ntp.keys file):");
+        ESP_LOGI(TAG, " ");
+        for (size_t index = 0; index < ntp_auth_key_count(); ++index)
+        {
+            if (ntp_auth_key_hex(index, &authentication_key_id, authentication_key_hex, sizeof(authentication_key_hex)))
+                ESP_LOGI(TAG, "%" PRIu32 " SHA256 %s", authentication_key_id, authentication_key_hex);
+        }
+        ESP_LOGI(TAG, " ");
+        ESP_LOGI(TAG, "Authorization key(s) for use with Chrony (set in the client's chrony.keys file):");
+        ESP_LOGI(TAG, " ");
+        for (size_t index = 0; index < ntp_auth_key_count(); ++index)
+        {
+            if (ntp_auth_key_hex(index, &authentication_key_id, authentication_key_hex, sizeof(authentication_key_hex)))
+                ESP_LOGI(TAG, "%" PRIu32 " SHA256 HEX:%s", authentication_key_id, authentication_key_hex);
+        }
+        ESP_LOGI(TAG, " ");
+    }
+#endif
+
     if (s_ipv4_address[0] != '\0')
         ESP_LOGI(TAG, "The IPv4 connection is up (%s)", s_ipv4_address);
     else
@@ -5118,6 +5299,7 @@ void write_open_for_business_messages_to_the_console()
     // Note: 'Open for business' message is purposefully not guarded by a DEBUG_ENABLE check - it should always be written to the console.
     char s_open_for_business_date_and_time[25] = "";
     format_time_to_ISO8601(time(nullptr), s_open_for_business_date_and_time, sizeof(s_open_for_business_date_and_time));
+    ESP_LOGI(TAG, " ");
     ESP_LOGI(TAG, "***********************************************");
     ESP_LOGI(TAG, "* Open for business: %s *", s_open_for_business_date_and_time);
     ESP_LOGI(TAG, "***********************************************");
@@ -5139,7 +5321,7 @@ void setup_NVS_storage(void)
         ESP_LOGE(TAG, "NVS initialization failed. GNSS module settings persistence is unavailable.");
 }
 
-void create_mutexes_and_semaphores(void)
+void setup_mutexes_and_semaphores(void)
 {
 
     s_time_mutex = xSemaphoreCreateMutex();
@@ -5155,6 +5337,22 @@ void create_mutexes_and_semaphores(void)
 
 #if CALCULATE_STACK_SIZES_ENABLED
     s_task_stack_usage_mutex = xSemaphoreCreateMutex();
+#endif
+}
+
+static void setup_up_the_RGB_LED()
+{
+#if RBG_LED_ENABLED
+
+    gpio_config_t config{};
+    config.pin_bit_mask = (1ULL << LEDBluePin) | (1ULL << LEDGreenPin) | (1ULL << LEDRedPin);
+    config.mode = GPIO_MODE_OUTPUT;
+    config.pull_up_en = GPIO_PULLUP_DISABLE;
+    config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    config.intr_type = GPIO_INTR_DISABLE;
+    ESP_ERROR_CHECK(gpio_config(&config));
+    control_KY_016_RGB_LED(LED_startup, true);
+
 #endif
 }
 
@@ -5178,21 +5376,7 @@ void setup_the_LCD(void)
 #endif
 }
 
-static void setup_up_the_RGB_LED()
-{
-#if RBG_LED_ENABLED
-    gpio_config_t config{};
-    config.pin_bit_mask = (1ULL << LEDBluePin) | (1ULL << LEDGreenPin) | (1ULL << LEDRedPin);
-    config.mode = GPIO_MODE_OUTPUT;
-    config.pull_up_en = GPIO_PULLUP_DISABLE;
-    config.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    config.intr_type = GPIO_INTR_DISABLE;
-    ESP_ERROR_CHECK(gpio_config(&config));
-    control_KY_016_RGB_LED(LED_startup, true);
-#endif
-}
-
-static void setup_up_the_button()
+static void setup_the_button()
 {
 
 #if UPTIME_RESTART_BUTTON_ENABLED
@@ -6120,8 +6304,8 @@ static void ntp_server_task(void *parameter)
             next_socket = static_cast<uint8_t>((index + 1) % socket_count);
             for (size_t batch_count = 0; batch_count < NTP_SOCKET_BATCH_LIMIT; ++batch_count)
             {
-                uint8_t request[NTP_PACKET_SIZE + 1];
-                uint8_t reply[NTP_PACKET_SIZE];
+                uint8_t request[NTP_MAX_PACKET_SIZE + 1];
+                uint8_t reply[NTP_MAX_PACKET_SIZE] = {};
                 struct sockaddr_storage source_addr{};
                 socklen_t source_addr_len = sizeof(source_addr);
                 int len = recvfrom(sock, request, sizeof(request), MSG_DONTWAIT,
@@ -6145,10 +6329,17 @@ static void ntp_server_task(void *parameter)
                 }
 
                 uint64_t receive_time = get_current_time_in_ntp64_format();
-                if (len != static_cast<int>(NTP_PACKET_SIZE))
+                if (len < static_cast<int>(NTP_PACKET_SIZE) || len > static_cast<int>(NTP_MAX_PACKET_SIZE))
                 {
 #if MQTT_ENABLED
                     s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+                    if (len > static_cast<int>(NTP_PACKET_SIZE) && ((request[0] >> 3) & 0x07) == 4)
+                        s_ntp_authenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+                    else
+#endif
+                        s_ntp_unauthenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+                    s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
 #endif
 #if CALCULATE_STACK_SIZES_ENABLED
                     report_current_task_stack_usage(NTP_Server);
@@ -6162,6 +6353,13 @@ static void ntp_server_task(void *parameter)
                 {
 #if MQTT_ENABLED
                     s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+                    if (len > static_cast<int>(NTP_PACKET_SIZE) && ntp_version == 4)
+                        s_ntp_authenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+                    else
+#endif
+                        s_ntp_unauthenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+                    s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
 #endif
 #if CALCULATE_STACK_SIZES_ENABLED
                     report_current_task_stack_usage(NTP_Server);
@@ -6169,12 +6367,36 @@ static void ntp_server_task(void *parameter)
                     continue;
                 }
 
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+                uint32_t authentication_key_id = 0;
+                const ntp_auth_result_t authentication_result = ntp_auth_verify_request(request, static_cast<size_t>(len), ntp_version, &authentication_key_id);
+                if (authentication_result != ntp_auth_result_t::unauthenticated && authentication_result != ntp_auth_result_t::valid)
+                {
+#if MQTT_ENABLED
+                    s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+                    if (ntp_version == 4)
+                        s_ntp_authenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+                    else
+                        s_ntp_unauthenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+                    s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
+#endif
+                    continue;
+                }
+                const bool authenticated_request = authentication_result == ntp_auth_result_t::valid;
+#else
+                const bool authenticated_request = false;
+#endif
+
                 if (!s_ntp_external_responses_enabled.load(std::memory_order_acquire) && !is_internal_ntp_client(source_addr))
                     continue;
 
 #if MQTT_ENABLED
                 s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
                 s_ntp_valid_requests.fetch_add(1, std::memory_order_relaxed);
+                if (authenticated_request)
+                    s_ntp_authenticated_valid_requests.fetch_add(1, std::memory_order_relaxed);
+                else
+                    s_ntp_unauthenticated_valid_requests.fetch_add(1, std::memory_order_relaxed);
                 mqtt_enqueue_ntp_request(source_addr);
 #endif
                 const struct sockaddr_in *source_ipv4 = nullptr;
@@ -6242,8 +6464,13 @@ static void ntp_server_task(void *parameter)
                     write_ntp_timestamp(reply, 40, transmit_time);
                 }
 
-                int sent = sendto(sock, reply, sizeof(reply), 0, reinterpret_cast<struct sockaddr *>(&source_addr), source_addr_len);
-                if (sent == static_cast<int>(sizeof(reply)))
+                size_t reply_length = NTP_PACKET_SIZE;
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+                if (authenticated_request && !ntp_auth_append_response(reply, sizeof(reply), &reply_length, authentication_key_id))
+                    continue;
+#endif
+                int sent = sendto(sock, reply, reply_length, 0, reinterpret_cast<struct sockaddr *>(&source_addr), source_addr_len);
+                if (sent == static_cast<int>(reply_length))
                 {
                     if (source_ipv4 != nullptr)
                     {
@@ -6258,7 +6485,7 @@ static void ntp_server_task(void *parameter)
                     }
                 }
 #if MQTT_ENABLED
-                if (sent == static_cast<int>(sizeof(reply)))
+                if (sent == static_cast<int>(reply_length))
                     s_ntp_responses.fetch_add(1, std::memory_order_relaxed);
 #else
                 (void)sent;
@@ -6297,6 +6524,14 @@ struct startup_health_endpoint_results_t
     bool ntpv3_standard = false;
     bool ntpv4_standard = false;
     bool ntpv4_interleaved = false;
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+    bool ntpv4_authenticated_standard = false;
+    bool ntpv4_authenticated_interleaved = false;
+    bool ntpv4_invalid_authentication_rejected = false;
+    bool ntpv4_unknown_key_rejected = false;
+    bool ntpv4_truncated_mac_rejected = false;
+    bool ntpv4_altered_response_rejected = false;
+#endif
 };
 
 struct startup_health_test_results_t
@@ -6330,6 +6565,13 @@ static startup_health_log_entry_t *s_startup_health_test_log = nullptr;
 static size_t s_startup_health_test_log_count = 0;
 static uint32_t s_startup_health_test_number = 0;
 
+enum class startup_health_mqtt_metrics_result_t : uint8_t
+{
+    passed,
+    failed,
+    could_not_determine,
+};
+
 static void queue_startup_health_log(esp_log_level_t level, const char *format, ...)
 {
     if (s_startup_health_test_log == nullptr || s_startup_health_test_log_count >= Startup_Health_Test_Log_Capacity)
@@ -6359,7 +6601,7 @@ static void flush_startup_health_log()
     s_startup_health_test_log_count = 0;
 }
 
-static bool receive_startup_health_response(int socket_fd, uint8_t *reply, uint64_t *arrival_time)
+static bool receive_startup_health_response(int socket_fd, uint8_t *reply, size_t reply_capacity, size_t *reply_length, uint64_t *arrival_time)
 {
     fd_set read_fds;
     FD_ZERO(&read_fds);
@@ -6370,10 +6612,11 @@ static bool receive_startup_health_response(int socket_fd, uint8_t *reply, uint6
     if (select(socket_fd + 1, &read_fds, nullptr, nullptr, &timeout) != 1)
         return false;
 
-    int reply_length = recvfrom(socket_fd, reply, NTP_PACKET_SIZE, 0, nullptr, nullptr);
-    if (reply_length != static_cast<int>(NTP_PACKET_SIZE))
+    int received_length = recvfrom(socket_fd, reply, reply_capacity, 0, nullptr, nullptr);
+    if (received_length < 0)
         return false;
 
+    *reply_length = static_cast<size_t>(received_length);
     *arrival_time = get_current_time_in_ntp64_format();
     return true;
 }
@@ -6392,7 +6635,8 @@ static bool run_standard_startup_health_test(int socket_fd, const struct sockadd
         if (sendto(socket_fd, request, sizeof(request), 0, destination, destination_length) != static_cast<int>(sizeof(request)))
             continue;
 
-        if (!receive_startup_health_response(socket_fd, reply, &exchange->t4))
+        size_t reply_length = 0;
+        if (!receive_startup_health_response(socket_fd, reply, sizeof(reply), &reply_length, &exchange->t4) || reply_length != sizeof(reply))
             continue;
 
         if (((reply[0] >> 3) & 0x07) != version || (reply[0] & 0x07) != 4 || read_ntp_timestamp(reply, 24) != exchange->t1)
@@ -6411,6 +6655,7 @@ static bool run_interleaved_startup_health_test(int socket_fd, const struct sock
 {
     uint8_t request[NTP_PACKET_SIZE] = {};
     uint8_t reply[NTP_PACKET_SIZE] = {};
+    size_t reply_length = 0;
     uint64_t arrival_time = 0;
     request[0] = static_cast<uint8_t>(version << 3) | 3;
     write_ntp_timestamp(request, 24, previous_exchange.t2);
@@ -6418,7 +6663,7 @@ static bool run_interleaved_startup_health_test(int socket_fd, const struct sock
     write_ntp_timestamp(request, 40, previous_exchange.t1);
 
     if (sendto(socket_fd, request, sizeof(request), 0, destination, destination_length) != static_cast<int>(sizeof(request)) ||
-        !receive_startup_health_response(socket_fd, reply, &arrival_time))
+        !receive_startup_health_response(socket_fd, reply, sizeof(reply), &reply_length, &arrival_time) || reply_length != sizeof(reply))
         return false;
 
     const uint64_t reply_transmit_time = read_ntp_timestamp(reply, 40);
@@ -6428,6 +6673,218 @@ static bool run_interleaved_startup_health_test(int socket_fd, const struct sock
     return ((reply[0] >> 3) & 0x07) == version && (reply[0] & 0x07) == 4 &&
            read_ntp_timestamp(reply, 24) == previous_exchange.t4 &&
            transmit_difference <= Startup_Health_Test_interleaved_Tolerance;
+}
+
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+static bool run_authenticated_startup_health_test(int socket_fd, const struct sockaddr *destination, socklen_t destination_length,
+                                                  startup_health_exchange_t *exchange, bool *altered_response_rejected)
+{
+    uint8_t request[NTP_MAX_PACKET_SIZE] = {};
+    uint8_t reply[NTP_MAX_PACKET_SIZE] = {};
+    size_t request_length = NTP_PACKET_SIZE;
+    exchange->t1 = get_current_time_in_ntp64_format();
+    request[0] = static_cast<uint8_t>(4U << 3) | 3U;
+    write_ntp_timestamp(request, 40, exchange->t1);
+    if (!ntp_auth_append_response(request, sizeof(request), &request_length, ntp_auth_default_key_id()))
+        return false;
+
+    for (uint32_t attempt = 0; attempt < Startup_Health_Test_Standard_Retries; ++attempt)
+    {
+        if (sendto(socket_fd, request, request_length, 0, destination, destination_length) != static_cast<int>(request_length))
+            continue;
+        size_t reply_length = 0;
+        if (!receive_startup_health_response(socket_fd, reply, sizeof(reply), &reply_length, &exchange->t4) ||
+            ntp_auth_verify_request(reply, reply_length, 4, nullptr) != ntp_auth_result_t::valid)
+            continue;
+        if (((reply[0] >> 3) & 0x07) != 4 || (reply[0] & 0x07) != 4 || read_ntp_timestamp(reply, 24) != exchange->t1)
+            continue;
+        reply[40] ^= 0x01;
+        *altered_response_rejected = ntp_auth_verify_request(reply, reply_length, 4, nullptr) == ntp_auth_result_t::invalid_mac;
+        reply[40] ^= 0x01;
+        exchange->t2 = read_ntp_timestamp(reply, 32);
+        exchange->t3 = read_ntp_timestamp(reply, 40);
+        return exchange->t2 != 0 && exchange->t3 != 0;
+    }
+    return false;
+}
+
+enum class startup_health_invalid_auth_t : uint8_t
+{
+    wrong_mac,
+    unknown_key,
+    truncated_mac,
+};
+
+static bool run_invalid_authenticated_startup_health_test(int socket_fd, const struct sockaddr *destination, socklen_t destination_length,
+                                                          startup_health_invalid_auth_t invalid_auth)
+{
+    uint8_t request[NTP_MAX_PACKET_SIZE] = {};
+    size_t request_length = NTP_PACKET_SIZE;
+    request[0] = static_cast<uint8_t>(4U << 3) | 3U;
+    write_ntp_timestamp(request, 40, get_current_time_in_ntp64_format());
+    if (!ntp_auth_append_response(request, sizeof(request), &request_length, ntp_auth_default_key_id()))
+        return false;
+    switch (invalid_auth)
+    {
+    case startup_health_invalid_auth_t::wrong_mac:
+        request[request_length - 1] ^= 0x01;
+        break;
+    case startup_health_invalid_auth_t::unknown_key:
+        memset(request + NTP_PACKET_SIZE, 0, NTP_AUTH_KEY_ID_SIZE);
+        break;
+    case startup_health_invalid_auth_t::truncated_mac:
+        --request_length;
+        break;
+    }
+    if (sendto(socket_fd, request, request_length, 0, destination, destination_length) != static_cast<int>(request_length))
+        return false;
+
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(socket_fd, &read_fds);
+    struct timeval timeout{};
+    timeout.tv_sec = Startup_Health_Test_Response_Timeout_Ms / 1000;
+    timeout.tv_usec = static_cast<suseconds_t>(Startup_Health_Test_Response_Timeout_Ms % 1000) * 1000;
+    return select(socket_fd + 1, &read_fds, nullptr, nullptr, &timeout) == 0;
+}
+
+static bool run_authenticated_interleaved_startup_health_test(int socket_fd, const struct sockaddr *destination, socklen_t destination_length,
+                                                              const startup_health_exchange_t &previous_exchange)
+{
+    uint8_t request[NTP_MAX_PACKET_SIZE] = {};
+    uint8_t reply[NTP_MAX_PACKET_SIZE] = {};
+    size_t request_length = NTP_PACKET_SIZE;
+    uint64_t arrival_time = 0;
+    request[0] = static_cast<uint8_t>(4U << 3) | 3U;
+    write_ntp_timestamp(request, 24, previous_exchange.t2);
+    write_ntp_timestamp(request, 32, previous_exchange.t4);
+    write_ntp_timestamp(request, 40, previous_exchange.t1);
+    if (!ntp_auth_append_response(request, sizeof(request), &request_length, ntp_auth_default_key_id()) ||
+        sendto(socket_fd, request, request_length, 0, destination, destination_length) != static_cast<int>(request_length))
+        return false;
+    size_t reply_length = 0;
+    if (!receive_startup_health_response(socket_fd, reply, sizeof(reply), &reply_length, &arrival_time) ||
+        ntp_auth_verify_request(reply, reply_length, 4, nullptr) != ntp_auth_result_t::valid)
+        return false;
+    const uint64_t reply_transmit_time = read_ntp_timestamp(reply, 40);
+    const uint64_t transmit_difference = reply_transmit_time >= previous_exchange.t3
+                                             ? reply_transmit_time - previous_exchange.t3
+                                             : previous_exchange.t3 - reply_transmit_time;
+    return (reply[0] & 0x07) == 4 && read_ntp_timestamp(reply, 24) == previous_exchange.t4 &&
+           transmit_difference <= Startup_Health_Test_interleaved_Tolerance;
+}
+#endif
+
+static startup_health_mqtt_metrics_result_t check_startup_health_mqtt_metrics(const startup_health_test_results_t &results)
+{
+#if MQTT_ENABLED && MQTT_CLIENT_REPORTING_ENABLED
+    if (s_mqtt_ntp_event_queue == nullptr || s_mqtt_stats_mutex == nullptr)
+        return startup_health_mqtt_metrics_result_t::could_not_determine;
+
+    uint32_t expected_authenticated_valid = 0;
+    uint32_t expected_unauthenticated_valid = 0;
+    uint32_t expected_authenticated_invalid = 0;
+    bool indeterminate = false;
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+    const bool authentication_available = ntp_auth_available();
+#endif
+    const auto count_endpoint = [&](const startup_health_endpoint_results_t &endpoint)
+    {
+        const bool unauthenticated_valid = endpoint.ntpv3_standard && endpoint.ntpv4_standard && endpoint.ntpv4_interleaved;
+        if (unauthenticated_valid)
+            expected_unauthenticated_valid += 3;
+        else
+            indeterminate = true;
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+        if (authentication_available)
+        {
+            const bool authenticated_valid = endpoint.ntpv4_authenticated_standard && endpoint.ntpv4_authenticated_interleaved;
+            if (authenticated_valid)
+                expected_authenticated_valid += 2;
+            else
+                indeterminate = true;
+
+            const bool authenticated_invalid = endpoint.ntpv4_invalid_authentication_rejected && endpoint.ntpv4_unknown_key_rejected &&
+                                               endpoint.ntpv4_truncated_mac_rejected;
+            if (authenticated_invalid)
+                expected_authenticated_invalid += 3;
+            else
+                indeterminate = true;
+        }
+#endif
+    };
+
+    if (results.prerequisites_ready)
+    {
+        count_endpoint(results.ipv4_loopback);
+        count_endpoint(results.ipv4_assigned);
+        count_endpoint(results.ipv6_loopback);
+        count_endpoint(results.ipv6_assigned);
+    }
+
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(MQTT_QUEUED_PUBLISH_DELAY_MS * 2U);
+    while (uxQueueMessagesWaiting(s_mqtt_ntp_event_queue) != 0 && xTaskGetTickCount() < deadline)
+        vTaskDelay(pdMS_TO_TICKS(1));
+
+    if (uxQueueMessagesWaiting(s_mqtt_ntp_event_queue) != 0 || s_ntp_telemetry_events_dropped.load(std::memory_order_relaxed) != 0 ||
+        s_mqtt_client_table_overflown.load(std::memory_order_relaxed))
+        return startup_health_mqtt_metrics_result_t::could_not_determine;
+
+    if (indeterminate || !results.prerequisites_ready)
+        return startup_health_mqtt_metrics_result_t::could_not_determine;
+
+    const uint32_t expected_valid = expected_authenticated_valid + expected_unauthenticated_valid;
+    if (s_ntp_authenticated_valid_requests.load(std::memory_order_relaxed) < expected_authenticated_valid ||
+        s_ntp_unauthenticated_valid_requests.load(std::memory_order_relaxed) < expected_unauthenticated_valid ||
+        s_ntp_authenticated_invalid_requests.load(std::memory_order_relaxed) < expected_authenticated_invalid ||
+        s_ntp_valid_requests.load(std::memory_order_relaxed) < expected_valid ||
+        s_ntp_invalid_requests.load(std::memory_order_relaxed) < expected_authenticated_invalid ||
+        s_ntp_responses_synchronized_and_disciplined.load(std::memory_order_relaxed) < expected_valid ||
+        s_ntp_responses.load(std::memory_order_relaxed) < expected_valid)
+        return startup_health_mqtt_metrics_result_t::failed;
+
+    const auto endpoint_expected_valid_requests = [
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+                                                      authentication_available
+#endif
+    ](const startup_health_endpoint_results_t &endpoint)
+    {
+        uint32_t expected_requests = endpoint.ntpv3_standard && endpoint.ntpv4_standard && endpoint.ntpv4_interleaved ? 3U : 0U;
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+        if (authentication_available && endpoint.ntpv4_authenticated_standard && endpoint.ntpv4_authenticated_interleaved)
+            expected_requests += 2;
+#endif
+        return expected_requests;
+    };
+    const auto has_expected_client_requests = [](const char *address_text, sa_family_t address_family, uint32_t expected_requests)
+    {
+        if (expected_requests == 0)
+            return true;
+        uint8_t expected_address[sizeof(struct in6_addr)] = {};
+        const int address_size = address_family == AF_INET ? sizeof(struct in_addr) : sizeof(struct in6_addr);
+        if (inet_pton(address_family, address_text, expected_address) != 1)
+            return false;
+        for (size_t index = 0; index < s_mqtt_client_count; ++index)
+        {
+            if (s_mqtt_clients[index].address_family == address_family &&
+                memcmp(s_mqtt_clients[index].address, expected_address, address_size) == 0)
+                return s_mqtt_clients[index].requests >= expected_requests;
+        }
+        return false;
+    };
+
+    if (xSemaphoreTake(s_mqtt_stats_mutex, portMAX_DELAY) != pdTRUE)
+        return startup_health_mqtt_metrics_result_t::could_not_determine;
+    const bool clients_match = has_expected_client_requests("127.0.0.1", AF_INET, endpoint_expected_valid_requests(results.ipv4_loopback)) &&
+                               has_expected_client_requests(s_ipv4_address, AF_INET, endpoint_expected_valid_requests(results.ipv4_assigned)) &&
+                               has_expected_client_requests("::1", AF_INET6, endpoint_expected_valid_requests(results.ipv6_loopback)) &&
+                               has_expected_client_requests(s_ipv6_address, AF_INET6, endpoint_expected_valid_requests(results.ipv6_assigned));
+    xSemaphoreGive(s_mqtt_stats_mutex);
+    return clients_match ? startup_health_mqtt_metrics_result_t::passed : startup_health_mqtt_metrics_result_t::failed;
+#else
+    (void)results;
+    return startup_health_mqtt_metrics_result_t::could_not_determine;
+#endif
 }
 
 static startup_health_endpoint_results_t run_startup_health_endpoint_test(const char *name, const struct sockaddr *destination,
@@ -6441,6 +6898,17 @@ static startup_health_endpoint_results_t run_startup_health_endpoint_test(const 
         queue_startup_health_test_result(name, "NTPv3 standard     ", false);
         queue_startup_health_test_result(name, "NTPv4 standard     ", false);
         queue_startup_health_test_result(name, "NTPv4 interleaved  ", false);
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+        if (ntp_auth_available())
+        {
+            queue_startup_health_test_result(name, "NTPv4 auth standard", false);
+            queue_startup_health_test_result(name, "NTPv4 auth interlv ", false);
+            queue_startup_health_test_result(name, "NTPv4 invalid auth ", false);
+            queue_startup_health_test_result(name, "NTPv4 unknown key  ", false);
+            queue_startup_health_test_result(name, "NTPv4 truncated MAC", false);
+            queue_startup_health_test_result(name, "NTPv4 altered reply", false);
+        }
+#endif
         return results;
     }
 
@@ -6450,11 +6918,38 @@ static startup_health_endpoint_results_t run_startup_health_endpoint_test(const 
     results.ntpv4_standard = run_standard_startup_health_test(socket_fd, destination, destination_length, 4, &ntpv4_exchange);
     if (results.ntpv4_standard)
         results.ntpv4_interleaved = run_interleaved_startup_health_test(socket_fd, destination, destination_length, 4, ntpv4_exchange);
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+    if (ntp_auth_available())
+    {
+        startup_health_exchange_t authenticated_exchange{};
+        results.ntpv4_authenticated_standard = run_authenticated_startup_health_test(socket_fd, destination, destination_length, &authenticated_exchange,
+                                                                                     &results.ntpv4_altered_response_rejected);
+        if (results.ntpv4_authenticated_standard)
+            results.ntpv4_authenticated_interleaved = run_authenticated_interleaved_startup_health_test(socket_fd, destination, destination_length, authenticated_exchange);
+        results.ntpv4_invalid_authentication_rejected = run_invalid_authenticated_startup_health_test(socket_fd, destination, destination_length,
+                                                                                                      startup_health_invalid_auth_t::wrong_mac);
+        results.ntpv4_unknown_key_rejected = run_invalid_authenticated_startup_health_test(socket_fd, destination, destination_length,
+                                                                                           startup_health_invalid_auth_t::unknown_key);
+        results.ntpv4_truncated_mac_rejected = run_invalid_authenticated_startup_health_test(socket_fd, destination, destination_length,
+                                                                                             startup_health_invalid_auth_t::truncated_mac);
+    }
+#endif
 
     closesocket(socket_fd);
-    queue_startup_health_test_result(name, "NTPv3 standard   ", results.ntpv3_standard);
-    queue_startup_health_test_result(name, "NTPv4 standard   ", results.ntpv4_standard);
-    queue_startup_health_test_result(name, "NTPv4 interleaved", results.ntpv4_interleaved);
+    queue_startup_health_test_result(name, "NTPv3 standard     ", results.ntpv3_standard);
+    queue_startup_health_test_result(name, "NTPv4 standard     ", results.ntpv4_standard);
+    queue_startup_health_test_result(name, "NTPv4 interleaved  ", results.ntpv4_interleaved);
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+    if (ntp_auth_available())
+    {
+        queue_startup_health_test_result(name, "NTPv4 auth standard", results.ntpv4_authenticated_standard);
+        queue_startup_health_test_result(name, "NTPv4 auth interlv ", results.ntpv4_authenticated_interleaved);
+        queue_startup_health_test_result(name, "NTPv4 invalid auth ", results.ntpv4_invalid_authentication_rejected);
+        queue_startup_health_test_result(name, "NTPv4 unknown key  ", results.ntpv4_unknown_key_rejected);
+        queue_startup_health_test_result(name, "NTPv4 truncated MAC", results.ntpv4_truncated_mac_rejected);
+        queue_startup_health_test_result(name, "NTPv4 altered reply", results.ntpv4_altered_response_rejected);
+    }
+#endif
     return results;
 }
 
@@ -6521,6 +7016,15 @@ static void startup_health_test_task(void *parameter)
 
     queue_startup_health_log(ESP_LOG_INFO, "Health Check started");
     s_startup_health_test_results = run_startup_health_tests();
+    const startup_health_mqtt_metrics_result_t mqtt_metrics_result = check_startup_health_mqtt_metrics(s_startup_health_test_results);
+    ++s_startup_health_test_number;
+    const char *mqtt_metrics_status = mqtt_metrics_result == startup_health_mqtt_metrics_result_t::passed
+                                          ? "Passed"
+                                      : mqtt_metrics_result == startup_health_mqtt_metrics_result_t::failed ? "Failed"
+                                                                                                            : "Could not determine";
+    queue_startup_health_log(mqtt_metrics_result == startup_health_mqtt_metrics_result_t::passed ? ESP_LOG_INFO : ESP_LOG_WARN,
+                             "Health Check %02lu - MQTT metrics                       - %s", static_cast<unsigned long>(s_startup_health_test_number),
+                             mqtt_metrics_status);
     queue_startup_health_log(ESP_LOG_INFO, "Health Check %s", s_startup_health_test_results.prerequisites_ready ? "completed" : "failed before testing");
     flush_startup_health_log();
     free(s_startup_health_test_log);
@@ -6787,36 +7291,24 @@ static void update_LED_LCD_Button_task(void *parameter)
 #endif
 }
 
-extern "C" void app_main()
+void start_RGB_LED_LCD_and_Button_refresh()
 {
-    setup_pps_input();
-
-    initArduino();
-
-    write_opening_messages_to_the_console();
-
-    setup_mqtt_tf_queue();
-
-    setup_NVS_storage();
-
-    create_mutexes_and_semaphores();
-
-    setup_up_the_RGB_LED();
-
-    setup_the_LCD();
-
-    setup_up_the_button();
 
     xTaskCreatePinnedToCore(update_LED_LCD_Button_task, "LED_LCD_Button_service", LED_LCD_Button_Task_Stack_Size, nullptr, 10, nullptr, tskNO_AFFINITY);
+}
 
-    setup_ethernet_connection();
+void setup_symmetric_key_authentication()
+{
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+    if (ntp_auth_initialize())
+        ESP_LOGI(TAG, "NTP symmetric-key authentication is available");
+    else
+        ESP_LOGW(TAG, "NTP symmetric-key authentication is unavailable");
+#endif
+}
 
-    setup_for_ote_updates();
-
-    setup_the_gnss();
-
-    setup_mqtt();
-
+void setup_ntp_server()
+{
     if (xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", NTP_Server_Task_Stack_Size,
                                 xTaskGetCurrentTaskHandle(), 20, nullptr, tskNO_AFFINITY) != pdPASS)
     {
@@ -6830,18 +7322,54 @@ extern "C" void app_main()
         ESP_LOGE(TAG, "NTP server did not become ready");
         return;
     }
+}
 
+void perform_health_check()
+{
 #if STARTUP_HEALTH_TEST_ENABLED
     if (xTaskCreatePinnedToCore(startup_health_test_task, "startup_health", Startup_Health_Test_Task_Stack_Size,
                                 xTaskGetCurrentTaskHandle(), 5, nullptr, tskNO_AFFINITY) != pdPASS)
-    {
         ESP_LOGE(TAG, "Health Check could not start");
-    }
     else
-    {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    }
 #endif
+}
+
+extern "C" void app_main()
+{
+    setup_pps_input(); // (keep this at the very beginning of the setup sequence)
+
+    initArduino();
+
+    write_opening_messages_to_the_console();
+
+    setup_mqtt_tf_queue();
+
+    setup_NVS_storage();
+
+    setup_mutexes_and_semaphores();
+
+    setup_up_the_RGB_LED();
+
+    setup_the_LCD();
+
+    setup_the_button();
+
+    start_RGB_LED_LCD_and_Button_refresh();
+
+    setup_ethernet_connection();
+
+    setup_for_ote_updates();
+
+    setup_the_gnss();
+
+    setup_mqtt();
+
+    setup_symmetric_key_authentication();
+
+    setup_ntp_server();
+
+    perform_health_check();
 
     write_open_for_business_messages_to_the_console();
 }

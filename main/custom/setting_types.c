@@ -13,3 +13,9 @@ enum class RGB_LED_Colour : uint8_t
     yellow,
     white
 };
+
+struct symmetric_key_t
+{
+    uint32_t key_id;
+    char key_value[33];
+};

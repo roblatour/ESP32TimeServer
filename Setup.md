@@ -36,25 +36,31 @@ Note this IP address — it is needed for all of the configuration steps below.
 
 ---
 
+## (Optional) Setup of Symmetric-key Authentication
+
+For more information, please see [this documentation](\misc\symmetric_key_authentication_setup.md)
+
+---
+
 ## Option A — Port forwarding from a network router to ESP32TimeServer (Network-Wide Setup)
 
 If your network router supports port forwarding then it will most likely be possible to redirect all NTP requests from your internal network directly to the ESP32TimeServer.  In short, redirecting all UDP port 123 traffic to the IP address of the ESP32TimeServer allows it to respond directly, as a Stratum 1 server, to all NTP requests from your internal network.
 
 In this setup the ESP32TimeServer acts as the sole NTP server on your system.  Also, its MQTT reporting provides insights into which devices request NTP update, when and how often.
 
-On the down side, this setup makes the ESP32TimeServer a single point of failure with respect to devices on your internal network getting time updates.  If ESP32TimeServer fails to maintain a satellite fix beyond its sync period, or has other problems, then it will fall back to being as Stratum 16 sever meaning the quality of its time data is undefined. Furthermore if there is a power or network communications loss local to the ESP32TimeServer then NTP requests on your network will go unanswered. 
+On the down side, this setup makes the ESP32TimeServer a single point of failure with respect to devices on your internal network getting time updates.  If ESP32TimeServer fails to maintain a satellite fix beyond its sync period, or has other problems, then it will fall back to being as Stratum 16 sever meaning the quality of its time data is undefined. Furthermore if there is a power or network communications loss local to the ESP32TimeServer then NTP requests on your network will go unanswered.
 
 ---
 
 ## Option B — Using a Network Router's Time Service (Network-Wide Setup)
 
-Using a Router's Network Time Service allows you to set up ESP32TimeServer as sole, primary, or secondary Time Server sources.  In this option your Network Router gets its time from (usually) Stratum 2 Time Servers, manages them, and delivers Stratum 3 quality time to devices on your network.  
+Using a Router's Network Time Service allows you to set up ESP32TimeServer as sole, primary, or secondary Time Server sources.  In this option your Network Router gets its time from (usually) Stratum 2 Time Servers, manages them, and delivers Stratum 3 quality time to devices on your network.
 
-However, if ESP32TimeServer is identified as a source to your Network Router's time service, then it can use ESP32TimeServer as a Stratum 1 time server, and deliver Stratum 2 quality results to you network devices.  
+However, if ESP32TimeServer is identified as a source to your Network Router's time service, then it can use ESP32TimeServer as a Stratum 1 time server, and deliver Stratum 2 quality results to you network devices.
 
 This approach allows fall backups - for example: ESP32TimeServer and Internet NTP pools can be all be both used as source and the Network Router's Time service.  The Network Router's Time service can then prioritize the delivery of ESP32TimeServer Stratum 1 based results, but failing that can fall back to using the Internet NTP pools.
 
-Additionally, on the plus side, the Router's time service usually allows you to view  various time server health indicators.  
+Additionally, on the plus side, the Router's time service usually allows you to view  various time server health indicators.
 
 However, unfortunately as an additional trade off in this setup, the ESP32TimeServer will identify only one client in its MQTT reporting - the Network Router.
 
@@ -343,7 +349,7 @@ You can also configure the NTP server from the terminal:
 # Set the NTP server
 sudo systemsetup -setnetworktimeserver 192.168.1.50
 ```
-```bash 
+```bash
 # Enable network time sync
 sudo systemsetup -setusingnetworktime on
 ```

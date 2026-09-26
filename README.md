@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 2.9.2)
+# ESP32 NTP Stratum 1 Time Server (version 3)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -24,11 +24,16 @@ A full write-up of the original (version 1) project is available on
 
 ---
 
-## What's New in [Version 2](https://github.com/roblatour/ESP32TimeServer/releases)
+## What's New
 
-Version 2 is a ground-up rewrite that brings a faster, more capable board and
-a long list of accuracy, reliability, and convenience improvements over
-version 1:
+**Version 3** new functionality:
+- **NTPv4 Symmetric-key authentication** added for Windows 
+  clients using Meinberg and Linux clients using chrony.  For more 
+  information, please see [this document](/misc/symmetric_key_authentication_setup.md).
+
+**Version 2** was a ground-up rewrite which came with a faster, more capable board 
+support and a long list of accuracy, reliability, and convenience improvements over
+version 1, including:
 
 - **Higher accuracy, lower jitter** — full use of the GPS module's PPS
   (Pulse Per Second) pin disciplines the clock for sub-millisecond accuracy,
@@ -74,8 +79,10 @@ version 1:
 - **Updated 3D printed case** — enclosure files refreshed for the new
   WaveShare ESP32-P4-ETH board.
 
-> The source code for **Version 1** (Arduino / PlatformIO) remains available at:
-> [https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0)
+ **Version 1** described in detail [here](https://hackaday.io/project/189309-esp32-ntp-time-server-stratum-1) was built for Arduino / PlatformIO and remains available
+ [here](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0).
+>
+([Detailed release history](https://github.com/roblatour/ESP32TimeServer/releases))
 
 ---
 
