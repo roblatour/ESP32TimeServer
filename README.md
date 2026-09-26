@@ -26,7 +26,7 @@ A full write-up of the original (version 1) project is available on
 
 ## What's New
 
-**Version 3** new functionality:
+**Version 3**
 - **NTPv4 Symmetric-key authentication** added for Windows 
   clients using Meinberg and Linux clients using chrony.  For more 
   information, please see [this document](/misc/symmetric_key_authentication_setup.md).
