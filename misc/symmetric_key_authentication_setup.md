@@ -8,7 +8,7 @@ shared secret will be out of luck.
 
 ## Compatibility
 
-ESP32TimeServer supports the distinct symmetric-key NTPv4 authentication implementations of [Meinberg](https://www.meinbergglobal.com/english/sw/ntp.htm) (Windows) and [Chrony](https://chrony-project.org/download.html) (Linux).
+ESP32TimeServer supports the symmetric-key NTPv4 authentication implementations of [Meinberg](https://www.meinbergglobal.com/english/sw/ntp.htm) (Windows) and [Chrony](https://chrony-project.org/download.html) (Linux).
 
 W32Time (Windows) and macOS's built-in automated time service (`timed` on modern macOS) do not support symmetric-key NTPv4 authentication, and thus are not supported.
 
