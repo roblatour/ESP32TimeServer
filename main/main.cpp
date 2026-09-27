@@ -171,6 +171,23 @@ I (39969) main_cpp: Health Check 36 - IPv6 assigned: NTPv4 altered reply - Passe
 I (39976) main_cpp: Health Check 37 - MQTT metrics                       - Passed
 I (39984) main_cpp: Health Check completed
 
+Most of the health checks have fairly obvious purposes based on their names, but a couple of them,
+truncated MAC and altered reply tests, may require more explanation (detailed below).
+
+For truncated MAC:
+This test sends an otherwise valid NTP packet but deliberately cuts off part of the authentication field (the Message Authentication Code)
+before the server processes it. The server receives a packet whose header and timestamps look fine, but whose MAC is shorter than expected,
+so when it tries to verify the MAC at the end of the packet, the check fails and the reply is rejected or flagged as invalid. In effect,
+it’s testing that the server does not accept packets where the integrity/authentication data has been damaged or partially missing, even
+though the rest of the packet structure appears normal.
+
+For altered reply:
+This test takes a valid NTP response and then modifies some of its contents—typically one or more timestamp fields or other critical header
+values—after the server has generated it but before the client treats it as trustworthy. When the client compares the altered reply against
+what it expects (e.g., matching originate/receive/transmit timestamps or internal state), the inconsistency causes the response to be rejected
+or treated as an error rather than used to adjust time. By doing this, the test checks that the client detects tampering or corruption in the
+reply and doesn’t blindly accept time data that has been changed in transit.
+
 */
 
 #define STARTUP_HEALTH_TEST_ENABLED 0 // 0 = Disabled; 1 = Enabled
