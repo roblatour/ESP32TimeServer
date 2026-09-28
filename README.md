@@ -168,11 +168,11 @@ information.
 
 | LCD pin | ESP32-P4-ETH pin |
 | ------- | ---------------- |
-| GND     | GND (*)          |
+| GND (*) | GND              |
 | BLUE    | GPIO 4           |
 | GREEN   | GPIO 5           |
 | RED     | GPIO 6           |
-> (*) (optional) adding a 470 &Omega; resistor between the GND 
+> (*) (optional) adding a 470&Omega; resistor between the GND 
 > pins reduces the brightness of the RBB LED nicely
 
 #### LCD 2004 (HD44780 + PCF8574 I²C backpack) → ESP32-P4-ETH _(optional)_
