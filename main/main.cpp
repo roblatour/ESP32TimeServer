@@ -1286,26 +1286,28 @@ static void format_local_date_time(time_t utc_time, char *date_string, size_t da
     struct tm local_tm{};
     localtime_r(&utc_time, &local_tm);
 
-    snprintf(date_string, date_size, "%04d-%02d-%02d", local_tm.tm_year + 1900, local_tm.tm_mon + 1, local_tm.tm_mday);
+    // Date formatting (Produces YYYY-MM-DD)
+    strftime(date_string, date_size, "%Y-%m-%d", &local_tm);
 
-    int hour_value = local_tm.tm_hour % 12;
-    if (hour_value == 0)
-        hour_value = 12;
-
-    const char *ampm = local_tm.tm_hour < 12 ? "AM" : "PM";
-    char zone[8] = "";
-    if (displayTimeZone)
-        strftime(zone, sizeof(zone), "%Z", &local_tm);
-
-    if (displayTimeZone && zone[0] != '\0')
+    // Time formatting for 12H and 24H clock with and without TimeZone
+    if constexpr (displayTimeFormat24H)
     {
-        snprintf(time_string, time_size, "%d:%02d:%02d %s %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm, zone);
+        if constexpr (displayTimeZone) {
+            strftime(time_string, time_size, "%H:%M:%S %Z", &local_tm);
+        } else {
+            strftime(time_string, time_size, "%H:%M:%S", &local_tm);
+        }
     }
     else
     {
-        snprintf(time_string, time_size, "%d:%02d:%02d %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm);
+        if constexpr (displayTimeZone) {
+            strftime(time_string, time_size, "%I:%M:%S %p %Z", &local_tm);
+        } else {
+            strftime(time_string, time_size, "%I:%M:%S %p", &local_tm);
+        }
     }
 }
+
 
 #if UPTIME_RESTART_BUTTON_ENABLED
 static void get_uptime(char *buffer, size_t buffer_size)

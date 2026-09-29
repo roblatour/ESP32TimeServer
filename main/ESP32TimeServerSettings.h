@@ -35,6 +35,7 @@ static constexpr int LEDRedPin = 6;
 static constexpr int lcdColumns = 20;
 static constexpr int lcdRows = 4;
 static constexpr bool displayTimeZone = false;
+static constexpr bool displayTimeFormat24H = false;
 static constexpr int lcdI2CAddressPrimary = 0x27;
 static constexpr int lcdI2CAddressSecondary = 0x3F;
 
