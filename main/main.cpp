@@ -64,6 +64,7 @@
 
 extern "C"
 {
+#include "esp_chip_info.h"
 #include "esp_event.h"
 #include "esp_eth_clock.h"
 #include "esp_eth_driver.h"
@@ -81,6 +82,7 @@ extern "C"
 #include "esp_vfs_fat.h"
 #include "nvs.h"
 #include "driver/mcpwm_cap.h"
+#include "driver/ledc.h"
 #include "driver/sdmmc_host.h"
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
 #include "sdmmc_cmd.h"
@@ -102,6 +104,11 @@ extern "C"
 }
 
 static const char *TAG = "main_cpp";
+
+// the following is used to determine the NTP load shedding threshold based on the ESP32-P4 chip version
+static constexpr uint32_t NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32P4_ChipVersion1_3 = 8500;
+static constexpr uint32_t NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32P4_ChipVersion_above_1_3 = 14500;
+static uint32_t NTP_Requests_Per_Second_Load_Shedding_Threshold = 0;
 
 // Optional startup health test
 //
@@ -585,16 +592,78 @@ static void update_selected_ip_address()
 }
 
 static std::atomic<bool> s_ethernet_connected{false};
+static std::atomic<bool> s_ipv4_ever_acquired{false};
+static std::atomic<int64_t> s_last_physical_link_down_us{0};
+static std::atomic<bool> s_ethernet_recovery_in_progress{false};
+static std::atomic<bool> s_ethernet_recovery_rx_probe_active{false};
+static std::atomic<uint32_t> s_ethernet_recovery_rx_probe_frames{0};
 static std::atomic<bool> s_hardware_ntp_accepting{false};
 static std::atomic<bool> s_ntp_external_responses_enabled{false};
 static std::atomic<bool> s_ntp_server_ready{false};
 #if RBG_LED_ENABLED
-static std::atomic<bool> s_open_for_business_message_written{false};
 static std::atomic<bool> s_gnss_pps_startup_qualification_in_progress{false};
 static void control_KY_016_RGB_LED(RGB_LED_Colour Colour, bool enabled);
 #endif
+static std::atomic<bool> s_open_for_business_message_written{false};
 static std::atomic<int64_t> s_last_hardware_ntp_response_us{0};
+static std::atomic<int64_t> s_last_ntp_input_us{0};
+static std::atomic<int64_t> s_first_ntp_input_us{0};
+static std::atomic<int64_t> s_last_ntp_response_us{0};
+static std::atomic<int64_t> s_last_load_shedding_us{0};
+static std::atomic<uint64_t> s_ntp_admission_window{0};
+static std::atomic<uint32_t> s_ntp_input_count{0};
+static std::atomic<bool> s_ntp_shed_during_period{false};
 static SemaphoreHandle_t s_hardware_ntp_transmit_mutex = nullptr;
+
+enum class ntp_transport_health_t : uint8_t
+{
+    link_down,
+    no_ip,
+    idle,
+    healthy,
+    stalled
+};
+static std::atomic<ntp_transport_health_t> s_ntp_transport_health{ntp_transport_health_t::idle};
+
+static bool ntp_load_shedding_active()
+{
+    const int64_t last_shedding_us = s_last_load_shedding_us.load(std::memory_order_relaxed);
+    return last_shedding_us > 0 && esp_timer_get_time() - last_shedding_us < 1500000LL;
+}
+
+static void record_ntp_input(int64_t now_us)
+{
+    s_ntp_input_count.fetch_add(1, std::memory_order_relaxed);
+    s_last_ntp_input_us.store(now_us, std::memory_order_relaxed);
+    int64_t first_input_us = 0;
+    s_first_ntp_input_us.compare_exchange_strong(first_input_us, now_us, std::memory_order_relaxed);
+}
+
+static bool admit_ntp_request()
+{
+    const int64_t now_us = esp_timer_get_time();
+    record_ntp_input(now_us);
+
+    const uint32_t window = static_cast<uint32_t>(now_us / 100000LL);
+    const uint32_t window_limit = NTP_Requests_Per_Second_Load_Shedding_Threshold / 10;
+    uint64_t current = s_ntp_admission_window.load(std::memory_order_relaxed);
+    for (;;)
+    {
+        const uint32_t current_window = static_cast<uint32_t>(current >> 32);
+        const uint32_t active_window = current_window > window ? current_window : window;
+        const uint32_t count = static_cast<uint32_t>(current);
+        const uint32_t next_count = current_window == active_window ? count + 1 : 1;
+        if (next_count > window_limit)
+        {
+            s_ntp_shed_during_period.store(true, std::memory_order_relaxed);
+            s_last_load_shedding_us.store(now_us, std::memory_order_relaxed);
+            return false;
+        }
+        const uint64_t next = (static_cast<uint64_t>(active_window) << 32) | next_count;
+        if (s_ntp_admission_window.compare_exchange_weak(current, next, std::memory_order_relaxed))
+            return true;
+    }
+}
 
 static bool configure_static_ip();
 static bool configure_hardware_timestamps();
@@ -621,16 +690,18 @@ static bool format_socket_address(const struct sockaddr_storage &address, char *
 
 #if MQTT_ENABLED
 
+static constexpr uint32_t MQTTFrequencyOfKeepAliveRequest = 30; // in seconds (do not raise above 30
+
 // MQTT_MAX_REPORT_SIZE is based on MQTT_TF_Client_Limit (in ESP32TimeServerSetting.h)
 // please see the spreadsheet at tools/json_message_calculator.xlsx for calculation details
 // Note: increasing this limit will increase memory usage for MQTT report buffering and may impact system performance.
-static constexpr size_t MQTT_MAX_REPORT_SIZE = 31944; // examples: for 256 clients use 2060; for 500 clients use 31944
+static constexpr size_t MQTT_MAX_REPORT_SIZE = 32300;
 
 // MQTT_REPORT_SIZE based on MQTT_CLIENT_SIZE (below)
 // please see the spreadsheet at tools/json_message_calculator.xlsx for calculation details
 // Note: increasing this limit will increase memory usage for MQTT report buffering and may impact system performance.
 static constexpr size_t MQTT_CLIENT_LIMIT = 50;
-static constexpr size_t MQTT_REPORT_SIZE = 4944;
+static constexpr size_t MQTT_REPORT_SIZE = 5300;
 
 static constexpr size_t MQTT_NTP_EVENT_QUEUE_DEPTH = 1024;
 static constexpr size_t MQTT_REPORT_QUEUE_DEPTH = 4;
@@ -1744,6 +1815,7 @@ static constexpr uint32_t HARDWARE_NTP_TRANSMIT_RETRY_DELAY_US = 10;
 static constexpr uint32_t ETHERNET_RECOVERY_DELAY_MS = 100;
 static constexpr uint32_t ETHERNET_RECOVERY_STOP_TIMEOUT_MS = 1000;
 static constexpr uint32_t ETHERNET_RECOVERY_IP_TIMEOUT_MS = 10000;
+static constexpr uint32_t ETHERNET_RECOVERY_RX_UNAVAILABLE_ATTEMPTS_BEFORE_RESTART = 2;
 static constexpr int64_t NTP_TRANSPORT_STALL_TIMEOUT_US = 35000000LL;
 
 struct hardware_ntp_request_t
@@ -2135,7 +2207,9 @@ static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *
     if (result == ESP_OK)
     {
         ntp_cache_update(client_ip, client_port, receive_time, read_ntp_timestamp(reply, 40));
-        s_last_hardware_ntp_response_us.store(esp_timer_get_time(), std::memory_order_release);
+        const int64_t response_us = esp_timer_get_time();
+        s_last_hardware_ntp_response_us.store(response_us, std::memory_order_release);
+        s_last_ntp_response_us.store(response_us, std::memory_order_relaxed);
 #if MQTT_ENABLED
         s_ntp_responses.fetch_add(1, std::memory_order_relaxed);
 #endif
@@ -2313,7 +2387,9 @@ static esp_err_t process_hardware_ipv6_ntp_request(esp_eth_handle_t handle, uint
     if (result == ESP_OK)
     {
         ntp_cache_update_ipv6(&client_ip, client_port, receive_time, read_ntp_timestamp(reply, 40));
-        s_last_hardware_ntp_response_us.store(esp_timer_get_time(), std::memory_order_release);
+        const int64_t response_us = esp_timer_get_time();
+        s_last_hardware_ntp_response_us.store(response_us, std::memory_order_release);
+        s_last_ntp_response_us.store(response_us, std::memory_order_relaxed);
 #if MQTT_ENABLED
         s_ntp_responses.fetch_add(1, std::memory_order_relaxed);
 #endif
@@ -2325,6 +2401,8 @@ static esp_err_t process_hardware_ipv6_ntp_request(esp_eth_handle_t handle, uint
 
 static esp_err_t ntp_ethernet_input(esp_eth_handle_t handle, uint8_t *frame, uint32_t length, void *netif, void *info)
 {
+    if (s_ethernet_recovery_rx_probe_active.load(std::memory_order_relaxed))
+        s_ethernet_recovery_rx_probe_frames.fetch_add(1, std::memory_order_relaxed);
     size_t ip_offset = 0;
     size_t udp_offset = 0;
     const eth_mac_time_t *rx_timestamp = static_cast<const eth_mac_time_t *>(info);
@@ -2360,6 +2438,7 @@ static esp_err_t ntp_ethernet_input(esp_eth_handle_t handle, uint8_t *frame, uin
 
     if (!timestamp_is_valid(rx_timestamp))
     {
+        record_ntp_input(esp_timer_get_time());
         free(frame);
         return ESP_OK;
     }
@@ -2367,6 +2446,11 @@ static esp_err_t ntp_ethernet_input(esp_eth_handle_t handle, uint8_t *frame, uin
 #if MQTT_ENABLED
     s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
 #endif
+    if (!admit_ntp_request())
+    {
+        free(frame);
+        return ESP_OK;
+    }
     const eth_mac_time_t receive_timestamp = *rx_timestamp;
     if (!s_hardware_ntp_accepting.load(std::memory_order_acquire) || s_hardware_ntp_request_queue == nullptr ||
         s_hardware_ntp_request_buffer_queue == nullptr)
@@ -2431,59 +2515,224 @@ static void hardware_ntp_server_task(void *parameter)
     }
 }
 
-#if MQTT_ENABLED
-static void recover_ethernet_transport()
+enum class ethernet_recovery_result_t : uint8_t
 {
-    if (!s_ethernet_connected.load(std::memory_order_acquire) || ETH.handle() == nullptr || s_hardware_ntp_transmit_mutex == nullptr ||
-        xSemaphoreTake(s_hardware_ntp_transmit_mutex, portMAX_DELAY) != pdTRUE)
-        return;
-    if (!s_ethernet_connected.load(std::memory_order_acquire))
-    {
-        xSemaphoreGive(s_hardware_ntp_transmit_mutex);
-        return;
-    }
+    recovered,
+    retry_later,
+    link_unavailable,
+    no_ip,
+    receive_unavailable,
+    driver_failed,
+    timestamp_failed
+};
 
-    ESP_LOGW(TAG, "MQTT and NTP transport stalled; restarting Ethernet");
-    s_hardware_ntp_accepting.store(false, std::memory_order_release);
-    hardware_ntp_request_t request{};
-    while (xQueueReceive(s_hardware_ntp_request_queue, &request, 0) == pdTRUE)
-    {
-        release_hardware_ntp_request_buffer(request.frame);
-    }
+static bool physical_ethernet_link_is_up()
+{
+    const esp_eth_handle_t handle = ETH.handle();
+    esp_eth_phy_t *phy = nullptr;
+    if (handle == nullptr || esp_eth_get_phy_instance(handle, &phy) != ESP_OK || phy == nullptr || phy->get_link(phy) != ESP_OK)
+        return false;
 
-    s_ptp_clock_ready.store(false, std::memory_order_release);
+    return s_ethernet_connected.load(std::memory_order_acquire);
+}
+
+static ethernet_recovery_result_t restart_ethernet_transport()
+{
+    const esp_eth_handle_t handle = ETH.handle();
+    if (handle == nullptr || s_hardware_ntp_transmit_mutex == nullptr ||
+        !s_hardware_ntp_accepting.load(std::memory_order_acquire) ||
+        xSemaphoreTake(s_hardware_ntp_transmit_mutex, pdMS_TO_TICKS(ETHERNET_RECOVERY_STOP_TIMEOUT_MS)) != pdTRUE)
+        return ethernet_recovery_result_t::retry_later;
+
+    s_ethernet_recovery_in_progress.store(true, std::memory_order_release);
     s_hardware_ntp_accepting.store(false, std::memory_order_release);
+    esp_err_t result = esp_eth_stop(handle);
     xSemaphoreGive(s_hardware_ntp_transmit_mutex);
+    if (result != ESP_OK)
+    {
+        s_hardware_ntp_accepting.store(true, std::memory_order_release);
+        s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
+        return ethernet_recovery_result_t::driver_failed;
+    }
 
-    controlled_restart("ethernet_transport_stalled");
+    xEventGroupClearBits(s_net_event_group, ETH_CONNECTED_BIT | ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT);
+    vTaskDelay(pdMS_TO_TICKS(ETHERNET_RECOVERY_DELAY_MS));
+    result = esp_eth_start(handle);
+    if (result != ESP_OK)
+    {
+        s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
+        return ethernet_recovery_result_t::driver_failed;
+    }
+
+    esp_eth_mac_t *mac = nullptr;
+    const eth_mac_ptp_config_t ptp_config = ETH_MAC_ESP_PTP_DEFAULT_CONFIG();
+    s_ptp_clock_ready.store(false, std::memory_order_release);
+    if (esp_eth_get_mac_instance(handle, &mac) != ESP_OK || mac == nullptr ||
+        esp_eth_mac_ptp_enable(mac, &ptp_config) != ESP_OK ||
+        esp_eth_mac_enable_ts4all(mac, true) != ESP_OK ||
+        esp_eth_update_input_path_info(handle, ntp_ethernet_input, ETH.netif()) != ESP_OK)
+    {
+        s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
+        return ethernet_recovery_result_t::timestamp_failed;
+    }
+
+    struct timeval system_time{};
+    gettimeofday(&system_time, nullptr);
+    const struct timespec ptp_time{system_time.tv_sec, static_cast<long>(system_time.tv_usec) * 1000L};
+    if (clock_settime(CLOCK_PTP_SYSTEM, &ptp_time) != 0)
+    {
+        s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
+        return ethernet_recovery_result_t::timestamp_failed;
+    }
+
+    eth_mac_time_t first_time{};
+    eth_mac_time_t second_time{};
+    const bool first_read_ok = esp_eth_mac_get_ptp_time(mac, &first_time) == ESP_OK;
+    vTaskDelay(pdMS_TO_TICKS(ETHERNET_RECOVERY_DELAY_MS));
+    if (!first_read_ok || esp_eth_mac_get_ptp_time(mac, &second_time) != ESP_OK ||
+        (second_time.seconds < first_time.seconds ||
+         (second_time.seconds == first_time.seconds && second_time.nanoseconds <= first_time.nanoseconds)))
+    {
+        s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
+        return ethernet_recovery_result_t::timestamp_failed;
+    }
+
+    s_ptp_clock_ready.store(true, std::memory_order_release);
+    s_hardware_ntp_accepting.store(true, std::memory_order_release);
+    s_ethernet_recovery_rx_probe_frames.store(0, std::memory_order_relaxed);
+    s_ethernet_recovery_rx_probe_active.store(true, std::memory_order_release);
+    if ((xEventGroupWaitBits(s_net_event_group, ETH_CONNECTED_BIT, pdFALSE, pdFALSE,
+                             pdMS_TO_TICKS(ETHERNET_RECOVERY_IP_TIMEOUT_MS)) &
+         ETH_CONNECTED_BIT) == 0)
+    {
+        s_ethernet_recovery_rx_probe_active.store(false, std::memory_order_release);
+        s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
+        return ethernet_recovery_result_t::link_unavailable;
+    }
+    const EventBits_t needed_ip = PreferIPvX == 4 && s_ipv4_ever_acquired.load(std::memory_order_relaxed)
+                                      ? ETH_GOT_IP_BIT
+                                      : ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT;
+    const EventBits_t acquired_ip = xEventGroupWaitBits(s_net_event_group, needed_ip, pdFALSE, pdFALSE,
+                                                        pdMS_TO_TICKS(ETHERNET_RECOVERY_IP_TIMEOUT_MS));
+    const bool linked = s_ethernet_connected.load(std::memory_order_acquire);
+    s_ethernet_recovery_rx_probe_active.store(false, std::memory_order_release);
+    const uint32_t recovery_rx_frames = s_ethernet_recovery_rx_probe_frames.load(std::memory_order_relaxed);
+    s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
+    if (!linked)
+    {
+        s_last_physical_link_down_us.store(esp_timer_get_time(), std::memory_order_relaxed);
+        return ethernet_recovery_result_t::link_unavailable;
+    }
+    if ((acquired_ip & needed_ip) == 0)
+    {
+        if (recovery_rx_frames == 0)
+            return ethernet_recovery_result_t::receive_unavailable;
+    }
+    return (acquired_ip & needed_ip) != 0 ? ethernet_recovery_result_t::recovered : ethernet_recovery_result_t::no_ip;
 }
 
 static void ethernet_transport_recovery_task(void *parameter)
 {
     (void)parameter;
+    uint32_t previous_input = 0;
+    int64_t last_recovery_attempt_us = 0;
+    int64_t recovery_verification_us = 0;
+    bool recovery_needs_retry = false;
+    uint32_t consecutive_rx_unavailable_recoveries = 0;
     for (;;)
     {
         const int64_t now_us = esp_timer_get_time();
-        const int64_t disconnected_since_us = s_mqtt_disconnected_since_us.load(std::memory_order_acquire);
-        const int64_t last_ntp_response_us = s_last_hardware_ntp_response_us.load(std::memory_order_acquire);
-        if (s_ethernet_connected.load(std::memory_order_acquire) &&
-            (xEventGroupGetBits(s_net_event_group) & (ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT)) != 0 &&
-            s_mqtt_has_connected.load(std::memory_order_acquire) &&
-            !s_mqtt_connected.load(std::memory_order_acquire) && disconnected_since_us > 0 &&
-            now_us - disconnected_since_us >= NTP_TRANSPORT_STALL_TIMEOUT_US &&
-            last_ntp_response_us > 0 && now_us - last_ntp_response_us >= NTP_TRANSPORT_STALL_TIMEOUT_US)
-        {
-            recover_ethernet_transport();
-            s_mqtt_disconnected_since_us.store(esp_timer_get_time(), std::memory_order_release);
+        const uint32_t input = s_ntp_input_count.load(std::memory_order_relaxed);
+        const uint32_t interval_input = input - previous_input;
+        previous_input = input;
 
-#if CALCULATE_STACK_SIZES_ENABLED
-            report_current_task_stack_usage(Ethernet_Transport_Recovery);
-#endif
+        ntp_transport_health_t health = ntp_transport_health_t::idle;
+        if (!s_ethernet_connected.load(std::memory_order_acquire))
+            health = ntp_transport_health_t::link_down;
+        else if ((xEventGroupGetBits(s_net_event_group) & (ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT)) == 0)
+            health = ntp_transport_health_t::no_ip;
+        else if (s_ntp_external_responses_enabled.load(std::memory_order_acquire) && interval_input > 0)
+        {
+            const int64_t last_reply = s_last_ntp_response_us.load(std::memory_order_relaxed);
+            const int64_t first_input = s_first_ntp_input_us.load(std::memory_order_relaxed);
+            if (first_input > 0 && now_us - (last_reply > 0 ? last_reply : first_input) >= NTP_TRANSPORT_STALL_TIMEOUT_US)
+                health = ntp_transport_health_t::stalled;
+            else
+                health = ntp_transport_health_t::healthy;
         }
+        const ntp_transport_health_t old_health = s_ntp_transport_health.exchange(health, std::memory_order_relaxed);
+        const int64_t last_input_us = s_last_ntp_input_us.load(std::memory_order_relaxed);
+        const int64_t last_shedding_us = s_last_load_shedding_us.load(std::memory_order_relaxed);
+        const bool link_up = s_ethernet_connected.load(std::memory_order_acquire);
+        const bool ipv4_missing = s_ipv4_ever_acquired.load(std::memory_order_relaxed) &&
+                                  (xEventGroupGetBits(s_net_event_group) & ETH_GOT_IP_BIT) == 0;
+        bool mqtt_unavailable = false;
+#if MQTT_ENABLED
+        mqtt_unavailable = s_mqtt_has_connected.load(std::memory_order_relaxed) &&
+                           !s_mqtt_connected.load(std::memory_order_relaxed);
+#endif
+        if (recovery_verification_us > 0)
+        {
+            if (s_last_hardware_ntp_response_us.load(std::memory_order_acquire) > recovery_verification_us)
+                recovery_verification_us = 0;
+            else if (link_up &&
+                     s_last_physical_link_down_us.load(std::memory_order_relaxed) < recovery_verification_us &&
+                     last_input_us > recovery_verification_us &&
+                     now_us - recovery_verification_us >= NTP_TRANSPORT_STALL_TIMEOUT_US &&
+                     now_us - last_input_us < 2000000LL &&
+                     (xEventGroupGetBits(s_net_event_group) & (ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT)) != 0)
+            {
+                controlled_restart("ethernet_recovery_timestamp_unverified");
+            }
+        }
+
+        const bool confirmed_stall = health == ntp_transport_health_t::stalled &&
+                                     old_health == ntp_transport_health_t::stalled && link_up &&
+                                     now_us - last_input_us < 2000000LL;
+        const bool silent_transport_failure = link_up && s_ntp_external_responses_enabled.load(std::memory_order_acquire) &&
+                                              last_input_us > s_last_physical_link_down_us.load(std::memory_order_relaxed) &&
+                                              now_us - last_input_us >= NTP_TRANSPORT_STALL_TIMEOUT_US &&
+                                              now_us - last_input_us < 180000000LL &&
+                                              (ipv4_missing || mqtt_unavailable);
+        if ((confirmed_stall || silent_transport_failure) &&
+            (last_recovery_attempt_us == 0 ||
+             (now_us - last_recovery_attempt_us >= 60000000LL &&
+              (recovery_needs_retry || last_input_us > last_recovery_attempt_us ||
+               last_shedding_us > last_recovery_attempt_us))))
+        {
+            last_recovery_attempt_us = now_us;
+            recovery_verification_us = 0;
+            const ethernet_recovery_result_t result = restart_ethernet_transport();
+            recovery_needs_retry = result != ethernet_recovery_result_t::recovered;
+            if (result == ethernet_recovery_result_t::recovered)
+            {
+                consecutive_rx_unavailable_recoveries = 0;
+                recovery_verification_us = esp_timer_get_time();
+            }
+            else if (result == ethernet_recovery_result_t::receive_unavailable)
+            {
+                ++consecutive_rx_unavailable_recoveries;
+                if (consecutive_rx_unavailable_recoveries >= ETHERNET_RECOVERY_RX_UNAVAILABLE_ATTEMPTS_BEFORE_RESTART &&
+                    physical_ethernet_link_is_up())
+                    controlled_restart("ethernet_recovery_receive_unavailable");
+            }
+            else if ((result == ethernet_recovery_result_t::driver_failed ||
+                      result == ethernet_recovery_result_t::timestamp_failed) &&
+                     s_ethernet_connected.load(std::memory_order_acquire) &&
+                     (confirmed_stall || last_shedding_us > s_last_physical_link_down_us.load(std::memory_order_relaxed)))
+            {
+                consecutive_rx_unavailable_recoveries = 0;
+                controlled_restart("ethernet_recovery_local_failure");
+            }
+            else
+                consecutive_rx_unavailable_recoveries = 0;
+        }
+#if CALCULATE_STACK_SIZES_ENABLED
+        report_current_task_stack_usage(Ethernet_Transport_Recovery);
+#endif
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
-#endif
 
 static void synchronize_hardware_clock()
 {
@@ -4023,7 +4272,7 @@ static void format_time_to_ISO8601(time_t value, char *output, size_t output_siz
 
 static void mqtt_enqueue_ntp_request(const struct sockaddr_storage &source_address)
 {
-    if (s_mqtt_ntp_event_queue == nullptr ||
+    if (ntp_load_shedding_active() || s_mqtt_ntp_event_queue == nullptr ||
         xQueueSend(s_mqtt_ntp_event_queue, &source_address, 0) != pdTRUE)
         s_ntp_telemetry_events_dropped.fetch_add(1, std::memory_order_relaxed);
 }
@@ -4306,6 +4555,7 @@ static void mqtt_build_report(char *payload, size_t payload_size)
     uint32_t queued_messages_discarded = s_mqtt_queued_messages_discarded;
     s_mqtt_queued_messages_discarded = 0;
     uint32_t most_requests_per_second = s_ntp_most_requests_per_second.exchange(0, std::memory_order_relaxed);
+    const bool load_shedding_this_period = s_ntp_shed_during_period.exchange(false, std::memory_order_relaxed);
 
     char publishing_date_and_time[25] = "";
     format_time_to_ISO8601(time(nullptr), publishing_date_and_time, sizeof(publishing_date_and_time));
@@ -4432,6 +4682,7 @@ static void mqtt_build_report(char *payload, size_t payload_size)
     len += snprintf(payload + len, payload_size - len, "\"invalid\":%lu,", (unsigned long)(authenticated_invalid + unauthenticated_invalid));
 #endif
 
+    len += snprintf(payload + len, payload_size - len, "\"load_shedding\":%s,", load_shedding_this_period ? "true" : "false");
     len += snprintf(payload + len, payload_size - len, "\"telemetry_dropped\":%lu,", (unsigned long)s_ntp_telemetry_events_dropped.exchange(0));
     len += snprintf(payload + len, payload_size - len, "\"max_per_second\":%lu", (unsigned long)most_requests_per_second);
     len += snprintf(payload + len, payload_size - len, "},");
@@ -4598,6 +4849,7 @@ static bool mqtt_publish_pending_restart_notification()
 static void mqtt_service_task(void *parameter)
 {
     bool previously_connected = false;
+    bool previously_shedding = false;
     TickType_t next_report = xTaskGetTickCount() + pdMS_TO_TICKS(MQTTReportingPeriod * 1000UL);
     for (;;)
     {
@@ -4904,6 +5156,7 @@ static void setup_mqtt()
     snprintf(s_mqtt_uri, sizeof(s_mqtt_uri), "mqtt://%s:%u", MQTTServerIPAddress, static_cast<unsigned int>(MQTTPort));
     snprintf(s_mqtt_report_topic, sizeof(s_mqtt_report_topic), "%s/report", MQTTTopic);
     snprintf(s_mqtt_status_topic, sizeof(s_mqtt_status_topic), "%s/status", MQTTTopic);
+
     esp_mqtt_client_config_t config{};
     config.broker.address.uri = s_mqtt_uri;
     config.credentials.username = MQTTUsername;
@@ -4934,8 +5187,7 @@ static void setup_mqtt()
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "MQTT setup. Keep alive set at %u seconds", MQTTFrequencyOfKeepAliveRequest);
 #endif
-    if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", MQTT_Service_Task_Stack_Size, nullptr, 5, nullptr, 0) != pdPASS ||
-        xTaskCreatePinnedToCore(ethernet_transport_recovery_task, "eth_recovery", Ethernet_Transport_Recovery_Task_Stack_Size, nullptr, 6, nullptr, 0) != pdPASS)
+    if (xTaskCreatePinnedToCore(mqtt_service_task, "mqtt_service", MQTT_Service_Task_Stack_Size, nullptr, 5, nullptr, 0) != pdPASS)
         s_mqtt_setup_failed.store(true);
 #endif
 }
@@ -4965,6 +5217,7 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
         display_line(1, "Ethernet connected");
         break;
     case ARDUINO_EVENT_ETH_GOT_IP:
+        s_ipv4_ever_acquired.store(true, std::memory_order_relaxed);
         snprintf(s_ipv4_address, sizeof(s_ipv4_address), IPSTR, IP2STR(&info.got_ip.ip_info.ip));
         update_selected_ip_address();
 #if MQTT_ENABLED
@@ -5006,7 +5259,11 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
         display_selected_ip_address(static_cast<int>(time(nullptr) % 10));
         break;
     case ARDUINO_EVENT_ETH_DISCONNECTED:
+        if (!s_ethernet_recovery_in_progress.load(std::memory_order_acquire))
+            s_last_physical_link_down_us.store(esp_timer_get_time(), std::memory_order_relaxed);
         s_ethernet_connected.store(false);
+        s_first_ntp_input_us.store(0, std::memory_order_relaxed);
+        s_last_ntp_response_us.store(0, std::memory_order_relaxed);
 #if MQTT_ENABLED
         mqtt_note_ethernet_disconnected();
 #endif
@@ -5022,6 +5279,8 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
         break;
     case ARDUINO_EVENT_ETH_STOP:
         s_ethernet_connected.store(false);
+        s_first_ntp_input_us.store(0, std::memory_order_relaxed);
+        s_last_ntp_response_us.store(0, std::memory_order_relaxed);
 #if MQTT_ENABLED
         mqtt_note_ethernet_disconnected();
 #endif
@@ -5322,9 +5581,7 @@ void write_open_for_business_messages_to_the_console()
     ESP_LOGI(TAG, "***********************************************");
     ESP_LOGI(TAG, " ");
 
-#if RBG_LED_ENABLED
     s_open_for_business_message_written.store(true, std::memory_order_release);
-#endif
 
 #if DEBUG_ENABLED
 #else
@@ -5361,13 +5618,27 @@ static void setup_up_the_RGB_LED()
 {
 #if RBG_LED_ENABLED
 
-    gpio_config_t config{};
-    config.pin_bit_mask = (1ULL << LEDBluePin) | (1ULL << LEDGreenPin) | (1ULL << LEDRedPin);
-    config.mode = GPIO_MODE_OUTPUT;
-    config.pull_up_en = GPIO_PULLUP_DISABLE;
-    config.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    config.intr_type = GPIO_INTR_DISABLE;
-    ESP_ERROR_CHECK(gpio_config(&config));
+    ledc_timer_config_t timer_config{};
+    timer_config.speed_mode = LEDC_LOW_SPEED_MODE;
+    timer_config.duty_resolution = LEDC_TIMER_8_BIT;
+    timer_config.timer_num = LEDC_TIMER_0;
+    timer_config.freq_hz = 5000;
+    timer_config.clk_cfg = LEDC_AUTO_CLK;
+    ESP_ERROR_CHECK(ledc_timer_config(&timer_config));
+
+    const int led_pins[] = {LEDRedPin, LEDGreenPin, LEDBluePin};
+    for (int channel = 0; channel < 3; ++channel)
+    {
+        ledc_channel_config_t channel_config{};
+        channel_config.gpio_num = led_pins[channel];
+        channel_config.speed_mode = LEDC_LOW_SPEED_MODE;
+        channel_config.channel = static_cast<ledc_channel_t>(channel);
+        channel_config.intr_type = LEDC_INTR_DISABLE;
+        channel_config.timer_sel = LEDC_TIMER_0;
+        channel_config.duty = 0;
+        channel_config.hpoint = 0;
+        ESP_ERROR_CHECK(ledc_channel_config(&channel_config));
+    }
     control_KY_016_RGB_LED(LED_startup, true);
 
 #endif
@@ -6404,8 +6675,16 @@ static void ntp_server_task(void *parameter)
                 const bool authenticated_request = false;
 #endif
 
-                if (!s_ntp_external_responses_enabled.load(std::memory_order_acquire) && !is_internal_ntp_client(source_addr))
+                const bool internal_request = is_internal_ntp_client(source_addr);
+                if (!s_ntp_external_responses_enabled.load(std::memory_order_acquire) && !internal_request)
                     continue;
+                if (!internal_request && !admit_ntp_request())
+                {
+#if MQTT_ENABLED
+                    s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
+#endif
+                    continue;
+                }
 
 #if MQTT_ENABLED
                 s_ntp_requests_this_second.fetch_add(1, std::memory_order_relaxed);
@@ -6489,6 +6768,10 @@ static void ntp_server_task(void *parameter)
                 int sent = sendto(sock, reply, reply_length, 0, reinterpret_cast<struct sockaddr *>(&source_addr), source_addr_len);
                 if (sent == static_cast<int>(reply_length))
                 {
+                    if (!internal_request)
+                    {
+                        s_last_ntp_response_us.store(esp_timer_get_time(), std::memory_order_relaxed);
+                    }
                     if (source_ipv4 != nullptr)
                     {
                         ntp_cache_update(ntohl(source_ipv4->sin_addr.s_addr), ntohs(source_ipv4->sin_port),
@@ -7063,12 +7346,20 @@ static int get_required_top_line_message()
 
     if (!s_ethernet_connected.load())
         required_top_line_message = 1;
+    else if (PreferIPvX == 4 && s_ntp_external_responses_enabled.load() && s_net_event_group != nullptr &&
+             (xEventGroupGetBits(s_net_event_group) & ETH_GOT_IP_BIT) == 0)
+        required_top_line_message = 13;
 #if MQTT_ENABLED
     else if (s_mqtt_queued_messages_count.load() > 0)
         required_top_line_message = 3;
-    else if (s_mqtt_setup_failed.load() || !s_mqtt_connected.load())
+    else if (s_mqtt_setup_failed.load())
         required_top_line_message = 2;
+    else if (!s_mqtt_connected.load())
+        required_top_line_message = 11;
 #endif
+    if (s_ntp_transport_health.load(std::memory_order_relaxed) == ntp_transport_health_t::stalled &&
+        required_top_line_message != 1)
+        required_top_line_message = 14;
 
     if (sync_snapshot.faults.sanity_mismatch)
         return 4;
@@ -7080,6 +7371,8 @@ static int get_required_top_line_message()
         return 7;
     if (required_top_line_message == 0 && !s_gnss_locked.load())
         return 8;
+    if (required_top_line_message == 0 && ntp_load_shedding_active())
+        return 12;
 
     return required_top_line_message;
 }
@@ -7087,56 +7380,119 @@ static int get_required_top_line_message()
 #if RBG_LED_ENABLED
 static void control_KY_016_RGB_LED(RGB_LED_Colour Colour, bool enabled)
 {
-    const bool illuminate = enabled && Colour != RGB_LED_Colour::off;
-    const bool red = illuminate && (Colour == RGB_LED_Colour::red || Colour == RGB_LED_Colour::yellow || Colour == RGB_LED_Colour::white);
-    const bool green = illuminate && (Colour == RGB_LED_Colour::green || Colour == RGB_LED_Colour::yellow || Colour == RGB_LED_Colour::white);
-    const bool blue = illuminate && (Colour == RGB_LED_Colour::blue || Colour == RGB_LED_Colour::white);
+    uint8_t red_duty = 0;
+    uint8_t green_duty = 0;
+    uint8_t blue_duty = 0;
 
-    gpio_set_level(static_cast<gpio_num_t>(LEDRedPin), red ? 1 : 0);
-    gpio_set_level(static_cast<gpio_num_t>(LEDGreenPin), green ? 1 : 0);
-    gpio_set_level(static_cast<gpio_num_t>(LEDBluePin), blue ? 1 : 0);
+    if (enabled)
+    {
+        switch (Colour)
+        {
+        case RGB_LED_Colour::red:
+            red_duty = 255;
+            break;
+        case RGB_LED_Colour::green:
+            green_duty = 255;
+            break;
+        case RGB_LED_Colour::blue:
+            blue_duty = 255;
+            break;
+        case RGB_LED_Colour::yellow:
+            red_duty = 255;
+            green_duty = 255;
+            break;
+        case RGB_LED_Colour::white:
+            red_duty = 255;
+            green_duty = 255;
+            blue_duty = 255;
+            break;
+        case RGB_LED_Colour::orange:
+            red_duty = 255;
+            green_duty = 165; // 128
+            break;
+        case RGB_LED_Colour::pink:
+            red_duty = 255;
+            green_duty = 192;
+            blue_duty = 203;
+            break;
+        case RGB_LED_Colour::off:
+            break;
+        }
+    }
+
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, red_duty));
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, green_duty));
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, blue_duty));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2));
 }
 
 static void update_RGB_LED()
 {
-    RGB_LED_Colour Colour = LED_startup;
+    RGB_LED_Colour Colour;
     bool flashing = false;
 
-    if (!s_open_for_business_message_written.load(std::memory_order_acquire))
-    {
-        flashing = s_gnss_pps_startup_qualification_in_progress.load(std::memory_order_acquire) ||
-                   s_pps_discipline_active.load();
-    }
-    else
+    if (s_open_for_business_message_written.load(std::memory_order_acquire))
     {
         switch (get_required_top_line_message())
         {
-        case 9:
+        case 0: // The server is operating normally
+            Colour = LED_normal;
+            break;
+
+        case 5: // There are queued MQTT items
+            Colour = LED_warning;
+            flashing = true;
+            break;
+
+        case 6:  // PPS missing
+        case 7:  // GNSS missing or invalid
+        case 8:  // GNSS sync stale
+        case 14: // GNSS has lost its satellite lock
+            Colour = LED_warning;
+            break;
+
+        case 11: // Not connected to the MQTT broker
             Colour = LED_critical;
             flashing = true;
             break;
-        case 99:
+
+        case 1:  // Ethernet not connected
+        case 2:  // MQTT setup failed
+        case 4:  // Sanity check mismatch
+        case 9:  // Communication failure with the GNSS receiver
+        case 13: // Transport layer stalled
+            Colour = LED_critical;
+            break;
+
+        case 12: // Load shedding active
+            Colour = LED_alert;
+            flashing = true;
+            break;
+
+        case 3: // IPv4 address not assigned yet preferred
+            Colour = LED_alert;
+            break;
+
+        case 98: // The server is synchronizing its time
             Colour = LED_sync;
             break;
-        case 1:
-            Colour = LED_critical;
+
+        case 99: // The button is being pressed
+            Colour = LED_button_push;
             break;
-        case 2:
-        case 3:
-            Colour = LED_warning;
-            flashing = true;
-            break;
-        case 4:
-        case 5:
-        case 6:
-        case 7:
-        case 8:
-            Colour = LED_warning;
-            break;
-        default:
+
+        default: // should not get here
             Colour = LED_normal;
             break;
         }
+    }
+    else
+    {
+        Colour = LED_startup;
+        flashing = s_gnss_pps_startup_qualification_in_progress.load(std::memory_order_acquire) ||
+                   s_pps_discipline_active.load();
     }
 
     const bool enabled = !flashing || ((esp_timer_get_time() / 1000000LL) % 2 == 0);
@@ -7157,17 +7513,8 @@ static void update_LED_LCD_Button_task(void *parameter)
     for (;;)
     {
 
-#if RBG_LED_ENABLED
-        update_RGB_LED();
-#endif
-
-        bool update_display = true;
-#if RBG_LED_ENABLED
-        update_display = s_open_for_business_message_written.load(std::memory_order_acquire);
-#endif
-
 #if OTE_UPDATES_ENABLED
-        if (update_display && render_ote_display())
+        if (render_ote_display())
         {
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
@@ -7178,7 +7525,7 @@ static void update_LED_LCD_Button_task(void *parameter)
         struct tm utc_tm{};
         gmtime_r(&now_utc, &utc_tm);
 
-        if (update_display && utc_tm.tm_sec != previous_second)
+        if (utc_tm.tm_sec != previous_second)
         {
             previous_second = utc_tm.tm_sec;
 
@@ -7187,40 +7534,53 @@ static void update_LED_LCD_Button_task(void *parameter)
                 display_uptime_seconds_counter = upTimeDisplayWillStayActiveForThisManySeconds;
 #endif
 
-            int required_top_line_message = get_required_top_line_message();
+            int required_top_line_message;
 
-            // Determine message code for the first line:
-            //
-            // Standard 1st line display value .................................... "ESP32 Time Server   "
-            // Ethernet not connected ............................................. "ESP32 Time Server[1]"
-            // MQTT setup failed .................................................. "ESP32 Time Server[2]"
-            // MQTT there are queued items ........................................ "ESP32 Time Server[3]"
-            // Sanity check mismatch .............................................. "ESP32 Time Server[4]"
-            // PPS missing ........................................................ "ESP32 Time Server[5]"
-            // GNSS missing or invalid ............................................ "ESP32 Time Server[6]"
-            // GNSS sync stale .................................................... "ESP32 Time Server[7]"
-            // GNSS unlocked ...................................................... "ESP32 Time Server[8]"
-            // Communication failure with the GNSS receiver ....................... "ESP32 Time Server[9]"
+            if (s_open_for_business_message_written.load(std::memory_order_acquire))
+                required_top_line_message = get_required_top_line_message();
+            else
+                required_top_line_message = 0;
 
-            // 98 used for when the button is pressed (normal periodic behaviour) . "ESP32 Time Server's "
-            // 99 Time sync underway (normal periodic behaviour)                  . "ESP32 Time Server * "
+            /*
 
-            // Regarding statuses [6], [7] and [8], each condition represents a distinct failure mode:
-            // [6] - GNSS timing is unusable. This is a hard fault.
-            // [7] - The system hasn’t synced with GNSS as expected due to processing delays or blockages
-            // [8] - GNSS module lost satellite lock. This is a raw GNSS status, not a sync fault.
+            |  Code   | Top Line             | RGB LED         | Meaning                                                            |
+            |-------- | -------------------- | --------------- | ------------------------------------------------------------------ |
+            |   n/a   | ESP32 Time Server    | Blue            | The server is in startup mode                                      |
+            |   n/a   | ESP32 Time Server    | Blue flashing   | The server is almost ready, but needs to complete PPS disciplining |
+            |         |                      |                 |                                                                    |
+            |    0    | ESP32 Time Server    | Green           | The server is operating normally                                   |
+            |    5    | ESP32 Time Server[3] | Yellow flashing | There are queued MQTT items                                        |
+            |    6    | ESP32 Time Server[5] | Yellow          | PPS missing                                                        |
+            |    7    | ESP32 Time Server[6] | Yellow          | GNSS missing or invalid                                            |
+            |    8    | ESP32 Time Server[7] | Yellow          | GNSS sync stale                                                    |
+            |   14    | ESP32 Time Server[8] | Yellow          | GNSS has lost its satellite lock                                   |
+            |   11    | ESP32 Time Server[M] | Red flashing    | Not connected to the MQTT broker                                   |
+            |    9    | ESP32 Time Server[9] | Red             | Communication failure with the GNSS receiver                       |
+            |    1    | ESP32 Time Server[1] | Red             | Ethernet not connected                                             |
+            |    2    | ESP32 Time Server[2] | Red             | MQTT setup failed                                                  |
+            |   13    | ESP32 Time Server[T] | Red             | Transport layer stalled                                            |
+            |    4    | ESP32 Time Server[4] | Red             | Sanity check mismatch                                              |
+            |         |                      |                 |                                                                    |
+            |    3    | ESP32 Time Server[I] | Orange          | IPv4 address not assigned yet preferred                            |
+            |   12    | ESP32 Time Server[+] | Orange flashing | Load shedding active                                               |
+            |   98    | ESP32 Time Server[*] | White           | The server is synchronizing its time                               |
+            |   99    | ESP32 Time Server's  | Pink            | The button is being pressed                                        |
 
-            // Regarding: sync_snapshot.holdover_mode
-            // In timekeeping terminology, holdover is the state where a time server continues providing time from its internal
-            // oscillator after losing its external reference (in this case the GNSS). The device is no longer actively
-            // synchronized but is "coasting" on its last-known good time.
-            // Holdover mode is not expressly reported on the LCD's top line as it is implied when
-            // Sanity check mismatch, PPS missing, GNSS missing or invalid, GNSS snyc stale, or GNSS unlocked
-            // are reported.
+
+            Note:
+            In timekeeping terminology, holdover is the state where a time server continues providing time from its internal
+            oscillator after losing its external reference (in this case the GNSS). The device is no longer actively
+            synchronized but is "coasting" on its last-known good time.  Holdover mode is not expressly reported on the
+            LCD's top line or via the RBB LED as it is implied when the PPS missing, the GNSS missing or invalid, the
+            GNSS sync is stale, or the GNSS has lost its satellite lock.
+
+            The above chart can be found in the folder: misc/status_indicators.md
+
+            */
 
 #if UPTIME_RESTART_BUTTON_ENABLED
             if (display_uptime_seconds_counter > 0)
-                required_top_line_message = 98;
+                required_top_line_message = 99;
 #endif
 
             // Update top line only if it has changed
@@ -7230,7 +7590,7 @@ static void update_LED_LCD_Button_task(void *parameter)
                 memset(top_line_message, ' ', sizeof(top_line_message));
                 memcpy(top_line_message, "ESP32 Time Server", 17);
 
-                if (required_top_line_message == 99)
+                if (required_top_line_message == 98)
                 {
                     top_line_message[18] = '*';
                 }
@@ -7240,9 +7600,17 @@ static void update_LED_LCD_Button_task(void *parameter)
                     top_line_message[18] = '0' + required_top_line_message;
                     top_line_message[19] = ']';
                 }
-                else if (required_top_line_message == 10)
+                else if (required_top_line_message == 99)
                 {
                     memcpy(top_line_message, "ESP32 Time Server's", 20);
+                }
+                else if (required_top_line_message >= 11 && required_top_line_message <= 14)
+                {
+                    top_line_message[17] = '[';
+                    top_line_message[18] = required_top_line_message == 11 ? 'M' : required_top_line_message == 12 ? '+'
+                                                                               : required_top_line_message == 13   ? 'T'
+                                                                                                                   : 'I';
+                    top_line_message[19] = ']';
                 }
 
                 top_line_message[20] = '\0';
@@ -7288,6 +7656,11 @@ static void update_LED_LCD_Button_task(void *parameter)
                 display_selected_ip_address(utc_tm.tm_sec);
             }
         }
+
+#if RBG_LED_ENABLED
+        update_RGB_LED();
+#endif
+
         vTaskDelay(pdMS_TO_TICKS(50));
 
 #if CALCULATE_STACK_SIZES_ENABLED
@@ -7326,6 +7699,18 @@ void setup_symmetric_key_authentication()
 
 void setup_ntp_server()
 {
+
+    // set the NTP load shedding threshold based on the ESP32-P4 chip version
+    esp_chip_info_t chip_info{};
+    esp_chip_info(&chip_info);
+    NTP_Requests_Per_Second_Load_Shedding_Threshold = chip_info.revision <= 103
+                                                          ? NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32P4_ChipVersion1_3
+                                                          : NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32P4_ChipVersion_above_1_3;
+
+#if DEBUG_ENABLED
+    ESP_LOGI(TAG, "NTP load shedding threshold set to %u requests per second", NTP_Requests_Per_Second_Load_Shedding_Threshold);
+#endif
+
     if (xTaskCreatePinnedToCore(ntp_server_task, "ntp_server", NTP_Server_Task_Stack_Size,
                                 xTaskGetCurrentTaskHandle(), 20, nullptr, tskNO_AFFINITY) != pdPASS)
     {
@@ -7385,6 +7770,9 @@ extern "C" void app_main()
     setup_symmetric_key_authentication();
 
     setup_ntp_server();
+
+    if (xTaskCreatePinnedToCore(ethernet_transport_recovery_task, "eth_recovery", Ethernet_Transport_Recovery_Task_Stack_Size, nullptr, 6, nullptr, 0) != pdPASS)
+        ESP_LOGE(TAG, "Unable to start NTP transport health monitoring");
 
     perform_health_check();
 

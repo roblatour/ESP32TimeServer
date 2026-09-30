@@ -191,13 +191,17 @@ Use this option if you do **not** already have an `mqtt.yaml` file.
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.requests.authenticated.invalid }}"
 
-          - name: "NTP Requests Unauthenticated Valid"
+    - name: "NTP Requests Unauthenticated Valid"
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.requests.unauthenticated.valid }}"
 
     - name: "NTP Requests Unauthenticated Invalid"
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.requests.unauthenticated.invalid }}"
+
+    - name: "Load Shedding"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.load_shedding }}"
 
     - name: "NTP Telemetry Dropped"
       state_topic: "ESP32TimeServer/report"
@@ -396,7 +400,7 @@ Use this option if you already have an `mqtt.yaml` file that contains a
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.requests.invalid }}"
 
-          - name: "NTP Requests Authenticated Valid"
+    - name: "NTP Requests Authenticated Valid"
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.requests.authenticated.valid }}"
 
@@ -411,6 +415,10 @@ Use this option if you already have an `mqtt.yaml` file that contains a
     - name: "NTP Requests Unauthenticated Invalid"
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.requests.unauthenticated.invalid }}"
+
+    - name: "Load Shedding"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.load_shedding }}"
 
     - name: "NTP Telemetry Dropped"
       state_topic: "ESP32TimeServer/report"
@@ -627,6 +635,10 @@ lists (no top-level `sensor:` key).
     - name: "NTP Requests Unauthenticated Invalid"
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.requests.unauthenticated.invalid }}"
+
+    - name: "Load Shedding"
+      state_topic: "ESP32TimeServer/report"
+      value_template: "{{ value_json.this_period.ntp.requests.load_shedding }}"
 
     - name: "NTP Telemetry Dropped"
       state_topic: "ESP32TimeServer/report"

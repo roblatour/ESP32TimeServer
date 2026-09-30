@@ -82,7 +82,7 @@ Desktop.ini
 Release/
 
 # testing file
-testing/drift/background
+testing/drift/DoNotPublish
 testing/RFC_9769_compliance/background
 
 # personalize settings
@@ -91,7 +91,8 @@ _switch*.bat
 
 
 #others
-/misc/doNotPublish
+misc/doNotPublish
+main/doNotPublish
 AGENTS.md
 
 # User-specific configuration files

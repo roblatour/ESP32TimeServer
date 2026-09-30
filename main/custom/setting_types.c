@@ -11,7 +11,9 @@ enum class RGB_LED_Colour : uint8_t
     green,
     blue,
     yellow,
-    white
+    white,
+    orange,
+    pink
 };
 
 struct symmetric_key_t

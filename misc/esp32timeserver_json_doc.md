@@ -56,6 +56,7 @@ controlled restart events and an example of a MQTT message for one.
             "requests": {
                 "valid": 4,
                 "invalid": 0,
+                "load_shedding": false,
                 "telemetry_dropped": 0,
                 "max_per_second": 1
             },
@@ -145,6 +146,10 @@ Counters in this object are reset after they are included in a report.
   reporting period.
 - **`ntp.requests.invalid`**: Number of invalid NTP requests received during the
   reporting period.
+- **`load_shedding`**: If the server is being overwhelmed with NTP requests
+  (in the magnitude of several thousand per second) it may need to actively 
+  ignore some of them, if this happened this value will be true, 
+  otherwise it will be false. 
 - **`telemetry_dropped`**: Number of valid NTP requests whose optional MQTT
   client telemetry event could not be queued, usually because the event queue
   was full during a high request-rate burst. These requests were still received,
@@ -245,6 +250,7 @@ When both SYMMETRIC_KEY_AUTHENTICATION_ENABLED **and** MQTT_DISTINGUISH_AUTHENTI
                     "valid": 0,
                     "invalid": 0
                 },
+                "load_shedding": false,
                 "telemetry_dropped": 0,
                 "max_per_second": 1
             },
@@ -255,6 +261,7 @@ as a replacement for
             "requests": {
                 "valid": 4,
                 "invalid": 0,
+                "load_shedding": false,
                 "telemetry_dropped": 0,
                 "max_per_second": 1
             },
@@ -273,7 +280,7 @@ Controlled restarts are triggered in specific events:
 ```json
 {
     "event": "controlled_restart",
-    "reason": "ethernet_transport_stalled"
+    "reason": "manual_restart"
 }
 ```
 

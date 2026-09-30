@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 3)
+# ESP32 NTP Stratum 1 Time Server (version 3.0.1)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -54,7 +54,7 @@ version 1, including:
   of always relying on the device's default address and DHCP.
 - **Optional LCD support** — a 4x20 LCD screen was required in v1; 
   in v2 it's entirely optional, along with an optional up time / reset button.
-- **Optional RGB LED support added** — [here](misc/flashing_lights.md)
+- **Optional RGB LED support added** — [here](misc/status_indicators.md)
   is how that is used.
 - **Smart GNSS lock tracking** — improved satellite lock and PPS discipline
   tracking, with results correctly reported as Stratum 16 (undefined) if lock

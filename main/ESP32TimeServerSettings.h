@@ -1,4 +1,4 @@
-// ESP32 Time Server v3
+// ESP32 Time Server v3.0.1
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -20,11 +20,17 @@ static constexpr int serialMonitorSpeed = 115200;
 
 // (optional) KY-016 RGB LED support
 #define RBG_LED_ENABLED 0 // 0 = Disabled; 1 = Enabled
+
+// The LED colours below may be changed to suit your preferences, but the descriptors should remain unchanged
+// For example: you can change LED_normal to blue but leave the descriptor 'LED_normal' unchanged
 static constexpr RGB_LED_Colour LED_startup = RGB_LED_Colour::blue;
 static constexpr RGB_LED_Colour LED_normal = RGB_LED_Colour::green;
 static constexpr RGB_LED_Colour LED_sync = RGB_LED_Colour::white;
 static constexpr RGB_LED_Colour LED_warning = RGB_LED_Colour::yellow;
+static constexpr RGB_LED_Colour LED_alert = RGB_LED_Colour::orange;
 static constexpr RGB_LED_Colour LED_critical = RGB_LED_Colour::red;
+static constexpr RGB_LED_Colour LED_button_push = RGB_LED_Colour::pink;
+
 // GPIO pin definitions for the KY-016 RGB LED
 static constexpr int LEDBluePin = 4;
 static constexpr int LEDGreenPin = 5;
@@ -34,6 +40,8 @@ static constexpr int LEDRedPin = 6;
 #define LIQUID_CRYSTAL_DISPLAY_ENABLED 1 // 0 = Disabled; 1 = Enabled
 static constexpr int lcdColumns = 20;
 static constexpr int lcdRows = 4;
+static constexpr bool display24HourFormat = false;        // set to true for 24-hour format, false for 12-hour format
+static constexpr bool displayHoursWithPaddedZero = false; // set to true to pad the hour with a leading zero when less than 10, false not to pad
 static constexpr bool displayTimeZone = false;
 static constexpr int lcdI2CAddressPrimary = 0x27;
 static constexpr int lcdI2CAddressSecondary = 0x3F;
@@ -68,16 +76,18 @@ static constexpr uint16_t OTEPort = 3232;
 #define MQTT_MEMORY_REPORTING_ENABLED 1                    // 0 = Disabled; 1 = Enabled
 #define MQTT_HISTORICAL_REPORTING_ENABLED 1                // 0 = Disabled; 1 = Enabled
 #define MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED 0 // 0 = Disabled; 1 = Enabled
-static constexpr char MQTTServerIPAddress[] = "";          // For example 192.168.1.15
+
+static constexpr char MQTTServerIPAddress[] = ""; // For example 192.168.1.15
 static constexpr uint16_t MQTTPort = 1883;
 static constexpr char MQTTTopic[] = "ESP32TimeServer";
-static constexpr uint16_t MQTTBrokerRetain = 1;                 // 0 = tell the broker not to retain the most current message; 1 = tell the broker to retain the most current message
-static constexpr uint32_t MQTTReportingPeriod = 900;            // in seconds
-static constexpr uint32_t MQTTFrequencyOfKeepAliveRequest = 60; // in seconds
+static constexpr uint16_t MQTTBrokerRetain = 1;      // 0 = tell the broker not to retain the most current message; 1 = tell the broker to retain the most current message
+static constexpr uint32_t MQTTReportingPeriod = 900; // in seconds
+
 // QoS 0 delivers at most once and does not retain reports while disconnected
 // QoS 1 delivers at least once and queues reports while disconnected
 // QoS 2 delivers exactly once and queues reports while disconnected
 static constexpr int MQTT_QOS = 0;
+
 // For MQTT_QOS > 0
 //   If a TF card, formatted using FAT32, is not present in the TF reader, or if read/write operations to it fail then only
 //   limited MQTT report queuing is provided (up to 4 prior reporting periods, each detailing the usage of a maximum of 50 unique clients)
