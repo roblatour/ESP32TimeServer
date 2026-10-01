@@ -1,4 +1,4 @@
-// ESP32 Time Server v3.0.1
+// ESP32 Time Server v3.0.2
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -82,14 +82,17 @@ extern "C"
 #include "esp_vfs_fat.h"
 #include "nvs.h"
 #include "driver/mcpwm_cap.h"
+#if RBG_LED_KY_016_MODULE_ENABLED
 #include "driver/ledc.h"
+#endif
+#if RBG_LED_WS2812_MODULE_ENABLED
+#include "led_strip.h"
+#endif
 #include "driver/sdmmc_host.h"
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
 #include "sdmmc_cmd.h"
 #include "nvs_flash.h"
-#if RBG_LED_ENABLED
 #include "driver/gpio.h"
-#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/queue.h"
@@ -600,9 +603,13 @@ static std::atomic<uint32_t> s_ethernet_recovery_rx_probe_frames{0};
 static std::atomic<bool> s_hardware_ntp_accepting{false};
 static std::atomic<bool> s_ntp_external_responses_enabled{false};
 static std::atomic<bool> s_ntp_server_ready{false};
-#if RBG_LED_ENABLED
+#if RBG_LED_KY_016_MODULE_ENABLED || RBG_LED_WS2812_MODULE_ENABLED
 static std::atomic<bool> s_gnss_pps_startup_qualification_in_progress{false};
-static void control_KY_016_RGB_LED(RGB_LED_Colour Colour, bool enabled);
+static void control_RGB_LED(RGB_LED_Colour Colour, bool enabled);
+#endif
+#if RBG_LED_WS2812_MODULE_ENABLED
+static led_strip_handle_t s_ws2812_strip = nullptr;
+static uint8_t s_ws2812_brightness = 0;
 #endif
 static std::atomic<bool> s_open_for_business_message_written{false};
 static std::atomic<int64_t> s_last_hardware_ntp_response_us{0};
@@ -1365,16 +1372,31 @@ static void format_local_date_time(time_t utc_time, char *date_string, size_t da
 
     const char *ampm = local_tm.tm_hour < 12 ? "AM" : "PM";
     char zone[8] = "";
+
     if (displayTimeZone)
         strftime(zone, sizeof(zone), "%Z", &local_tm);
 
-    if (displayTimeZone && zone[0] != '\0')
+    if (displayHoursWithPaddedZero)
     {
-        snprintf(time_string, time_size, "%d:%02d:%02d %s %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm, zone);
+        if (displayTimeZone && zone[0] != '\0')
+        {
+            snprintf(time_string, time_size, "%02d:%02d:%02d %s %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm, zone);
+        }
+        else
+        {
+            snprintf(time_string, time_size, "%02d:%02d:%02d %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm);
+        }
     }
     else
     {
-        snprintf(time_string, time_size, "%d:%02d:%02d %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm);
+        if (displayTimeZone && zone[0] != '\0')
+        {
+            snprintf(time_string, time_size, "%d:%02d:%02d %s %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm, zone);
+        }
+        else
+        {
+            snprintf(time_string, time_size, "%d:%02d:%02d %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm);
+        }
     }
 }
 
@@ -2633,6 +2655,10 @@ static ethernet_recovery_result_t restart_ethernet_transport()
 
 static void ethernet_transport_recovery_task(void *parameter)
 {
+    // this task is responsible for monitoring the Ethernet transport and attempting recovery if needed
+    // it is necessary to guard against the Ethernet transport becoming unavailable or unexpectedly during
+    // extremely high load (for example with stress testing or a DOS attack)
+
     (void)parameter;
     uint32_t previous_input = 0;
     int64_t last_recovery_attempt_us = 0;
@@ -3802,7 +3828,7 @@ static bool wait_for_gnss_startup_qualification()
 
     clear_pps_events();
 
-#if RBG_LED_ENABLED
+#if RBG_LED_KY_016_MODULE_ENABLED || RBG_LED_WS2812_MODULE_ENABLED
     s_gnss_pps_startup_qualification_in_progress.store(true, std::memory_order_release);
 #endif
 
@@ -3840,7 +3866,7 @@ static bool wait_for_gnss_startup_qualification()
                 ESP_LOGI(TAG, "GNSS and PPS startup qualification complete after %lu stable PPS edges.",
                          static_cast<unsigned long>(stable_pps_edges));
 #endif
-#if RBG_LED_ENABLED
+#if RBG_LED_KY_016_MODULE_ENABLED || RBG_LED_WS2812_MODULE_ENABLED
                 s_gnss_pps_startup_qualification_in_progress.store(false, std::memory_order_release);
 #endif
                 return true;
@@ -5454,7 +5480,7 @@ void write_opening_messages_to_the_console()
     ESP_LOGI(TAG, "Website: %s", meta->homepage);
     ESP_LOGI(TAG, " ");
 
-#if RBG_LED_ENABLED
+#if RBG_LED_KY_016_MODULE_ENABLED || RBG_LED_WS2812_MODULE_ENABLED
     ESP_LOGI(TAG, "LED support: Enabled");
 #else
     ESP_LOGW(TAG, "LED support: Disabled");
@@ -5616,8 +5642,12 @@ void setup_mutexes_and_semaphores(void)
 
 static void setup_up_the_RGB_LED()
 {
-#if RBG_LED_ENABLED
 
+#if RBG_LED_KY_016_MODULE_ENABLED && RBG_LED_WS2812_MODULE_ENABLED
+#error "KY-016 and WS2812 RGB LED modules cannot both be enabled at the same time"
+#endif
+
+#if RBG_LED_KY_016_MODULE_ENABLED
     ledc_timer_config_t timer_config{};
     timer_config.speed_mode = LEDC_LOW_SPEED_MODE;
     timer_config.duty_resolution = LEDC_TIMER_8_BIT;
@@ -5639,8 +5669,26 @@ static void setup_up_the_RGB_LED()
         channel_config.hpoint = 0;
         ESP_ERROR_CHECK(ledc_channel_config(&channel_config));
     }
-    control_KY_016_RGB_LED(LED_startup, true);
+#endif
+#if RBG_LED_WS2812_MODULE_ENABLED
+    static_assert(RGB_LED_Brightness_Percent >= 0 && RGB_LED_Brightness_Percent <= 100);
+    s_ws2812_brightness = static_cast<uint8_t>((255 * RGB_LED_Brightness_Percent + 50) / 100);
 
+    led_strip_config_t strip_config{};
+    strip_config.strip_gpio_num = WS2812DataPin;
+    strip_config.max_leds = 1;
+    strip_config.led_model = LED_MODEL_WS2812;
+    strip_config.color_component_format.format.g_pos = 0;
+    strip_config.color_component_format.format.r_pos = 1;
+    strip_config.color_component_format.format.b_pos = 2;
+    strip_config.color_component_format.format.num_components = 3;
+
+    led_strip_rmt_config_t rmt_config{};
+    rmt_config.resolution_hz = 10000000;
+    ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &s_ws2812_strip));
+#endif
+#if RBG_LED_KY_016_MODULE_ENABLED || RBG_LED_WS2812_MODULE_ENABLED
+    control_RGB_LED(LED_startup, true);
 #endif
 }
 
@@ -7377,8 +7425,8 @@ static int get_required_top_line_message()
     return required_top_line_message;
 }
 
-#if RBG_LED_ENABLED
-static void control_KY_016_RGB_LED(RGB_LED_Colour Colour, bool enabled)
+#if RBG_LED_KY_016_MODULE_ENABLED || RBG_LED_WS2812_MODULE_ENABLED
+static void control_RGB_LED(RGB_LED_Colour Colour, bool enabled)
 {
     uint8_t red_duty = 0;
     uint8_t green_duty = 0;
@@ -7420,12 +7468,35 @@ static void control_KY_016_RGB_LED(RGB_LED_Colour Colour, bool enabled)
         }
     }
 
+#if RBG_LED_KY_016_MODULE_ENABLED
+    static_assert(RGB_LED_Brightness_Percent >= 0 && RGB_LED_Brightness_Percent <= 100);
+    static constexpr uint8_t brightness = static_cast<uint8_t>((255 * RGB_LED_Brightness_Percent + 50) / 100);
+    red_duty = static_cast<uint8_t>((red_duty * brightness + 127) / 255);
+    green_duty = static_cast<uint8_t>((green_duty * brightness + 127) / 255);
+    blue_duty = static_cast<uint8_t>((blue_duty * brightness + 127) / 255);
+
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, red_duty));
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, green_duty));
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, blue_duty));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2));
+#endif
+#if RBG_LED_WS2812_MODULE_ENABLED
+    red_duty = static_cast<uint8_t>((red_duty * s_ws2812_brightness + 127) / 255);
+    green_duty = static_cast<uint8_t>((green_duty * s_ws2812_brightness + 127) / 255);
+    blue_duty = static_cast<uint8_t>((blue_duty * s_ws2812_brightness + 127) / 255);
+
+    static uint32_t last_rgb = UINT32_MAX;
+    const uint32_t rgb = (static_cast<uint32_t>(red_duty) << 16) |
+                         (static_cast<uint32_t>(green_duty) << 8) | blue_duty;
+    if (rgb != last_rgb)
+    {
+        ESP_ERROR_CHECK(led_strip_set_pixel(s_ws2812_strip, 0, red_duty, green_duty, blue_duty));
+        ESP_ERROR_CHECK(led_strip_refresh(s_ws2812_strip));
+        last_rgb = rgb;
+    }
+#endif
 }
 
 static void update_RGB_LED()
@@ -7496,7 +7567,7 @@ static void update_RGB_LED()
     }
 
     const bool enabled = !flashing || ((esp_timer_get_time() / 1000000LL) % 2 == 0);
-    control_KY_016_RGB_LED(Colour, enabled);
+    control_RGB_LED(Colour, enabled);
 }
 #endif
 
@@ -7657,7 +7728,7 @@ static void update_LED_LCD_Button_task(void *parameter)
             }
         }
 
-#if RBG_LED_ENABLED
+#if RBG_LED_KY_016_MODULE_ENABLED || RBG_LED_WS2812_MODULE_ENABLED
         update_RGB_LED();
 #endif
 
@@ -7670,7 +7741,7 @@ static void update_LED_LCD_Button_task(void *parameter)
 #else
     for (;;)
     {
-#if RBG_LED_ENABLED
+#if RBG_LED_KY_016_MODULE_ENABLED || RBG_LED_WS2812_MODULE_ENABLED
         update_RGB_LED();
 #endif
 #if UPTIME_RESTART_BUTTON_ENABLED
@@ -7726,6 +7797,13 @@ void setup_ntp_server()
     }
 }
 
+void setup_recovery_task()
+{
+
+    if (xTaskCreatePinnedToCore(ethernet_transport_recovery_task, "eth_recovery", Ethernet_Transport_Recovery_Task_Stack_Size, nullptr, 6, nullptr, 0) != pdPASS)
+        ESP_LOGE(TAG, "Unable to start NTP transport health monitoring");
+}
+
 void perform_health_check()
 {
 #if STARTUP_HEALTH_TEST_ENABLED
@@ -7771,8 +7849,7 @@ extern "C" void app_main()
 
     setup_ntp_server();
 
-    if (xTaskCreatePinnedToCore(ethernet_transport_recovery_task, "eth_recovery", Ethernet_Transport_Recovery_Task_Stack_Size, nullptr, 6, nullptr, 0) != pdPASS)
-        ESP_LOGE(TAG, "Unable to start NTP transport health monitoring");
+    setup_recovery_task();
 
     perform_health_check();
 

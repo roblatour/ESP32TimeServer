@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 3.0.1)
+# ESP32 NTP Stratum 1 Time Server (version 3.0.2)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -23,10 +23,11 @@ synchronize to it for highly accurate local time.
 
 ## What's New
 
-**Version 3**
+**Current Version (3.0+)**
 - **NTPv4 Symmetric-key authentication** added for Windows 
   clients using Meinberg and Linux clients using chrony.  For more 
-  information, please see [this document](/misc/symmetric_key_authentication_setup.md).
+  information, please see [this document](misc/symmetric_key_authentication_setup.md).
+- **WS2182** RGB LED support added (KY-016 support continues)
 
 **Version 2** was a ground-up rewrite which came with a faster, more capable board 
 support and a long list of accuracy, reliability, and convenience improvements over
@@ -93,7 +94,7 @@ version 1, including:
 | 1   | GPS/GNSS module [Recommended: SparkFun GNSS Receiver Breakout - MAX-M10S (Qwiic)](https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html) <sup>2</sup>. Additionally, experimental support for the [GT U16](https://www.aliexpress.com/item/1005008288311771.html) has been added in version 2.9 - this receiver offers superior reception when coupled with the right antenna (see notes below).  Additionally, while some lower-cost generic modules UBlox compliant receivers are supported, those without a PPS pin are no longer supported.                                                                           |
 | 1   | GPS/GNSS antenna with SMA connector ([SparkFun GPS/GNSS Magnetic Mount Antenna - 3m (SMA)](https://www.sparkfun.com/products/14986)) <sup>2</sup>. Alternatively the GT U16 with an L1/L5 antenna offers superior reception.  However, in my testing I used the [3M SMA W70C](https://www.aliexpress.com/item/1005008421771962.html?spm=a2g0o.order_list.order_list_main.11.7a7f1802GCXbvZ) L1/L2/L5 antenna an [IPEX to SMA adapter](https://www.aliexpress.com/item/1005009047225776.html) and got very good results (I have the antenna bundled with the GT U16 (link above) on order and when I get it and test it I will update this page). |
 | 1   | _(Optional)_ TF Card, formatted as FAT32, if you're using MQTT and want more than four messages queued should broker communications be down) <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 1   | _(Optional)_ RGB LED (KY-016) ([AliExpress](https://www.aliexpress.com/item/32763280158.html))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1   | _(Optional)_ RGB LED: KY-016 ([AliExpress](https://www.aliexpress.com/item/32763280158.html)) or WS2812 ([AliExpress](https://www.aliexpress.com/item/1005009109749689.html)) with a 470&Omega; resistor and optional lens cap ([AliExpress](https://www.aliexpress.com/store/625859))                                                                                                                                                                                                                                                                                                                                                           |
 | 1   | _(Optional)_ 4×20 I²C LCD display with HD44780 controller with PCF8574 I²C backpack ([AliExpress](https://www.aliexpress.com/item/1005006829045609.html)) <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | 1   | _(Optional)_ Momentary push button for displaying up time and triggering a reset ([AliExpress](https://www.aliexpress.com/item/1005004066257419.html)) <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | 1   | _(Optional)_ USB C extension cable (with right angle end) ([AliExpress](https://www.aliexpress.com/item/1005006584965187.html)) <sup>2</sup> + two M3*8                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -164,16 +165,23 @@ information.
 | The other terminal | GPIO 3           |
 
 
-#### RGB LED (PY-016) _(optional)_
+#### WS2812 RGB LED _(optional)_
+
+| LCD pin |                     | ESP32-P4-ETH pin |
+| ------- | ------------------- | ---------------- |
+| GND     |                     | GND              |
+| DI      | 470&Omega; resistor | GPIO 4           |
+| 5v      |                     | V5 / VBUS        |
+> **Important** with the WS2812 a 470&Omega; resistor is require between the DI and GPIO 4 pin
+
+#### KY-016 RGB LED _(optional)_
 
 | LCD pin | ESP32-P4-ETH pin |
 | ------- | ---------------- |
-| GND (*) | GND              |
+| GND     | GND              |
 | BLUE    | GPIO 4           |
 | GREEN   | GPIO 5           |
 | RED     | GPIO 6           |
-> (*) (optional) adding a 470&Omega; resistor between the GND 
-> pins reduces the brightness of the RBB LED nicely
 
 #### LCD 2004 (HD44780 + PCF8574 I²C backpack) → ESP32-P4-ETH _(optional)_
 
@@ -232,7 +240,7 @@ Here is where you can find more information about them and get your copies:
 - **[Espressif ESP-IDF Extension for VS Code](https://marketplace.visualstudio.com/items?itemName=espressif.esp-idf-extension)**
 
 #### **For Linux users:**
-A kind user of this project has shared more detailed environment setup, build and flash instructions specific to Linux (Debian 13) - these can be found [here](/Linux_specific_setup_instructions.md)
+A kind user of this project has shared more detailed environment setup, build and flash instructions specific to Linux (Debian 13) - these can be found [here](misc/Linux_specific_setup_instructions.md)
 
 
 ### Dependencies
@@ -385,7 +393,7 @@ Alternatively, use the terminal command in
 
 ## Setting up your Network / Systems to make use of the ESP32 Time Server
 
-Please see [`Setup.md`](Setup.md)
+Please see [`Setup.md`](misc/Setup.md)
 
 ---
 

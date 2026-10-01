@@ -1,4 +1,4 @@
-// ESP32 Time Server v3.0.1
+// ESP32 Time Server v3.0.2
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -18,8 +18,11 @@
 #define DEBUG_ENABLED 0 // 0 = Disabled; 1 = Enabled
 static constexpr int serialMonitorSpeed = 115200;
 
-// (optional) KY-016 RGB LED support
-#define RBG_LED_ENABLED 0 // 0 = Disabled; 1 = Enabled
+// (optional) RGB LED module support; enable support for one module type below at most
+#define RBG_LED_KY_016_MODULE_ENABLED 0 // 0 = Disabled; 1 = Enabled
+#define RBG_LED_WS2812_MODULE_ENABLED 0 // 0 = Disabled; 1 = Enabled
+
+static constexpr int RGB_LED_Brightness_Percent = 70;
 
 // The LED colours below may be changed to suit your preferences, but the descriptors should remain unchanged
 // For example: you can change LED_normal to blue but leave the descriptor 'LED_normal' unchanged
@@ -31,10 +34,13 @@ static constexpr RGB_LED_Colour LED_alert = RGB_LED_Colour::orange;
 static constexpr RGB_LED_Colour LED_critical = RGB_LED_Colour::red;
 static constexpr RGB_LED_Colour LED_button_push = RGB_LED_Colour::pink;
 
-// GPIO pin definitions for the KY-016 RGB LED
+// GPIO pin definitions for use with a KY-016 RGB LED module
 static constexpr int LEDBluePin = 4;
 static constexpr int LEDGreenPin = 5;
 static constexpr int LEDRedPin = 6;
+
+// GPIO pin definitions for a WS2812 RGB LED module
+static constexpr int WS2812DataPin = 4;
 
 // (optional) attached LCD support
 #define LIQUID_CRYSTAL_DISPLAY_ENABLED 1 // 0 = Disabled; 1 = Enabled
