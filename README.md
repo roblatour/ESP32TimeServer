@@ -27,7 +27,7 @@ synchronize to it for highly accurate local time.
 - **NTPv4 Symmetric-key authentication** added for Windows 
   clients using Meinberg and Linux clients using chrony.  For more 
   information, please see [this document](misc/symmetric_key_authentication_setup.md).
-- **WS2182** RGB LED support added (KY-016 support continues)
+- **WS2182** RGB LED support added (KY-016 support continues).
 
 **Version 2** was a ground-up rewrite which came with a faster, more capable board 
 support and a long list of accuracy, reliability, and convenience improvements over
