@@ -1,4 +1,4 @@
-// ESP32 Time Server v3.0.2
+// ESP32 Time Server v3.0.3
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -46,8 +46,9 @@ static constexpr int WS2812DataPin = 4;
 #define LIQUID_CRYSTAL_DISPLAY_ENABLED 1 // 0 = Disabled; 1 = Enabled
 static constexpr int lcdColumns = 20;
 static constexpr int lcdRows = 4;
-static constexpr bool display24HourFormat = false;        // set to true for 24-hour format, false for 12-hour format
-static constexpr bool displayHoursWithPaddedZero = false; // set to true to pad the hour with a leading zero when less than 10, false not to pad
+static constexpr char lcdTopLineTitle[] = "ESP32 Time Server"; // text on the LCD's top line (max 17 characters; the last 3 columns are reserved for status indicators)
+static constexpr bool display24HourFormat = false;             // set to true for 24-hour format, false for 12-hour format
+static constexpr bool displayHoursWithPaddedZero = false;      // set to true to pad the hour with a leading zero when less than 10, false not to pad
 static constexpr bool displayTimeZone = false;
 static constexpr int lcdI2CAddressPrimary = 0x27;
 static constexpr int lcdI2CAddressSecondary = 0x3F;

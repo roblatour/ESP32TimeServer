@@ -1,4 +1,4 @@
-// ESP32 Time Server v3.0.2
+// ESP32 Time Server v3.0.3
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -702,13 +702,13 @@ static constexpr uint32_t MQTTFrequencyOfKeepAliveRequest = 30; // in seconds (d
 // MQTT_MAX_REPORT_SIZE is based on MQTT_TF_Client_Limit (in ESP32TimeServerSetting.h)
 // please see the spreadsheet at tools/json_message_calculator.xlsx for calculation details
 // Note: increasing this limit will increase memory usage for MQTT report buffering and may impact system performance.
-static constexpr size_t MQTT_MAX_REPORT_SIZE = 32300;
+static constexpr size_t MQTT_MAX_REPORT_SIZE = 39166;
 
 // MQTT_REPORT_SIZE based on MQTT_CLIENT_SIZE (below)
 // please see the spreadsheet at tools/json_message_calculator.xlsx for calculation details
 // Note: increasing this limit will increase memory usage for MQTT report buffering and may impact system performance.
 static constexpr size_t MQTT_CLIENT_LIMIT = 50;
-static constexpr size_t MQTT_REPORT_SIZE = 5300;
+static constexpr size_t MQTT_REPORT_SIZE = 4966;
 
 static constexpr size_t MQTT_NTP_EVENT_QUEUE_DEPTH = 1024;
 static constexpr size_t MQTT_REPORT_QUEUE_DEPTH = 4;
@@ -1366,38 +1366,27 @@ static void format_local_date_time(time_t utc_time, char *date_string, size_t da
 
     snprintf(date_string, date_size, "%04d-%02d-%02d", local_tm.tm_year + 1900, local_tm.tm_mon + 1, local_tm.tm_mday);
 
-    int hour_value = local_tm.tm_hour % 12;
-    if (hour_value == 0)
-        hour_value = 12;
+    int hour_value = local_tm.tm_hour;
+    if (!display24HourFormat)
+    {
+        hour_value %= 12;
+        if (hour_value == 0)
+            hour_value = 12;
+    }
 
-    const char *ampm = local_tm.tm_hour < 12 ? "AM" : "PM";
     char zone[8] = "";
 
     if (displayTimeZone)
         strftime(zone, sizeof(zone), "%Z", &local_tm);
 
-    if (displayHoursWithPaddedZero)
-    {
-        if (displayTimeZone && zone[0] != '\0')
-        {
-            snprintf(time_string, time_size, "%02d:%02d:%02d %s %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm, zone);
-        }
-        else
-        {
-            snprintf(time_string, time_size, "%02d:%02d:%02d %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm);
-        }
-    }
-    else
-    {
-        if (displayTimeZone && zone[0] != '\0')
-        {
-            snprintf(time_string, time_size, "%d:%02d:%02d %s %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm, zone);
-        }
-        else
-        {
-            snprintf(time_string, time_size, "%d:%02d:%02d %s", hour_value, local_tm.tm_min, local_tm.tm_sec, ampm);
-        }
-    }
+    const char *hour_format = displayHoursWithPaddedZero ? "%02d:%02d:%02d" : "%d:%02d:%02d";
+    int len = snprintf(time_string, time_size, hour_format, hour_value, local_tm.tm_min, local_tm.tm_sec);
+
+    if (!display24HourFormat && len >= 0 && static_cast<size_t>(len) < time_size)
+        len += snprintf(time_string + len, time_size - len, " %s", local_tm.tm_hour < 12 ? "AM" : "PM");
+
+    if (displayTimeZone && zone[0] != '\0' && len >= 0 && static_cast<size_t>(len) < time_size)
+        snprintf(time_string + len, time_size - len, " %s", zone);
 }
 
 #if UPTIME_RESTART_BUTTON_ENABLED
@@ -5166,6 +5155,10 @@ static void setup_mqtt()
 {
 #if MQTT_ENABLED
 
+    // static assertions report the error if the condition is not true at compile time
+    static_assert(MQTT_QOS >= 0, "MQTT_QOS must be 0, 1, or 2");
+    static_assert(MQTT_QOS <= 2, "MQTT_QOS must be 0, 1, or 2");
+
     if (MQTTServerIPAddress[0] == '\0' || MQTT_QOS < 0 || MQTT_QOS > 2)
     {
         s_mqtt_setup_failed.store(true);
@@ -5696,9 +5689,14 @@ void setup_the_LCD(void)
 {
 
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
+
+    // static assertions report the error if the condition is not true at compile time
+    static_assert(sizeof(lcdTopLineTitle) - 1 > 0, "lcdTopLineTitle is missing or not populated in settings, recommend value is 'ESP32 Time Server'");
+    static_assert(sizeof(lcdTopLineTitle) - 1 <= 17, "lcdTopLineTitle must be at most 17 characters");
+
     if (setup_lcd() == ESP_OK)
     {
-        display_line(0, "ESP32 Time Server");
+        display_line(0, lcdTopLineTitle);
         display_line(1, "");
         display_line(2, "");
         display_line(3, "");
@@ -7658,8 +7656,7 @@ static void update_LED_LCD_Button_task(void *parameter)
             if (required_top_line_message != previous_top_line_message)
             {
                 char top_line_message[21]; // 20 chars + null
-                memset(top_line_message, ' ', sizeof(top_line_message));
-                memcpy(top_line_message, "ESP32 Time Server", 17);
+                snprintf(top_line_message, sizeof(top_line_message), "%-20s", lcdTopLineTitle);
 
                 if (required_top_line_message == 98)
                 {
@@ -7673,7 +7670,8 @@ static void update_LED_LCD_Button_task(void *parameter)
                 }
                 else if (required_top_line_message == 99)
                 {
-                    memcpy(top_line_message, "ESP32 Time Server's", 20);
+                    // memcpy(top_line_message, "ESP32 Time Server's", 20);
+                    memcpy(top_line_message + sizeof(lcdTopLineTitle) - 1, "'s", 2);
                 }
                 else if (required_top_line_message >= 11 && required_top_line_message <= 14)
                 {

@@ -107,8 +107,8 @@ built into the back.
 
 2.1 with thanks to github and printables user Duglum:
 
-Two compact case designs for use with ESP32-P4-ETH (with or without the POE
-module) without an LCD or an uptime/Reset button and various GNSS boards
-(NEO-M9N, MAX-M10S-00B, GT-U16)
+Various case designs for use with the ESP32-P4-ETH and
+ESP32-P4-WIFI6-ETH dev boards (with and without the POE options)
+(without an LCD or an uptime/Reset button)
 
 <https://www.printables.com/model/1821834-case-for-waveshare-esp32-p4>
