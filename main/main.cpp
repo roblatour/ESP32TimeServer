@@ -1,4 +1,4 @@
-// ESP32 Time Server v3.0.3
+// ESP32 Time Server v3.0.4
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -217,6 +217,7 @@ static constexpr size_t GNSS_Recovery_Task_Stack_Size = 12288;
 static constexpr size_t GNSS_Time_Sync_Task_Stack_Size = 2517;
 static constexpr size_t Hardware_NTP_Server_Task_Stack_Size = 4096;
 static constexpr size_t LED_LCD_Button_Task_Stack_Size = 3217;
+static constexpr size_t Ethernet_Setup_Task_Stack_Size = 4096;
 static constexpr size_t MQTT_Service_Task_Stack_Size = 3512;
 static constexpr size_t NTP_Cache_Purge_Task_Stack_Size = 2304;
 static constexpr size_t NTP_Server_Task_Stack_Size = 3560;
@@ -516,7 +517,9 @@ static constexpr size_t NTP_SOCKET_BATCH_LIMIT = 16;
 static constexpr EventBits_t ETH_CONNECTED_BIT = BIT0;
 static constexpr EventBits_t ETH_GOT_IP_BIT = BIT1;
 static constexpr EventBits_t ETH_GOT_IP6_BIT = BIT2;
+static constexpr EventBits_t ETH_GOT_ROUTABLE_IP6_BIT = BIT3;
 static constexpr size_t IP_ADDRESS_TEXT_SIZE = INET6_ADDRSTRLEN;
+static constexpr uint32_t ROUTABLE_IPV6_ACQUISITION_TIMEOUT_MS = 30000;
 static constexpr uint32_t OTE_Failure_Display_Time_Ms = 10000;
 static constexpr uint32_t OTE_Reboot_Delay_Ms = 5000;
 
@@ -531,6 +534,8 @@ static bool s_lcd_line_cached[lcdRows] = {};
 #define display_line(...)
 #endif
 
+static std::string MACToBeUsed;
+
 struct PpsCaptureEvent
 {
     int64_t approximate_edge_us;
@@ -539,6 +544,7 @@ struct PpsCaptureEvent
 static constexpr uint32_t PPS_CAPTURE_RESOLUTION_HZ = 80000000;
 
 static EventGroupHandle_t s_net_event_group = nullptr;
+static SemaphoreHandle_t s_network_address_mutex = nullptr;
 static SemaphoreHandle_t s_time_mutex = nullptr;
 static SemaphoreHandle_t s_pps_semaphore = nullptr;
 static QueueHandle_t s_pps_timestamp_queue = nullptr;
@@ -568,19 +574,52 @@ static std::atomic<uint64_t> s_ntp_reference_time_64{0};
 static std::atomic<bool> s_ntp_reference_valid{false};
 static std::atomic<bool> s_ptp_clock_ready{false};
 
-static_assert(PreferIPvX == 0 || PreferIPvX == 4 || PreferIPvX == 6, "PreferIPvX must be 0, 4, or 6");
+static_assert(PreferIPvX == 0 || PreferIPvX == 1 || PreferIPvX == 2 || PreferIPvX == 4 || PreferIPvX == 6 || PreferIPvX == 8 || PreferIPvX == 9,
+              "PreferIPvX must be 0, 1, 2, 4, 6, 8, or 9");
 
 static char s_ip_address[IP_ADDRESS_TEXT_SIZE] = "";
 static char s_ipv4_address[INET_ADDRSTRLEN] = "";
 static char s_ipv6_address[IP_ADDRESS_TEXT_SIZE] = "";
+enum class ipv6_address_priority_t : uint8_t
+{
+    none,
+    link_local,
+    unique_local,
+    global_unicast
+};
+static ipv6_address_priority_t s_ipv6_address_priority = ipv6_address_priority_t::none;
 
-static void update_selected_ip_address()
+struct network_address_snapshot_t
+{
+    char selected[IP_ADDRESS_TEXT_SIZE];
+    char ipv4[INET_ADDRSTRLEN];
+    char ipv6[IP_ADDRESS_TEXT_SIZE];
+    ipv6_address_priority_t ipv6_priority;
+};
+
+static constexpr bool IPV4_ENABLED = PreferIPvX != 2;
+static constexpr bool IPV6_ENABLED = PreferIPvX != 1;
+
+static bool has_usable_network_address(EventBits_t event_bits)
+{
+    if (PreferIPvX == 1)
+        return (event_bits & ETH_GOT_IP_BIT) != 0;
+    if (PreferIPvX == 2)
+        return (event_bits & ETH_GOT_ROUTABLE_IP6_BIT) != 0;
+    return (event_bits & (ETH_GOT_IP_BIT | ETH_GOT_ROUTABLE_IP6_BIT)) != 0;
+}
+
+static void update_selected_ip_address_locked()
 {
     const bool has_ipv4 = s_ipv4_address[0] != '\0';
     const bool has_ipv6 = s_ipv6_address[0] != '\0';
 
     const char *selected_address = "";
-    if (PreferIPvX == 4)
+    if (PreferIPvX == 1)
+        selected_address = s_ipv4_address;
+    else if (PreferIPvX == 2)
+        selected_address = s_ipv6_address;
+    else if (PreferIPvX == 4)
         selected_address = has_ipv4 ? s_ipv4_address : s_ipv6_address;
     else if (PreferIPvX == 6)
         selected_address = has_ipv6 ? s_ipv6_address : s_ipv4_address;
@@ -592,6 +631,139 @@ static void update_selected_ip_address()
         selected_address = has_ipv4 ? s_ipv4_address : s_ipv6_address;
 
     snprintf(s_ip_address, sizeof(s_ip_address), "%s", selected_address);
+}
+
+static network_address_snapshot_t get_network_address_snapshot()
+{
+    network_address_snapshot_t snapshot{};
+    if (s_network_address_mutex != nullptr && xSemaphoreTake(s_network_address_mutex, portMAX_DELAY) == pdTRUE)
+    {
+        snprintf(snapshot.selected, sizeof(snapshot.selected), "%s", s_ip_address);
+        snprintf(snapshot.ipv4, sizeof(snapshot.ipv4), "%s", s_ipv4_address);
+        snprintf(snapshot.ipv6, sizeof(snapshot.ipv6), "%s", s_ipv6_address);
+        snapshot.ipv6_priority = s_ipv6_address_priority;
+        xSemaphoreGive(s_network_address_mutex);
+    }
+    return snapshot;
+}
+
+static void clear_network_addresses()
+{
+    if (s_network_address_mutex == nullptr || xSemaphoreTake(s_network_address_mutex, portMAX_DELAY) != pdTRUE)
+        return;
+
+    s_ip_address[0] = '\0';
+    s_ipv4_address[0] = '\0';
+    s_ipv6_address[0] = '\0';
+    s_ipv6_address_priority = ipv6_address_priority_t::none;
+    xSemaphoreGive(s_network_address_mutex);
+}
+
+static void set_network_ipv4_address(const esp_ip4_addr_t &address)
+{
+    if (s_network_address_mutex == nullptr || xSemaphoreTake(s_network_address_mutex, portMAX_DELAY) != pdTRUE)
+        return;
+
+    snprintf(s_ipv4_address, sizeof(s_ipv4_address), IPSTR, IP2STR(&address));
+    update_selected_ip_address_locked();
+    xSemaphoreGive(s_network_address_mutex);
+}
+
+static void clear_network_ipv4_address()
+{
+    if (s_network_address_mutex == nullptr || xSemaphoreTake(s_network_address_mutex, portMAX_DELAY) != pdTRUE)
+        return;
+
+    s_ipv4_address[0] = '\0';
+    update_selected_ip_address_locked();
+    xSemaphoreGive(s_network_address_mutex);
+}
+
+static ipv6_address_priority_t get_ipv6_address_priority(const struct in6_addr &address)
+{
+    if ((address.s6_addr[0] & 0xE0) == 0x20)
+        return ipv6_address_priority_t::global_unicast;
+    if ((address.s6_addr[0] & 0xFE) == 0xFC)
+        return ipv6_address_priority_t::unique_local;
+    return ipv6_address_priority_t::link_local;
+}
+
+static bool set_network_ipv6_address(const esp_ip6_addr_t &address)
+{
+    struct in6_addr parsed_address{};
+    memcpy(&parsed_address, address.addr, sizeof(parsed_address));
+    const ipv6_address_priority_t priority = get_ipv6_address_priority(parsed_address);
+    const bool is_routable = priority >= ipv6_address_priority_t::unique_local;
+
+    char text_address[IP_ADDRESS_TEXT_SIZE] = "";
+    if (inet_ntop(AF_INET6, &parsed_address, text_address, sizeof(text_address)) == nullptr)
+        return false;
+
+    if (s_network_address_mutex == nullptr || xSemaphoreTake(s_network_address_mutex, portMAX_DELAY) != pdTRUE)
+        return false;
+
+    if (priority >= s_ipv6_address_priority)
+    {
+        snprintf(s_ipv6_address, sizeof(s_ipv6_address), "%s", text_address);
+        s_ipv6_address_priority = priority;
+        update_selected_ip_address_locked();
+    }
+    xSemaphoreGive(s_network_address_mutex);
+    return is_routable;
+}
+
+static void refresh_network_ipv6_addresses()
+{
+    if (!IPV6_ENABLED || ETH.netif() == nullptr)
+        return;
+
+    esp_ip6_addr_t addresses[CONFIG_LWIP_IPV6_NUM_ADDRESSES]{};
+    const int address_count = esp_netif_get_all_ip6(ETH.netif(), addresses);
+    bool routable_address_acquired = false;
+    for (int index = 0; index < address_count; ++index)
+        routable_address_acquired = set_network_ipv6_address(addresses[index]) || routable_address_acquired;
+
+    if (address_count > 0)
+        xEventGroupSetBits(s_net_event_group, ETH_GOT_IP6_BIT);
+    if (routable_address_acquired)
+        xEventGroupSetBits(s_net_event_group, ETH_GOT_ROUTABLE_IP6_BIT);
+}
+
+static void log_network_ipv6_addresses()
+{
+    if (!IPV6_ENABLED || ETH.netif() == nullptr)
+        return;
+
+    esp_ip6_addr_t addresses[CONFIG_LWIP_IPV6_NUM_ADDRESSES]{};
+    const int address_count = esp_netif_get_all_ip6(ETH.netif(), addresses);
+    if (address_count == 0)
+    {
+        ESP_LOGW(TAG, "Ethernet IPv6 candidates: none");
+        return;
+    }
+
+    for (int index = 0; index < address_count; ++index)
+    {
+        struct in6_addr address{};
+        memcpy(&address, addresses[index].addr, sizeof(address));
+        char text_address[IP_ADDRESS_TEXT_SIZE] = "";
+        if (inet_ntop(AF_INET6, &address, text_address, sizeof(text_address)) == nullptr)
+            continue;
+
+        const char *type = "link-local";
+        switch (get_ipv6_address_priority(address))
+        {
+        case ipv6_address_priority_t::global_unicast:
+            type = "global-unicast";
+            break;
+        case ipv6_address_priority_t::unique_local:
+            type = "unique-local";
+            break;
+        default:
+            break;
+        }
+        ESP_LOGI(TAG, "Ethernet IPv6 candidate: %s (%s)", text_address, type);
+    }
 }
 
 static std::atomic<bool> s_ethernet_connected{false};
@@ -1322,35 +1494,125 @@ static esp_err_t setup_lcd()
 
 static void display_selected_ip_address(int seconds)
 {
-    if (s_ip_address[0] == '\0')
+    if (PreferIPvX == 9)
     {
         display_line(3, "");
         return;
     }
 
-    if (strcmp(s_ip_address, s_ipv4_address) == 0)
+    static char last_known_IPv6_addresss[IP_ADDRESS_TEXT_SIZE] = "";
+
+    static char ipv6_part1[IP_ADDRESS_TEXT_SIZE] = "";
+    static char ipv6_part2[IP_ADDRESS_TEXT_SIZE] = "";
+
+    network_address_snapshot_t addresses = get_network_address_snapshot();
+
+    if (PreferIPvX == 8)
     {
-        display_line(3, s_ip_address);
+        const char *ipv6_status = "N/A";
+        if (addresses.ipv6[0] != '\0')
+        {
+            switch (addresses.ipv6_priority)
+            {
+            case ipv6_address_priority_t::global_unicast:
+                ipv6_status = "GUA";
+                break;
+            case ipv6_address_priority_t::unique_local:
+                ipv6_status = "ULA";
+                break;
+            case ipv6_address_priority_t::link_local:
+                ipv6_status = "LLA";
+                break;
+            default:
+                break;
+            }
+        }
+        char status_line[lcdColumns + 1];
+        snprintf(status_line, sizeof(status_line), "IPv4: %s  IPv6: %s", addresses.ipv4[0] != '\0' ? "OK" : "N/A", ipv6_status);
+        display_line(3, status_line);
         return;
     }
 
-    char ipv6_part1[IP_ADDRESS_TEXT_SIZE] = "";
-    char ipv6_part2[IP_ADDRESS_TEXT_SIZE] = "";
-    size_t total_len = strlen(s_ip_address);
-    size_t half_len = total_len / 2;
-    while (half_len < total_len && s_ip_address[half_len] != ':')
-        half_len++;
+    // if no IP address is selected, clear the display line
+    if (addresses.selected[0] == '\0')
+    {
+        display_line(3, "");
+        return;
+    }
 
-    size_t remainder_len = total_len - half_len;
-    strncpy(ipv6_part1, s_ip_address, half_len);
-    ipv6_part1[half_len] = '\0';
-    strncpy(ipv6_part2, s_ip_address + half_len, remainder_len);
-    ipv6_part2[remainder_len] = '\0';
+    // An IPv6 can change from Link-Local Address (LLA) to Unique-Local Address (ULA) to Global-Unicast Address (GUA)
+    // so if the selected IPv6 address has changed reset the IPv6 address parts
+    if (PreferIPvX == 0 || PreferIPvX == 2 || PreferIPvX == 6)
+    {
+        if (strcmp(addresses.ipv6, last_known_IPv6_addresss) != 0)
+        {
+            size_t total_len = strlen(addresses.ipv6);
+            if (total_len == 0)
+            {
+                ipv6_part1[0] = '\0';
+                ipv6_part2[0] = '\0';
+                last_known_IPv6_addresss[0] = '\0';
+            }
+            else
+            {
+                size_t half_len = total_len / 2;
+                while (half_len > 0 && addresses.ipv6[half_len] != ':')
+                    half_len--;
 
-    if (seconds < 30)
-        display_line(3, ipv6_part1);
-    else
-        display_line(3, ipv6_part2);
+                size_t remainder_len = total_len - half_len;
+                strncpy(ipv6_part1, addresses.ipv6, half_len);
+                ipv6_part1[half_len] = '\0';
+                strncpy(ipv6_part2, addresses.ipv6 + half_len, remainder_len);
+                ipv6_part2[remainder_len] = '\0';
+
+                strncpy(last_known_IPv6_addresss, addresses.ipv6, IP_ADDRESS_TEXT_SIZE - 1);
+                last_known_IPv6_addresss[IP_ADDRESS_TEXT_SIZE - 1] = '\0';
+            }
+        }
+    }
+
+    switch (PreferIPvX)
+    {
+    case 0:
+
+        // no preference between IPv4 and IPv6
+        // each minute:
+        // display the IPv4 address for the first 20 seconds
+        // display the first part of the IPv6 address in next 20 seconds
+        // display the second part of the IPv6 address in the last 20 seconds
+
+        if (seconds < 20)
+            display_line(3, addresses.ipv4);
+        else if (seconds < 40)
+            display_line(3, ipv6_part1);
+        else
+            display_line(3, ipv6_part2);
+
+        break;
+
+    case 1:
+    case 4:
+        // Show the IPv4 address only
+        if (strcmp(addresses.selected, addresses.ipv4) == 0)
+        {
+            display_line(3, addresses.selected);
+            return;
+        }
+        break;
+
+    case 2:
+    case 6:
+        // Show the IPv6 address only
+
+        // each minute:
+        // display the first part of the IPv6 address for the first 30 seconds
+        // display the second part of the IPv6 address for the next 30 seconds
+        if (seconds < 30)
+            display_line(3, ipv6_part1);
+        else
+            display_line(3, ipv6_part2);
+        break;
+    }
 }
 
 static void apply_timezone_settings()
@@ -1999,8 +2261,9 @@ static bool is_internal_ntp_ipv4_address(const struct in_addr &address)
     if (address.s_addr == htonl(INADDR_LOOPBACK))
         return true;
 
+    const network_address_snapshot_t addresses = get_network_address_snapshot();
     struct in_addr assigned_address{};
-    return s_ipv4_address[0] != '\0' && inet_pton(AF_INET, s_ipv4_address, &assigned_address) == 1 &&
+    return addresses.ipv4[0] != '\0' && inet_pton(AF_INET, addresses.ipv4, &assigned_address) == 1 &&
            address.s_addr == assigned_address.s_addr;
 }
 
@@ -2011,8 +2274,9 @@ static bool is_internal_ntp_ipv6_address(const struct in6_addr &address)
         memcmp(&address, &loopback_address, sizeof(address)) == 0)
         return true;
 
+    const network_address_snapshot_t addresses = get_network_address_snapshot();
     struct in6_addr assigned_address{};
-    return s_ipv6_address[0] != '\0' && inet_pton(AF_INET6, s_ipv6_address, &assigned_address) == 1 &&
+    return addresses.ipv6[0] != '\0' && inet_pton(AF_INET6, addresses.ipv6, &assigned_address) == 1 &&
            memcmp(&address, &assigned_address, sizeof(address)) == 0;
 }
 
@@ -2417,8 +2681,9 @@ static esp_err_t ntp_ethernet_input(esp_eth_handle_t handle, uint8_t *frame, uin
     size_t ip_offset = 0;
     size_t udp_offset = 0;
     const eth_mac_time_t *rx_timestamp = static_cast<const eth_mac_time_t *>(info);
-    if (!is_ipv4_ntp_request(frame, length, &ip_offset, &udp_offset) &&
-        !is_ipv6_ntp_request(frame, length, &ip_offset, &udp_offset))
+    const bool ipv4_request = is_ipv4_ntp_request(frame, length, &ip_offset, &udp_offset);
+    const bool ipv6_request = !ipv4_request && is_ipv6_ntp_request(frame, length, &ip_offset, &udp_offset);
+    if ((!ipv4_request && !ipv6_request) || (ipv4_request && !IPV4_ENABLED) || (ipv6_request && !IPV6_ENABLED))
         return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
     const uint8_t *request = frame + udp_offset + UDP_HEADER_SIZE;
     const uint8_t version = (request[0] >> 3) & 0x07;
@@ -2513,12 +2778,14 @@ static void hardware_ntp_server_task(void *parameter)
     {
         if (xQueueReceive(s_hardware_ntp_request_queue, &ntp_request, portMAX_DELAY) == pdTRUE)
         {
-            if (ntp_request.frame[12] == 0x86 && ntp_request.frame[13] == 0xDD)
+            if (ntp_request.frame[12] == 0x86 && ntp_request.frame[13] == 0xDD && IPV6_ENABLED)
                 process_hardware_ipv6_ntp_request(ntp_request.handle, ntp_request.frame, ntp_request.length,
                                                   ntp_request.netif, &ntp_request.rx_timestamp);
-            else
+            else if (IPV4_ENABLED)
                 process_hardware_ntp_request(ntp_request.handle, ntp_request.frame, ntp_request.length,
                                              ntp_request.netif, &ntp_request.rx_timestamp);
+            else
+                release_hardware_ntp_request_buffer(ntp_request.frame);
 #if CALCULATE_STACK_SIZES_ENABLED
             report_current_task_stack_usage(Hardware_NTP_Server);
 #endif
@@ -2566,7 +2833,7 @@ static ethernet_recovery_result_t restart_ethernet_transport()
         return ethernet_recovery_result_t::driver_failed;
     }
 
-    xEventGroupClearBits(s_net_event_group, ETH_CONNECTED_BIT | ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT);
+    xEventGroupClearBits(s_net_event_group, ETH_CONNECTED_BIT | ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT | ETH_GOT_ROUTABLE_IP6_BIT);
     vTaskDelay(pdMS_TO_TICKS(ETHERNET_RECOVERY_DELAY_MS));
     result = esp_eth_start(handle);
     if (result != ESP_OK)
@@ -2578,8 +2845,12 @@ static ethernet_recovery_result_t restart_ethernet_transport()
     esp_eth_mac_t *mac = nullptr;
     const eth_mac_ptp_config_t ptp_config = ETH_MAC_ESP_PTP_DEFAULT_CONFIG();
     s_ptp_clock_ready.store(false, std::memory_order_release);
-    if (esp_eth_get_mac_instance(handle, &mac) != ESP_OK || mac == nullptr ||
-        esp_eth_mac_ptp_enable(mac, &ptp_config) != ESP_OK ||
+    if (esp_eth_get_mac_instance(handle, &mac) != ESP_OK || mac == nullptr)
+    {
+        s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
+        return ethernet_recovery_result_t::timestamp_failed;
+    }
+    if (esp_eth_mac_ptp_enable(mac, &ptp_config) != ESP_OK ||
         esp_eth_mac_enable_ts4all(mac, true) != ESP_OK ||
         esp_eth_update_input_path_info(handle, ntp_ethernet_input, ETH.netif()) != ESP_OK)
     {
@@ -2620,7 +2891,9 @@ static ethernet_recovery_result_t restart_ethernet_transport()
         s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
         return ethernet_recovery_result_t::link_unavailable;
     }
-    const EventBits_t needed_ip = PreferIPvX == 4 && s_ipv4_ever_acquired.load(std::memory_order_relaxed)
+    const EventBits_t needed_ip = PreferIPvX == 1   ? ETH_GOT_IP_BIT
+                                  : PreferIPvX == 2 ? ETH_GOT_ROUTABLE_IP6_BIT
+                                  : PreferIPvX == 4 && s_ipv4_ever_acquired.load(std::memory_order_relaxed)
                                       ? ETH_GOT_IP_BIT
                                       : ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT;
     const EventBits_t acquired_ip = xEventGroupWaitBits(s_net_event_group, needed_ip, pdFALSE, pdFALSE,
@@ -2664,7 +2937,7 @@ static void ethernet_transport_recovery_task(void *parameter)
         ntp_transport_health_t health = ntp_transport_health_t::idle;
         if (!s_ethernet_connected.load(std::memory_order_acquire))
             health = ntp_transport_health_t::link_down;
-        else if ((xEventGroupGetBits(s_net_event_group) & (ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT)) == 0)
+        else if (!has_usable_network_address(xEventGroupGetBits(s_net_event_group)))
             health = ntp_transport_health_t::no_ip;
         else if (s_ntp_external_responses_enabled.load(std::memory_order_acquire) && interval_input > 0)
         {
@@ -2695,7 +2968,7 @@ static void ethernet_transport_recovery_task(void *parameter)
                      last_input_us > recovery_verification_us &&
                      now_us - recovery_verification_us >= NTP_TRANSPORT_STALL_TIMEOUT_US &&
                      now_us - last_input_us < 2000000LL &&
-                     (xEventGroupGetBits(s_net_event_group) & (ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT)) != 0)
+                     has_usable_network_address(xEventGroupGetBits(s_net_event_group)))
             {
                 controlled_restart("ethernet_recovery_timestamp_unverified");
             }
@@ -4864,7 +5137,6 @@ static bool mqtt_publish_pending_restart_notification()
 static void mqtt_service_task(void *parameter)
 {
     bool previously_connected = false;
-    bool previously_shedding = false;
     TickType_t next_report = xTaskGetTickCount() + pdMS_TO_TICKS(MQTTReportingPeriod * 1000UL);
     for (;;)
     {
@@ -5224,6 +5496,13 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
         break;
     case ARDUINO_EVENT_ETH_CONNECTED:
         s_ethernet_connected.store(true);
+        if (IPV6_ENABLED)
+        {
+            const esp_err_t result = esp_netif_create_ip6_linklocal(ETH.netif());
+            if (result != ESP_OK)
+                ESP_LOGW(TAG, "Unable to create Ethernet IPv6 link-local address: %s", esp_err_to_name(result));
+            refresh_network_ipv6_addresses();
+        }
 #if MQTT_ENABLED
         s_eth_link_connected_us.store(esp_timer_get_time());
         if (s_mqtt_has_connected.load(std::memory_order_acquire))
@@ -5236,9 +5515,10 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
         display_line(1, "Ethernet connected");
         break;
     case ARDUINO_EVENT_ETH_GOT_IP:
+        if (!IPV4_ENABLED)
+            break;
         s_ipv4_ever_acquired.store(true, std::memory_order_relaxed);
-        snprintf(s_ipv4_address, sizeof(s_ipv4_address), IPSTR, IP2STR(&info.got_ip.ip_info.ip));
-        update_selected_ip_address();
+        set_network_ipv4_address(info.got_ip.ip_info.ip);
 #if MQTT_ENABLED
         if (s_mqtt_has_connected.load(std::memory_order_acquire) && !s_mqtt_connected.load(std::memory_order_acquire))
             s_mqtt_disconnected_since_us.store(esp_timer_get_time(), std::memory_order_release);
@@ -5254,26 +5534,32 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
         display_selected_ip_address(static_cast<int>(time(nullptr) % 10));
         break;
     case ARDUINO_EVENT_ETH_GOT_IP6:
-        if (inet_ntop(AF_INET6, &info.got_ip6.ip6_info.ip, s_ipv6_address, sizeof(s_ipv6_address)) == nullptr)
-            s_ipv6_address[0] = '\0';
-        update_selected_ip_address();
+    {
+        if (!IPV6_ENABLED)
+            break;
+        const bool routable_ipv6_acquired = set_network_ipv6_address(info.got_ip6.ip6_info.ip);
 #if MQTT_ENABLED
         if (s_mqtt_has_connected.load(std::memory_order_acquire) && !s_mqtt_connected.load(std::memory_order_acquire))
             s_mqtt_disconnected_since_us.store(esp_timer_get_time(), std::memory_order_release);
 #endif
 #if DEBUG_ENABLED
-        ESP_LOGI(TAG, "Ethernet IPv6 acquired: %s", s_ipv6_address);
+        const network_address_snapshot_t addresses = get_network_address_snapshot();
+        ESP_LOGI(TAG,
+                 "Ethernet IPv6 acquired: %s",
+                 routable_ipv6_acquired ? addresses.ipv6 : "link-local address");
 #endif
         xEventGroupSetBits(s_net_event_group, ETH_GOT_IP6_BIT);
+        if (routable_ipv6_acquired)
+            xEventGroupSetBits(s_net_event_group, ETH_GOT_ROUTABLE_IP6_BIT);
         display_selected_ip_address(static_cast<int>(time(nullptr) % 10));
         break;
+    }
     case ARDUINO_EVENT_ETH_LOST_IP:
 #if DEBUG_ENABLED
         ESP_LOGW(TAG, "Ethernet lost IPv4 address");
 #endif
         xEventGroupClearBits(s_net_event_group, ETH_GOT_IP_BIT);
-        s_ipv4_address[0] = '\0';
-        update_selected_ip_address();
+        clear_network_ipv4_address();
         display_line(1, "Ethernet lost IP");
         display_selected_ip_address(static_cast<int>(time(nullptr) % 10));
         break;
@@ -5289,10 +5575,8 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
 #if DEBUG_ENABLED
         ESP_LOGW(TAG, "Ethernet link disconnected");
 #endif
-        xEventGroupClearBits(s_net_event_group, ETH_CONNECTED_BIT | ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT);
-        s_ipv4_address[0] = '\0';
-        s_ipv6_address[0] = '\0';
-        update_selected_ip_address();
+        xEventGroupClearBits(s_net_event_group, ETH_CONNECTED_BIT | ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT | ETH_GOT_ROUTABLE_IP6_BIT);
+        clear_network_addresses();
         display_line(1, "Ethernet disconnect");
         display_line(3, "");
         break;
@@ -5306,10 +5590,8 @@ static void arduino_eth_event_handler(arduino_event_id_t event, arduino_event_in
 #if DEBUG_ENABLED
         ESP_LOGW(TAG, "Ethernet driver stopped");
 #endif
-        xEventGroupClearBits(s_net_event_group, ETH_CONNECTED_BIT | ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT);
-        s_ipv4_address[0] = '\0';
-        s_ipv6_address[0] = '\0';
-        update_selected_ip_address();
+        xEventGroupClearBits(s_net_event_group, ETH_CONNECTED_BIT | ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT | ETH_GOT_ROUTABLE_IP6_BIT);
+        clear_network_addresses();
         display_line(1, "Ethernet stopped");
         display_line(3, "");
         break;
@@ -5379,7 +5661,7 @@ static bool configure_static_ip()
 
 static bool start_ethernet_driver()
 {
-    if (!ETH.enableIPv6())
+    if (IPV6_ENABLED && !ETH.enableIPv6())
     {
 #if DEBUG_ENABLED
         ESP_LOGE(TAG, "Unable to enable Ethernet IPv6 support");
@@ -5394,15 +5676,37 @@ static bool start_ethernet_driver()
                      EMAC_CLK_EXT_IN);
 }
 
+static void wait_for_startup_ethernet_readiness()
+{
+    if (PreferIPvX == 1)
+    {
+        xEventGroupWaitBits(s_net_event_group, ETH_GOT_IP_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+        return;
+    }
+
+    const int64_t wait_started_us = esp_timer_get_time();
+    for (;;)
+    {
+        refresh_network_ipv6_addresses();
+        if ((xEventGroupGetBits(s_net_event_group) & ETH_GOT_ROUTABLE_IP6_BIT) != 0)
+            return;
+
+        const bool timeout_elapsed = esp_timer_get_time() - wait_started_us >=
+                                     static_cast<int64_t>(ROUTABLE_IPV6_ACQUISITION_TIMEOUT_MS) * 1000;
+        if (timeout_elapsed && s_pps_discipline_active.load(std::memory_order_acquire))
+            return;
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
 static void setup_ethernet()
 {
     if (s_net_event_group == nullptr)
         s_net_event_group = xEventGroupCreate();
 
-    s_ip_address[0] = '\0';
-    s_ipv4_address[0] = '\0';
-    s_ipv6_address[0] = '\0';
-    xEventGroupClearBits(s_net_event_group, ETH_CONNECTED_BIT | ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT);
+    clear_network_addresses();
+    xEventGroupClearBits(s_net_event_group, ETH_CONNECTED_BIT | ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT | ETH_GOT_ROUTABLE_IP6_BIT);
 
     Network.onEvent(arduino_eth_event_handler);
 
@@ -5445,12 +5749,14 @@ static void setup_ethernet()
 
 #if DEBUG_ENABLED
     ESP_LOGI(TAG,
-             "Waiting for Ethernet %s address...",
-             static_ip_applied ? "static" : "DHCP");
+             "Waiting for Ethernet %s address%s...",
+             static_ip_applied ? "static" : "DHCP",
+             PreferIPvX == 1 ? "" : " and routable IPv6");
 #endif
-    xEventGroupWaitBits(s_net_event_group, ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+    wait_for_startup_ethernet_readiness();
 #if DEBUG_ENABLED
-    ESP_LOGI(TAG, "Ethernet setup complete, current address: %s", s_ip_address[0] == '\0' ? "<none>" : s_ip_address);
+    const network_address_snapshot_t addresses = get_network_address_snapshot();
+    ESP_LOGI(TAG, "Ethernet setup complete, current address: %s", addresses.selected[0] == '\0' ? "<none>" : addresses.selected);
 #endif
 }
 
@@ -5472,6 +5778,12 @@ void write_opening_messages_to_the_console()
     ESP_LOGI(TAG, "License: %s", meta->license);
     ESP_LOGI(TAG, "Website: %s", meta->homepage);
     ESP_LOGI(TAG, " ");
+
+#if DEBUG_ENABLED
+    ESP_LOGI(TAG, "Debug: Enabled");
+#else
+    ESP_LOGW(TAG, "Debug: Disabled");
+#endif
 
 #if RBG_LED_KY_016_MODULE_ENABLED || RBG_LED_WS2812_MODULE_ENABLED
     ESP_LOGI(TAG, "LED support: Enabled");
@@ -5537,77 +5849,6 @@ void write_opening_messages_to_the_console()
     ESP_LOGI(TAG, "");
 }
 
-void write_open_for_business_messages_to_the_console()
-{
-
-    // The line of code below 'opens the gate' for external NTP responses to be processed.
-    //
-    // Gating criteria:
-    //  - An IPv4 or IPv6 address has been acquired; either one is sufficient to facilitate external NTP responses to be processed
-    //  - The time has been synchronized and the PPS disciplined
-    //  - The NTP server is running and ready to respond to external NTP requests
-    //
-    // Non-gating criteria:
-    //  - MQTT need not be connected to its broker
-    //    if its broker connection is unavailable, MQTT messages will be queued if the QOS > 0
-    //  - IPv4 and IPv6 addresses need not be currently available;
-    //    although at least one has been recently available as evidence by at least one acquired IP address
-    //
-
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
-
-    if (ntp_auth_key_count() != 0)
-    {
-        char authentication_key_hex[NTP_AUTH_MAX_KEY_SIZE * 2 + 1] = "";
-        uint32_t authentication_key_id = 0;
-        ESP_LOGI(TAG, "Authorization key(s) for use with Meinberg (set in the client's ntp.keys file):");
-        ESP_LOGI(TAG, " ");
-        for (size_t index = 0; index < ntp_auth_key_count(); ++index)
-        {
-            if (ntp_auth_key_hex(index, &authentication_key_id, authentication_key_hex, sizeof(authentication_key_hex)))
-                ESP_LOGI(TAG, "%" PRIu32 " SHA256 %s", authentication_key_id, authentication_key_hex);
-        }
-        ESP_LOGI(TAG, " ");
-        ESP_LOGI(TAG, "Authorization key(s) for use with Chrony (set in the client's chrony.keys file):");
-        ESP_LOGI(TAG, " ");
-        for (size_t index = 0; index < ntp_auth_key_count(); ++index)
-        {
-            if (ntp_auth_key_hex(index, &authentication_key_id, authentication_key_hex, sizeof(authentication_key_hex)))
-                ESP_LOGI(TAG, "%" PRIu32 " SHA256 HEX:%s", authentication_key_id, authentication_key_hex);
-        }
-        ESP_LOGI(TAG, " ");
-    }
-#endif
-
-    if (s_ipv4_address[0] != '\0')
-        ESP_LOGI(TAG, "The IPv4 connection is up (%s)", s_ipv4_address);
-    else
-        ESP_LOGW(TAG, "The IPv4 connection is down");
-
-    if (s_ipv6_address[0] != '\0')
-        ESP_LOGI(TAG, "The IPv6 connection is up (%s)", s_ipv6_address);
-    else
-        ESP_LOGW(TAG, "The IPv6 connection is down");
-
-    s_ntp_external_responses_enabled.store(true, std::memory_order_release);
-
-    // Note: 'Open for business' message is purposefully not guarded by a DEBUG_ENABLE check - it should always be written to the console.
-    char s_open_for_business_date_and_time[25] = "";
-    format_time_to_ISO8601(time(nullptr), s_open_for_business_date_and_time, sizeof(s_open_for_business_date_and_time));
-    ESP_LOGI(TAG, " ");
-    ESP_LOGI(TAG, "***********************************************");
-    ESP_LOGI(TAG, "* Open for business: %s *", s_open_for_business_date_and_time);
-    ESP_LOGI(TAG, "***********************************************");
-    ESP_LOGI(TAG, " ");
-
-    s_open_for_business_message_written.store(true, std::memory_order_release);
-
-#if DEBUG_ENABLED
-#else
-    ESP_LOGW(TAG, "DEBUG_ENABLED is disabled in the settings file; this will be the last console message from main_cpp");
-#endif
-}
-
 void setup_NVS_storage(void)
 {
     if (!initialize_nvs_storage())
@@ -5623,6 +5864,7 @@ void setup_mutexes_and_semaphores(void)
     s_pps_sync_timestamp_queue = xQueueCreate(1, sizeof(PpsCaptureEvent));
     s_ote_mutex = xSemaphoreCreateMutex();
     s_sync_state_mutex = xSemaphoreCreateMutex();
+    s_network_address_mutex = xSemaphoreCreateMutex();
 
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
     s_lcd_mutex = xSemaphoreCreateMutex();
@@ -5633,7 +5875,7 @@ void setup_mutexes_and_semaphores(void)
 #endif
 }
 
-static void setup_up_the_RGB_LED()
+static void setup_the_RGB_LED()
 {
 
 #if RBG_LED_KY_016_MODULE_ENABLED && RBG_LED_WS2812_MODULE_ENABLED
@@ -5789,13 +6031,36 @@ static std::string configure_mac_address()
 void setup_ethernet_connection()
 {
 
-    std::string MACToBeUsed = configure_mac_address();
+    // std::string MACToBeUsed = configure_mac_address();
+    MACToBeUsed = configure_mac_address();
     ESP_LOGI(TAG, "The MAC address that will be used for this device is: %s", MACToBeUsed.c_str());
 
     display_line(1, "Connecting Ethernet");
     display_line(2, "");
     setup_ethernet();
     display_selected_ip_address(static_cast<int>(time(nullptr) % 10));
+}
+
+static void ethernet_setup_task(void *parameter)
+{
+    setup_ethernet_connection();
+    xTaskNotifyGive(static_cast<TaskHandle_t>(parameter));
+    vTaskDelete(nullptr);
+}
+
+static bool start_ethernet_setup_task(TaskHandle_t startup_task)
+{
+    if (xTaskCreatePinnedToCore(ethernet_setup_task,
+                                "ethernet_setup",
+                                Ethernet_Setup_Task_Stack_Size,
+                                startup_task,
+                                16,
+                                nullptr,
+                                tskNO_AFFINITY) == pdPASS)
+        return true;
+
+    ESP_LOGE(TAG, "Unable to start Ethernet setup task");
+    return false;
 }
 
 #if OTE_UPDATES_ENABLED
@@ -6023,11 +6288,12 @@ static void setup_ota()
     bool network_begin_ok = Network.begin();
 
 #if DEBUG_ENABLED
+    const network_address_snapshot_t addresses = get_network_address_snapshot();
     ESP_LOGI(TAG,
              "Arduino Network.begin()=%s, online=%s, current_ip=%s",
              network_begin_ok ? "true" : "false",
              Network.isOnline() ? "true" : "false",
-             s_ip_address[0] == '\0' ? "<none>" : s_ip_address);
+             addresses.selected[0] == '\0' ? "<none>" : addresses.selected);
 
     ESP_LOGI(TAG,
              "Configuring ArduinoOTA: host=%s, port=%u, password_length=%u",
@@ -6072,9 +6338,10 @@ static void setup_ota()
     ArduinoOTA.begin();
 
 #if DEBUG_ENABLED
+    const network_address_snapshot_t ota_addresses = get_network_address_snapshot();
     ESP_LOGI(TAG,
              "ArduinoOTA.begin() returned, listener should be available on %s:%u",
-             s_ip_address[0] == '\0' ? DeviceName : s_ip_address,
+             ota_addresses.selected[0] == '\0' ? DeviceName : ota_addresses.selected,
              static_cast<unsigned int>(OTEPort));
 #endif
 }
@@ -6481,6 +6748,9 @@ void setup_the_gnss()
     while (!s_time_has_been_set.load())
         vTaskDelay(pdMS_TO_TICKS(100));
 
+    while (!s_pps_discipline_active.load(std::memory_order_acquire))
+        vTaskDelay(pdMS_TO_TICKS(100));
+
     display_line(1, "Time Synchronized");
     display_line(2, "PPS Disciplined");
 }
@@ -6490,10 +6760,10 @@ void setup_the_gnss()
 static void ntp_server_task(void *parameter)
 {
     TaskHandle_t startup_task = static_cast<TaskHandle_t>(parameter);
-    int ipv4_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    int ipv6_socket = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
-    int ipv6_link_local_socket = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
-    if (ipv4_socket < 0 || ipv6_socket < 0)
+    int ipv4_socket = IPV4_ENABLED ? socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) : -1;
+    int ipv6_socket = IPV6_ENABLED ? socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP) : -1;
+    int ipv6_link_local_socket = IPV6_ENABLED ? socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP) : -1;
+    if ((IPV4_ENABLED && ipv4_socket < 0) || (IPV6_ENABLED && ipv6_socket < 0))
     {
 #if DEBUG_ENABLED
         ESP_LOGE(TAG, "Unable to create NTP UDP sockets: errno %d", errno);
@@ -6517,9 +6787,10 @@ static void ntp_server_task(void *parameter)
 
     int ipv6_only = 1;
     int reuse_address = 1;
-    if (setsockopt(ipv6_socket, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6_only, sizeof(ipv6_only)) != 0 ||
-        setsockopt(ipv6_socket, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) != 0 ||
-        bind(ipv4_socket, reinterpret_cast<struct sockaddr *>(&ipv4_listen_addr), sizeof(ipv4_listen_addr)) != 0)
+    if ((IPV4_ENABLED && bind(ipv4_socket, reinterpret_cast<struct sockaddr *>(&ipv4_listen_addr), sizeof(ipv4_listen_addr)) != 0) ||
+        (IPV6_ENABLED &&
+         (setsockopt(ipv6_socket, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6_only, sizeof(ipv6_only)) != 0 ||
+          setsockopt(ipv6_socket, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) != 0)))
     {
 #if DEBUG_ENABLED
         ESP_LOGE(TAG, "Unable to configure NTP UDP sockets: errno %d", errno);
@@ -6534,30 +6805,36 @@ static void ntp_server_task(void *parameter)
         return;
     }
 
-    struct sockaddr_in6 ipv6_listen_addr{};
-    ipv6_listen_addr.sin6_family = AF_INET6;
-    ipv6_listen_addr.sin6_port = htons(NTP_PORT);
-    ipv6_listen_addr.sin6_addr = in6addr_any;
-    if (bind(ipv6_socket, reinterpret_cast<struct sockaddr *>(&ipv6_listen_addr), sizeof(ipv6_listen_addr)) != 0)
+    if (IPV6_ENABLED)
     {
+        struct sockaddr_in6 ipv6_listen_addr{};
+        ipv6_listen_addr.sin6_family = AF_INET6;
+        ipv6_listen_addr.sin6_port = htons(NTP_PORT);
+        ipv6_listen_addr.sin6_addr = in6addr_any;
+        if (bind(ipv6_socket, reinterpret_cast<struct sockaddr *>(&ipv6_listen_addr), sizeof(ipv6_listen_addr)) != 0)
+        {
 #if DEBUG_ENABLED
-        ESP_LOGE(TAG, "Unable to bind IPv6 NTP UDP socket: errno %d", errno);
+            ESP_LOGE(TAG, "Unable to bind IPv6 NTP UDP socket: errno %d", errno);
 #endif
-        closesocket(ipv4_socket);
-        closesocket(ipv6_socket);
-        if (ipv6_link_local_socket >= 0)
-            closesocket(ipv6_link_local_socket);
-        if (startup_task != nullptr)
-            xTaskNotifyGive(startup_task);
-        vTaskDelete(nullptr);
-        return;
+            if (ipv4_socket >= 0)
+                closesocket(ipv4_socket);
+            closesocket(ipv6_socket);
+            if (ipv6_link_local_socket >= 0)
+                closesocket(ipv6_link_local_socket);
+            if (startup_task != nullptr)
+                xTaskNotifyGive(startup_task);
+            vTaskDelete(nullptr);
+            return;
+        }
     }
 
     esp_ip6_addr_t link_local_address{};
-    if (ipv6_link_local_socket < 0 ||
-        setsockopt(ipv6_link_local_socket, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6_only, sizeof(ipv6_only)) != 0 ||
-        setsockopt(ipv6_link_local_socket, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) != 0 ||
-        esp_netif_get_ip6_linklocal(ETH.netif(), &link_local_address) != ESP_OK)
+    if (!IPV6_ENABLED)
+        ipv6_link_local_socket = -1;
+    else if (ipv6_link_local_socket < 0 ||
+             setsockopt(ipv6_link_local_socket, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6_only, sizeof(ipv6_only)) != 0 ||
+             setsockopt(ipv6_link_local_socket, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) != 0 ||
+             esp_netif_get_ip6_linklocal(ETH.netif(), &link_local_address) != ESP_OK)
     {
 #if DEBUG_ENABLED
         ESP_LOGW(TAG, "IPv6 link-local NTP listener unavailable: errno %d", errno);
@@ -6593,13 +6870,15 @@ static void ntp_server_task(void *parameter)
     {
         fd_set read_fds;
         FD_ZERO(&read_fds);
-        FD_SET(ipv4_socket, &read_fds);
-        FD_SET(ipv6_socket, &read_fds);
+        if (ipv4_socket >= 0)
+            FD_SET(ipv4_socket, &read_fds);
+        if (ipv6_socket >= 0)
+            FD_SET(ipv6_socket, &read_fds);
         if (ipv6_link_local_socket >= 0)
             FD_SET(ipv6_link_local_socket, &read_fds);
         struct timeval timeout{};
         timeout.tv_sec = 1;
-        int max_socket = ipv4_socket;
+        int max_socket = ipv4_socket >= 0 ? ipv4_socket : ipv6_socket;
         if (ipv6_socket > max_socket)
             max_socket = ipv6_socket;
         if (ipv6_link_local_socket >= 0 && ipv6_link_local_socket > max_socket)
@@ -7160,12 +7439,19 @@ static startup_health_mqtt_metrics_result_t check_startup_health_mqtt_metrics(co
 #endif
     };
 
+    const network_address_snapshot_t addresses = get_network_address_snapshot();
     if (results.prerequisites_ready)
     {
-        count_endpoint(results.ipv4_loopback);
-        count_endpoint(results.ipv4_assigned);
-        count_endpoint(results.ipv6_loopback);
-        count_endpoint(results.ipv6_assigned);
+        if (IPV4_ENABLED && addresses.ipv4[0] != '\0')
+        {
+            count_endpoint(results.ipv4_loopback);
+            count_endpoint(results.ipv4_assigned);
+        }
+        if (IPV6_ENABLED && addresses.ipv6[0] != '\0')
+        {
+            count_endpoint(results.ipv6_loopback);
+            count_endpoint(results.ipv6_assigned);
+        }
     }
 
     const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(MQTT_QUEUED_PUBLISH_DELAY_MS * 2U);
@@ -7221,10 +7507,12 @@ static startup_health_mqtt_metrics_result_t check_startup_health_mqtt_metrics(co
 
     if (xSemaphoreTake(s_mqtt_stats_mutex, portMAX_DELAY) != pdTRUE)
         return startup_health_mqtt_metrics_result_t::could_not_determine;
-    const bool clients_match = has_expected_client_requests("127.0.0.1", AF_INET, endpoint_expected_valid_requests(results.ipv4_loopback)) &&
-                               has_expected_client_requests(s_ipv4_address, AF_INET, endpoint_expected_valid_requests(results.ipv4_assigned)) &&
-                               has_expected_client_requests("::1", AF_INET6, endpoint_expected_valid_requests(results.ipv6_loopback)) &&
-                               has_expected_client_requests(s_ipv6_address, AF_INET6, endpoint_expected_valid_requests(results.ipv6_assigned));
+    const bool clients_match = (!IPV4_ENABLED ||
+                                (has_expected_client_requests("127.0.0.1", AF_INET, endpoint_expected_valid_requests(results.ipv4_loopback)) &&
+                                 has_expected_client_requests(addresses.ipv4, AF_INET, endpoint_expected_valid_requests(results.ipv4_assigned)))) &&
+                               (!IPV6_ENABLED ||
+                                (has_expected_client_requests("::1", AF_INET6, endpoint_expected_valid_requests(results.ipv6_loopback)) &&
+                                 has_expected_client_requests(addresses.ipv6, AF_INET6, endpoint_expected_valid_requests(results.ipv6_assigned))));
     xSemaphoreGive(s_mqtt_stats_mutex);
     return clients_match ? startup_health_mqtt_metrics_result_t::passed : startup_health_mqtt_metrics_result_t::failed;
 #else
@@ -7302,10 +7590,23 @@ static startup_health_endpoint_results_t run_startup_health_endpoint_test(const 
 static startup_health_test_results_t run_startup_health_tests()
 {
     startup_health_test_results_t results{};
-    const EventBits_t ready_bits = ETH_CONNECTED_BIT | ETH_GOT_IP_BIT | ETH_GOT_IP6_BIT;
-    const EventBits_t ready = xEventGroupWaitBits(s_net_event_group, ready_bits, pdFALSE, pdTRUE,
-                                                  pdMS_TO_TICKS(Startup_Health_Test_Ready_Timeout_Ms));
-    if ((ready & ready_bits) != ready_bits || !s_time_has_been_set.load(std::memory_order_acquire) ||
+    const int64_t deadline_us = esp_timer_get_time() + static_cast<int64_t>(Startup_Health_Test_Ready_Timeout_Ms) * 1000;
+    EventBits_t ready = 0;
+    do
+    {
+        ready = xEventGroupGetBits(s_net_event_group);
+        const bool required_ip_available = PreferIPvX == 1   ? (ready & ETH_GOT_IP_BIT) != 0
+                                           : PreferIPvX == 2 ? (ready & ETH_GOT_ROUTABLE_IP6_BIT) != 0
+                                                             : (ready & (ETH_GOT_IP_BIT | ETH_GOT_ROUTABLE_IP6_BIT)) != 0;
+        if ((ready & ETH_CONNECTED_BIT) != 0 && required_ip_available)
+            break;
+        vTaskDelay(pdMS_TO_TICKS(100));
+    } while (esp_timer_get_time() < deadline_us);
+
+    const bool required_ip_available = PreferIPvX == 1   ? (ready & ETH_GOT_IP_BIT) != 0
+                                       : PreferIPvX == 2 ? (ready & ETH_GOT_ROUTABLE_IP6_BIT) != 0
+                                                         : (ready & (ETH_GOT_IP_BIT | ETH_GOT_ROUTABLE_IP6_BIT)) != 0;
+    if ((ready & ETH_CONNECTED_BIT) == 0 || !required_ip_available || !s_time_has_been_set.load(std::memory_order_acquire) ||
         !s_pps_discipline_active.load(std::memory_order_acquire))
     {
         queue_startup_health_log(ESP_LOG_ERROR, "Health Check prerequisites were not ready before timeout");
@@ -7313,38 +7614,45 @@ static startup_health_test_results_t run_startup_health_tests()
     }
 
     results.prerequisites_ready = true;
-    struct sockaddr_in ipv4_loopback{};
-    ipv4_loopback.sin_family = AF_INET;
-    ipv4_loopback.sin_port = htons(NTP_PORT);
-    ipv4_loopback.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    results.ipv4_loopback = run_startup_health_endpoint_test("IPv4 loopback", reinterpret_cast<const struct sockaddr *>(&ipv4_loopback), sizeof(ipv4_loopback), AF_INET);
-
-    struct sockaddr_in ipv4_assigned{};
-    ipv4_assigned.sin_family = AF_INET;
-    ipv4_assigned.sin_port = htons(NTP_PORT);
-    if (inet_pton(AF_INET, s_ipv4_address, &ipv4_assigned.sin_addr) == 1)
-        results.ipv4_assigned = run_startup_health_endpoint_test("IPv4 assigned", reinterpret_cast<const struct sockaddr *>(&ipv4_assigned), sizeof(ipv4_assigned), AF_INET);
-    else
-        queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv4 assigned: invalid address");
-
-    struct sockaddr_in6 ipv6_loopback{};
-    ipv6_loopback.sin6_family = AF_INET6;
-    ipv6_loopback.sin6_port = htons(NTP_PORT);
-    if (inet_pton(AF_INET6, "::1", &ipv6_loopback.sin6_addr) != 1)
+    const network_address_snapshot_t addresses = get_network_address_snapshot();
+    if (IPV4_ENABLED && addresses.ipv4[0] != '\0')
     {
-        queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv6 loopback: unable to initialize address");
-        return results;
-    }
-    results.ipv6_loopback = run_startup_health_endpoint_test("IPv6 loopback", reinterpret_cast<const struct sockaddr *>(&ipv6_loopback), sizeof(ipv6_loopback), AF_INET6);
+        struct sockaddr_in ipv4_loopback{};
+        ipv4_loopback.sin_family = AF_INET;
+        ipv4_loopback.sin_port = htons(NTP_PORT);
+        ipv4_loopback.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        results.ipv4_loopback = run_startup_health_endpoint_test("IPv4 loopback", reinterpret_cast<const struct sockaddr *>(&ipv4_loopback), sizeof(ipv4_loopback), AF_INET);
 
-    struct sockaddr_in6 ipv6_assigned{};
-    ipv6_assigned.sin6_family = AF_INET6;
-    ipv6_assigned.sin6_port = htons(NTP_PORT);
-    ipv6_assigned.sin6_scope_id = esp_netif_get_netif_impl_index(ETH.netif());
-    if (inet_pton(AF_INET6, s_ipv6_address, &ipv6_assigned.sin6_addr) == 1)
-        results.ipv6_assigned = run_startup_health_endpoint_test("IPv6 assigned", reinterpret_cast<const struct sockaddr *>(&ipv6_assigned), sizeof(ipv6_assigned), AF_INET6);
-    else
-        queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv6 assigned: invalid address");
+        struct sockaddr_in ipv4_assigned{};
+        ipv4_assigned.sin_family = AF_INET;
+        ipv4_assigned.sin_port = htons(NTP_PORT);
+        if (inet_pton(AF_INET, addresses.ipv4, &ipv4_assigned.sin_addr) == 1)
+            results.ipv4_assigned = run_startup_health_endpoint_test("IPv4 assigned", reinterpret_cast<const struct sockaddr *>(&ipv4_assigned), sizeof(ipv4_assigned), AF_INET);
+        else
+            queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv4 assigned: invalid address");
+    }
+
+    if (IPV6_ENABLED && addresses.ipv6[0] != '\0')
+    {
+        struct sockaddr_in6 ipv6_loopback{};
+        ipv6_loopback.sin6_family = AF_INET6;
+        ipv6_loopback.sin6_port = htons(NTP_PORT);
+        if (inet_pton(AF_INET6, "::1", &ipv6_loopback.sin6_addr) != 1)
+        {
+            queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv6 loopback: unable to initialize address");
+            return results;
+        }
+        results.ipv6_loopback = run_startup_health_endpoint_test("IPv6 loopback", reinterpret_cast<const struct sockaddr *>(&ipv6_loopback), sizeof(ipv6_loopback), AF_INET6);
+
+        struct sockaddr_in6 ipv6_assigned{};
+        ipv6_assigned.sin6_family = AF_INET6;
+        ipv6_assigned.sin6_port = htons(NTP_PORT);
+        ipv6_assigned.sin6_scope_id = esp_netif_get_netif_impl_index(ETH.netif());
+        if (inet_pton(AF_INET6, addresses.ipv6, &ipv6_assigned.sin6_addr) == 1)
+            results.ipv6_assigned = run_startup_health_endpoint_test("IPv6 assigned", reinterpret_cast<const struct sockaddr *>(&ipv6_assigned), sizeof(ipv6_assigned), AF_INET6);
+        else
+            queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv6 assigned: invalid address");
+    }
 
     return results;
 }
@@ -7392,8 +7700,8 @@ static int get_required_top_line_message()
 
     if (!s_ethernet_connected.load())
         required_top_line_message = 1;
-    else if (PreferIPvX == 4 && s_ntp_external_responses_enabled.load() && s_net_event_group != nullptr &&
-             (xEventGroupGetBits(s_net_event_group) & ETH_GOT_IP_BIT) == 0)
+    else if (s_ntp_external_responses_enabled.load() && s_net_event_group != nullptr &&
+             !has_usable_network_address(xEventGroupGetBits(s_net_event_group)))
         required_top_line_message = 13;
 #if MQTT_ENABLED
     else if (s_mqtt_queued_messages_count.load() > 0)
@@ -7670,7 +7978,7 @@ static void update_LED_LCD_Button_task(void *parameter)
                 }
                 else if (required_top_line_message == 99)
                 {
-                    // memcpy(top_line_message, "ESP32 Time Server's", 20);
+                    // when button pushed: "ESP32 Time Server's"
                     memcpy(top_line_message + sizeof(lcdTopLineTitle) - 1, "'s", 2);
                 }
                 else if (required_top_line_message >= 11 && required_top_line_message <= 14)
@@ -7813,8 +8121,94 @@ void perform_health_check()
 #endif
 }
 
+void write_open_for_business_messages_to_the_console()
+{
+
+    // The line of code below 'opens the gate' for external NTP responses to be processed.
+    //
+    // Gating criteria:
+    //  - An IPv4 or IPv6 address has been acquired; either one is sufficient to facilitate external NTP responses to be processed
+    //  - The time has been synchronized and the PPS disciplined
+    //  - The NTP server is running and ready to respond to external NTP requests
+    //
+    // Non-gating criteria:
+    //  - MQTT need not be connected to its broker
+    //    if its broker connection is unavailable, MQTT messages will be queued if the QOS > 0
+    //  - IPv4 and IPv6 addresses need not be currently available;
+    //    although at least one has been recently available as evidence by at least one acquired IP address
+    //  - The IPv6 address acquired may be a Link-Local address (LLA) - which will be used as the least preferred address type.
+    //    If afterwards a Unique Local Address (ULA) is acquired, it will be used as a more preferred address type over the LLA.
+    //    If afterwards a Global Unicast Address (GUA) is acquired, it will be used as a more preferred address type over the LLA and ULA.
+    //
+
+#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+
+    if (ntp_auth_key_count() != 0)
+    {
+        char authentication_key_hex[NTP_AUTH_MAX_KEY_SIZE * 2 + 1] = "";
+        uint32_t authentication_key_id = 0;
+        ESP_LOGI(TAG, "Authorization key(s) for use with Meinberg (set in the client's ntp.keys file):");
+        ESP_LOGI(TAG, " ");
+        for (size_t index = 0; index < ntp_auth_key_count(); ++index)
+        {
+            if (ntp_auth_key_hex(index, &authentication_key_id, authentication_key_hex, sizeof(authentication_key_hex)))
+                ESP_LOGI(TAG, "%" PRIu32 " SHA256 %s", authentication_key_id, authentication_key_hex);
+        }
+        ESP_LOGI(TAG, " ");
+        ESP_LOGI(TAG, "Authorization key(s) for use with Chrony (set in the client's chrony.keys file):");
+        ESP_LOGI(TAG, " ");
+        for (size_t index = 0; index < ntp_auth_key_count(); ++index)
+        {
+            if (ntp_auth_key_hex(index, &authentication_key_id, authentication_key_hex, sizeof(authentication_key_hex)))
+                ESP_LOGI(TAG, "%" PRIu32 " SHA256 HEX:%s", authentication_key_id, authentication_key_hex);
+        }
+        ESP_LOGI(TAG, " ");
+    }
+#endif
+
+    refresh_network_ipv6_addresses();
+    log_network_ipv6_addresses();
+    const network_address_snapshot_t addresses = get_network_address_snapshot();
+    if (PreferIPvX != 2) // If not IPv6 only, report IPv4 connection status
+    {
+        if (addresses.ipv4[0] != '\0')
+            ESP_LOGI(TAG, "The IPv4 connection is up ( %s )", addresses.ipv4);
+        else
+            ESP_LOGW(TAG, "The IPv4 connection is down");
+    }
+
+    if (PreferIPvX != 1) // If not IPv4 only, report IPv6 connection status
+    {
+        if (addresses.ipv6[0] != '\0')
+            ESP_LOGI(TAG, "The IPv6 connection is up ( %s )", addresses.ipv6);
+        else
+            ESP_LOGW(TAG, "The IPv6 connection is down");
+    }
+
+    ESP_LOGI(TAG, " ");
+    ESP_LOGI(TAG, "MAC address: %s", MACToBeUsed.c_str());
+
+    s_ntp_external_responses_enabled.store(true, std::memory_order_release);
+
+    // Note: 'Open for business' message is purposefully not guarded by a DEBUG_ENABLE check - it should always be written to the console.
+    char s_open_for_business_date_and_time[25] = "";
+    format_time_to_ISO8601(time(nullptr), s_open_for_business_date_and_time, sizeof(s_open_for_business_date_and_time));
+    ESP_LOGI(TAG, " ");
+    ESP_LOGI(TAG, "***********************************************");
+    ESP_LOGI(TAG, "* Open for business: %s *", s_open_for_business_date_and_time);
+    ESP_LOGI(TAG, "***********************************************");
+    ESP_LOGI(TAG, " ");
+
+    s_open_for_business_message_written.store(true, std::memory_order_release);
+
+#if !DEBUG_ENABLED
+    ESP_LOGW(TAG, "DEBUG_ENABLED is disabled in the settings file; this will be the last console message from main_cpp");
+#endif
+}
+
 extern "C" void app_main()
 {
+
     setup_pps_input(); // (keep this at the very beginning of the setup sequence)
 
     initArduino();
@@ -7827,7 +8221,7 @@ extern "C" void app_main()
 
     setup_mutexes_and_semaphores();
 
-    setup_up_the_RGB_LED();
+    setup_the_RGB_LED();
 
     setup_the_LCD();
 
@@ -7835,11 +8229,14 @@ extern "C" void app_main()
 
     start_RGB_LED_LCD_and_Button_refresh();
 
-    setup_ethernet_connection();
-
-    setup_for_ote_updates();
+    const bool ethernet_setup_started = start_ethernet_setup_task(xTaskGetCurrentTaskHandle());
 
     setup_the_gnss();
+
+    if (ethernet_setup_started)
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+    setup_for_ote_updates();
 
     setup_mqtt();
 

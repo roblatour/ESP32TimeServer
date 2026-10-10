@@ -1,4 +1,4 @@
-// ESP32 Time Server v3.0.3
+// ESP32 Time Server v3.0.4
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
