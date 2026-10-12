@@ -107,7 +107,7 @@ version 1, including:
 > via both its USB-C connector and a PoE powered Ethernet cable at the same time.**
 > Powering from both simultaneously may damage the ESP32-P4-ETH board, PoE switch,
 > or device providing USB power. Either power-supply alone is generally sufficient to
-> power the board, GNSS module, LCD screen, etc..  However, if after flashing the 
+> power the board, GNSS module, LCD screen, etc.  However, if after flashing the 
 > firmware and a power recycle the LCD screen blinks on and off for several minutes
 > before coming online its a good indication a power-supply (USB charger or 
 > PoE injector) issue. In this case try a different USB charger or PoE injector, 
