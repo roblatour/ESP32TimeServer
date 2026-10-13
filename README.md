@@ -14,7 +14,7 @@ set it up and let it do its job.
 
 ![ESP32 Time Server](./PCB/photo01.jpg)
 
-It uses a **GNSS (North America & Europe) receiver** as its time source, making
+ESP32TimeServer uses a **GNSS (North America & Europe) receiver** as its time source, making
 it a true Stratum 1 server — meaning it gets its time directly from satellites
 rather than from another NTP server. Every device on your home network can then
 synchronize to it for highly accurate local time.
