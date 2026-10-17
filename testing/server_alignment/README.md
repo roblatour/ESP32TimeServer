@@ -8,7 +8,7 @@ It is a useful way to help quality assure new builds and/or identify potential n
 
 Two or more servers can be tested at a time.
 
-It queries each server repeatedly, calculates the average offset for each server, and compares those averages to show how closely the servers align with one and other. 
+It queries each server repeatedly, calculates the average offset for each server, and compares those averages to show how closely the servers align to each other. 
 
 Once done it prepares a report detailing per-server offset statistics, pairwise average differences, the maximum spread between averages, and an alignment assessment. 
 Here is an [example](results.txt)
