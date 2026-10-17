@@ -27,4 +27,4 @@ Pairwise absolute differences between average offsets:
   192.168.1.214 vs 192.168.7.24: 0.000007 sec (0.007 ms)
 
 Maximum spread between server averages: 0.000007 sec (0.007 ms)
-Alignment assessment: The three server averages among responding servers are within 0.007 ms of one another.
+Alignment assessment: The server averages among responding servers are within 0.007 ms of one another.
