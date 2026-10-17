@@ -37,3 +37,7 @@ Jitter is the variation in network delay between NTP messages exchanged with a t
 ### Drift
 Drift is the gradual deviation of a computer's clock from the correct reference time due to hardware clock inaccuracies. NTP compensates for drift by regularly synchronizing the system clock with a time source. For more information and a python based drift testing tool please see: [/testing/drift/README.md](/testing/drift/README.md)
 
+### NTP Server Alignment
+The multiple internal NTP servers alignment can be verified to help ensure quality of service. Useful in quality assuring new builds and/or identifying potential network issues: [/testing/server_alignment/README.md](/testing/server_alignment/README.md)
+
+
