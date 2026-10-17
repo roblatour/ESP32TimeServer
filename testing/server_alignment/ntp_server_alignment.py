@@ -217,7 +217,7 @@ def build_report(
             f"Maximum spread between server averages: {spread:.6f} sec "
             f"({spread * 1000:.3f} ms)",
             (
-                "Alignment assessment: The three server averages "
+                "Alignment assessment: The server averages "
                 f"{'are' if len(averages) == 3 else 'among responding servers are'} "
                 f"within {spread * 1000:.3f} ms of one another."
             ),
