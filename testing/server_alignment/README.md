@@ -4,7 +4,7 @@
 
 This test determines alignment of NTP servers on the same internal network.
 
-It is a useful way to help quality assure new builds and/or identifying potential network issues.
+It is a useful way to help quality assure new builds and/or identify potential network issues.
 
 Two or more servers can be tested at a time.
 
