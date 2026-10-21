@@ -29,7 +29,7 @@ synchronize to it for highly accurate local time.
   information, please see [this document](misc/symmetric_key_authentication_setup.md).
 - **WS2182** RGB LED support added (KY-016 support continues).
 - **Stationary GNSS mode** — with UBLOX compliant GNSS receivers the program enables
-  stationary-mode for improved time keeping
+  stationary-mode for improved time reporting
 - updated to use Espressif's Ethernet and OTE update (TCP 3232) processes in place of 
   the Arduino Ethernet and OTE update (UDP 3232) processes
 - improved accuracy when using the ESP32-P4 release 3.0 or above chip
