@@ -29,6 +29,7 @@ A memory leak occurs when a program allocates memory but fails to release it whe
 ## Stress Testing
 Stress testing evaluates how a program performs under extreme workloads or resource constraints beyond normal operating conditions. It helps identify stability issues, bottlenecks, and failure points. For more information please see this open source stress testing tool: [Time Server Stress Test](https://github.com/roblatour/TimeServerStressTest)
 
+
 ## Quality of Service
 
 ### Jitter
@@ -39,5 +40,3 @@ Drift is the gradual deviation of a computer's clock from the correct reference 
 
 ### NTP Server Alignment
 The multiple internal NTP servers alignment can be verified to help ensure quality of service. Useful in quality assuring new builds and/or identifying potential network issues: [/testing/server_alignment/README.md](/testing/server_alignment/README.md)
-
-

@@ -65,10 +65,15 @@ namespace
         uint8_t full_digest[32] = {};
         size_t full_digest_length = 0;
         psa_hash_operation_t operation = PSA_HASH_OPERATION_INIT;
-        const psa_status_t status = psa_hash_setup(&operation, PSA_ALG_SHA_256) == PSA_SUCCESS &&
-                                    psa_hash_update(&operation, key.key, key.key_length) == PSA_SUCCESS &&
-                                    psa_hash_update(&operation, input, input_length) == PSA_SUCCESS &&
-                                    psa_hash_finish(&operation, full_digest, sizeof(full_digest), &full_digest_length);
+        // Each step is checked on its own. (The former single expression converted the result of the && chain to
+        // a psa_status_t, so a failed setup or update gave 0 = PSA_SUCCESS; only the length check caught it.)
+        psa_status_t status = psa_hash_setup(&operation, PSA_ALG_SHA_256);
+        if (status == PSA_SUCCESS)
+            status = psa_hash_update(&operation, key.key, key.key_length);
+        if (status == PSA_SUCCESS)
+            status = psa_hash_update(&operation, input, input_length);
+        if (status == PSA_SUCCESS)
+            status = psa_hash_finish(&operation, full_digest, sizeof(full_digest), &full_digest_length);
         psa_hash_abort(&operation);
         if (status != PSA_SUCCESS || full_digest_length != sizeof(full_digest))
             return false;
@@ -86,11 +91,10 @@ bool ntp_auth_initialize()
 
 #if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
 
-    // number_of_symmetric_keys = std::size(symmetric_keys);
-
     if (number_of_symmetric_keys < 1 || number_of_symmetric_keys > NTP_AUTH_MAX_KEYS)
     {
-        ESP_LOGE(TAG, "Invalid number of symmetric keys: %u", number_of_symmetric_keys);
+        ESP_LOGE(TAG, "Invalid number of symmetric keys: %u (1 to %u are supported)", number_of_symmetric_keys,
+                 static_cast<unsigned int>(NTP_AUTH_MAX_KEYS));
         return false;
     }
 
@@ -98,11 +102,6 @@ bool ntp_auth_initialize()
     {
         const symmetric_key_t &source = symmetric_keys[index];
         bool valid = true;
-        if (number_of_symmetric_keys < 1 || number_of_symmetric_keys > 4)
-        {
-            ESP_LOGE(TAG, "The number of symmetric keys %zu: key_id must be between 1 and 4 (inclusive) (got %" PRIu32 ")", number_of_symmetric_keys);
-            valid = false;
-        }
         if (source.key_id < 1 || source.key_id > 65535)
         {
             ESP_LOGE(TAG, "Symmetric key %zu: key_id must be between 1 and 65535 (inclusive)(got %" PRIu32 ")", index + 1, source.key_id);

@@ -4,4 +4,5 @@ dependencies:
   esp-idf-lib/pcf8574: "^1.0.10"
   espressif/arduino-esp32: "^3.3.10"
   espressif/mqtt: "^1.1.0"
+  espressif/mdns: "^1.11.0"
   espressif/led_strip: "^3.0.3"

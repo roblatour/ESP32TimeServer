@@ -1,30 +1,30 @@
 NTP Server Alignment Results
 =============================
-Generated: 2026-10-17T11:51:45-04:00
+Generated: 2026-10-21T13:35:18-04:00
 Requested samples per server: 20
 
 Per-server results
 ------------------
-Server: 192.168.1.214
-  Successful samples: 20/20
-  Average offset: +0.007025 sec
-  Minimum offset: +0.006620 sec
-  Maximum offset: +0.008780 sec
-  Standard deviation: 0.000450 sec
-  Individual offsets: +0.006838 sec, +0.007060 sec, +0.007062 sec, +0.007040 sec, +0.007192 sec, +0.008780 sec, +0.007309 sec, +0.006810 sec, +0.006826 sec, +0.006868 sec, +0.006980 sec, +0.007010 sec, +0.006761 sec, +0.006735 sec, +0.006620 sec, +0.006735 sec, +0.006839 sec, +0.006879 sec, +0.006910 sec, +0.007239 sec
-
 Server: 192.168.7.24
   Successful samples: 20/20
-  Average offset: +0.007032 sec
-  Minimum offset: +0.006654 sec
-  Maximum offset: +0.007657 sec
-  Standard deviation: 0.000271 sec
-  Individual offsets: +0.007657 sec, +0.007218 sec, +0.007356 sec, +0.006791 sec, +0.007332 sec, +0.007041 sec, +0.007079 sec, +0.006820 sec, +0.006967 sec, +0.007036 sec, +0.006718 sec, +0.007036 sec, +0.007421 sec, +0.006663 sec, +0.006654 sec, +0.006791 sec, +0.007244 sec, +0.006934 sec, +0.006979 sec, +0.006901 sec
+  Average offset: +0.005414 sec
+  Minimum offset: +0.004619 sec
+  Maximum offset: +0.006114 sec
+  Standard deviation: 0.000360 sec
+  Individual offsets: +0.004976 sec, +0.005501 sec, +0.005602 sec, +0.005444 sec, +0.005490 sec, +0.004619 sec, +0.005088 sec, +0.005890 sec, +0.005286 sec, +0.005098 sec, +0.005638 sec, +0.005853 sec, +0.005248 sec, +0.005652 sec, +0.005327 sec, +0.006114 sec, +0.005060 sec, +0.005161 sec, +0.005761 sec, +0.005481 sec
+
+Server: 192.168.1.24
+  Successful samples: 20/20
+  Average offset: +0.005462 sec
+  Minimum offset: +0.004535 sec
+  Maximum offset: +0.006086 sec
+  Standard deviation: 0.000392 sec
+  Individual offsets: +0.005294 sec, +0.005059 sec, +0.005246 sec, +0.005917 sec, +0.005153 sec, +0.004535 sec, +0.005345 sec, +0.005207 sec, +0.006030 sec, +0.005075 sec, +0.005564 sec, +0.005354 sec, +0.005387 sec, +0.005256 sec, +0.006086 sec, +0.005813 sec, +0.005532 sec, +0.005984 sec, +0.005683 sec, +0.005721 sec
 
 Comparison of server averages
 -----------------------------
 Pairwise absolute differences between average offsets:
-  192.168.1.214 vs 192.168.7.24: 0.000007 sec (0.007 ms)
+  192.168.7.24 vs 192.168.1.24: 0.000048 sec (0.048 ms)
 
-Maximum spread between server averages: 0.000007 sec (0.007 ms)
-Alignment assessment: The server averages among responding servers are within 0.007 ms of one another.
+Maximum spread between server averages: 0.000048 sec (0.048 ms)
+Alignment assessment: The server averages among responding servers are within 0.048 ms of one another.

@@ -1,4 +1,4 @@
-# ESP32 NTP Stratum 1 Time Server (version 3.0.4)
+# ESP32 NTP Stratum 1 Time Server (version 3.0.5)
 
 An ESP32 NTP Stratum 1 Time Server for your home network
 
@@ -28,6 +28,11 @@ synchronize to it for highly accurate local time.
   clients using Meinberg and Linux clients using chrony.  For more 
   information, please see [this document](misc/symmetric_key_authentication_setup.md).
 - **WS2182** RGB LED support added (KY-016 support continues).
+- **Stationary GNSS mode** — with UBLOX compliant GNSS receivers the program enables
+  stationary-mode for improved time keeping
+- updated to use Espressif's Ethernet and OTE update (TCP 3232) processes in place of 
+  the Arduino Ethernet and OTE update (UDP 3232) processes
+- improved accuracy when using the ESP32-P4 release 3.0 or above chip
 
 **Version 2** was a ground-up rewrite which came with a faster, more capable board 
 support and a long list of accuracy, reliability, and convenience improvements over
@@ -44,7 +49,7 @@ version 1, including:
   SparkFun MAX-M10S, but also supports lower-cost generic GNSS modules and now
   has experimental support for the GT-U16, which offers better reception than
   some competing receivers at the same or higher price points.
-- **Wireless firmware updates** — Over-the-Ethernet OTA updates let you push
+- **Wired firmware updates** — Over-the-Ethernet updates let you push
   new firmware directly from VS Code, with on-screen progress shown on the
   LCD, so you rarely need to plug in a cable after the first flash.
 - **Handles more traffic** — greatly increased throughput and concurrent
@@ -91,9 +96,9 @@ version 1, including:
 | Qty | Item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1   | WaveShare [ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm?sku=32086) or [ESP32-P4-WIFI6-ETH](https://www.waveshare.com/esp32-p4-wifi6-poe-eth.htm?sku=32832) development board (with or without optional PoE) <sup>1 2</sup>                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 1   | GPS/GNSS module [Recommended: SparkFun GNSS Receiver Breakout - MAX-M10S (Qwiic)](https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html) <sup>2</sup>. Additionally, support for the [GT U16](https://www.aliexpress.com/item/1005008288311771.html) has been added in version 2.9 - this receiver offers superior reception when coupled with the right antenna (see notes below).  Additionally, while some lower-cost generic modules UBlox compliant receivers are supported, those without a PPS pin are not.                                                                                                     |
+| 1   | GPS/GNSS module [Recommended: SparkFun GNSS Receiver Breakout - MAX-M10S (Qwiic)](https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html) <sup>2</sup>. Additionally, support for the [GT U16](https://www.aliexpress.com/item/1005008288311771.html) has been added in version 2.9 - this receiver offers superior reception when coupled with the right antenna (see notes below).  Additionally, while some lower-cost generic modules UBlox compliant receivers are supported, those without a PPS pin are not.                                                                                                        |
 | 1   | GPS/GNSS antenna with SMA connector ([SparkFun GPS/GNSS Magnetic Mount Antenna - 3m (SMA)](https://www.sparkfun.com/products/14986)) <sup>2</sup>. Alternatively the GT U16 with an L1/L5 antenna offers superior reception.  However, in my testing I used the [3M SMA W70C](https://www.aliexpress.com/item/1005008421771962.html?spm=a2g0o.order_list.order_list_main.11.7a7f1802GCXbvZ) L1/L2/L5 antenna an [IPEX to SMA adapter](https://www.aliexpress.com/item/1005009047225776.html) and got very good results (I have the antenna bundled with the GT U16 (link above) on order and when I get it and test it I will update this page). |
-| 1   | _(Optional)_ TF Card, formatted as FAT32, if you're using MQTT and want more than four messages queued should broker communications be down <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1   | _(Optional)_ TF Card, formatted as FAT32, if you're using MQTT and want more than four messages queued should broker communications be down <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | 1   | _(Optional)_ RGB LED: KY-016 ([AliExpress](https://www.aliexpress.com/item/32763280158.html)) or WS2812 ([AliExpress](https://www.aliexpress.com/item/1005009109749689.html)) with a 470&Omega; resistor and optional lens cap ([AliExpress](https://www.aliexpress.com/store/625859))                                                                                                                                                                                                                                                                                                                                                           |
 | 1   | _(Optional)_ 4×20 I²C LCD display with HD44780 controller with PCF8574 I²C backpack ([AliExpress](https://www.aliexpress.com/item/1005006829045609.html)) <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | 1   | _(Optional)_ Momentary push button for displaying up time and triggering a reset ([AliExpress](https://www.aliexpress.com/item/1005004066257419.html)) <sup>2</sup>                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -261,7 +266,7 @@ Manager (declared in [`main/idf_component.yml`](./main/idf_component.yml)):
 
 - `esp-idf-lib/hd44780` — LCD driver
 - `esp-idf-lib/pcf8574` — I²C LCD backpack driver
-- `espressif/arduino-esp32` — Arduino compatibility layer for OTA and serial
+- `espressif/arduino-esp32` — Arduino compatibility layer for GNSS and serial
 - `espressif/mqtt` — MQTT client used for optional reporting
 
 > **Note:** The ESP-IDF Component Manager resolves these dependencies
@@ -385,13 +390,7 @@ idf.py -p COMx flash monitor
 
 Following the initial flash, OTE updates can be performed if
 `OTE_UPDATES_ENABLED` was set to `1` (Enabled) for the initial build and flash.
-
-A VS Code task **"ESP-IDF: OTE Upload over Ethernet"** is included in
-`.vscode/tasks.json`. It builds the firmware and deploys it to the device over
-Ethernet using `espota.py`, so no USB cable is needed after the first flash.
-Alternatively, use the terminal command in
-[`UsefulPowerShellCommands.md`](./misc/UsefullPowerShellCommands.md) in the
-`misc` folder.
+For more information, please see [`UsefulPowerShellCommands.md`](./misc/UsefullPowerShellCommands.md).
 
 ---
 

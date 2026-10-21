@@ -21,19 +21,36 @@ In the examples below:
 
 Here are a couple example command line commands which may be used, following a
 build, to provide for an Over The Ethernet (OTE) update. The path name which
-precedes `ESP32TimeServer.bin` may vary.
+precedes `ESP32TimeServer.bin` may vary depending on your ESP32-P4 chip version.
+For more information, please see the [README.md](/README.md) file, `Setup Step 3 - Build`.
 
 
 
 ```cmd
-python tools\espota.py -i ESP32TimeServer.local -p 3232 -P 3232 -a ESP32TimeServerpw -f build-esp32p4-rev-1-3\ESP32TimeServer.bin -r -d
+python tools\ote_upload.py -i ESP32TimeServer.local -p 3232 -f build-esp32p4-rev-3-1\ESP32TimeServer.bin
 ```
 
 or
 
 ```cmd
-python tools\espota.py -i x.x.x.x -p 3232 -P 3232 -a ESP32TimeServerpw -f build-esp32p4-rev-1-3\ESP32TimeServer.bin -r -d
+python tools\ote_upload.py -i x.x.x.x -p 3232 -f build-esp32p4-rev-3-1\ESP32TimeServer.bin
 ```
+
+Notes:
+
+1. These commands prompt for the running device's OTE password. Native updates
+use unencrypted HTTP on TCP port 3232; use a trusted LAN or VPN only.
+
+2. The OTE will appear to completed from the command line sooner than 
+will be actually the case (despite the message that says
+'restarting in 5 seconds'). If you have an LCD on the ESP32TimeServer you will
+be able to see its progress as it continues the update process, if not the 
+update should complete within the next 30 seconds after which time the
+ESP32TimeServer will auto reboot. 
+
+3. For a device still running ArduinoOTA, use `tools\espota.py` once to install
+the native firmware, or flash by USB. See [native OTE](native_ote.md) for the
+legacy migration command and IPv6 examples.
 
 ## 2. NTP Test Request (ntpdate) - Linux or Windows (with Meinberg)
 

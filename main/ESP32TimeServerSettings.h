@@ -1,4 +1,4 @@
-// ESP32 Time Server v3.0.4
+// ESP32 Time Server v3.0.5
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -22,7 +22,7 @@ static constexpr int serialMonitorSpeed = 115200;
 #define RBG_LED_KY_016_MODULE_ENABLED 0 // 0 = Disabled; 1 = Enabled
 #define RBG_LED_WS2812_MODULE_ENABLED 0 // 0 = Disabled; 1 = Enabled
 
-static constexpr int RGB_LED_Brightness_Percent = 70;
+static constexpr int RGB_LED_Brightness_Percent = 60;
 
 // The LED colours below may be changed to suit your preferences, but the descriptors should remain unchanged
 // For example: you can change LED_normal to blue but leave the descriptor 'LED_normal' unchanged
@@ -65,6 +65,8 @@ static constexpr int upTimeRestartPin = 3;
 #define OTE_UPDATES_ENABLED 1 // 0 = Disabled; 1 = Enabled
 static constexpr char DeviceName[] = "ESP32TimeServer";
 static constexpr uint16_t OTEPort = 3232;
+static constexpr unsigned int OTEReceiveTimeoutSeconds = 15;
+static constexpr unsigned int OTEMaxUploadTimeSeconds = 300;
 
 // (optional) NTPv4 symmetric-key packet authentication.
 // When enabled, only authenticated NTPv4 requests with a valid configured key receive signed replies.
@@ -130,6 +132,7 @@ static constexpr char SubnetMask[] = "";      // optional - leave as "" to omit,
 static constexpr char PrimaryDNS[] = "";      // optional - leave as "" to omit, or for example: 8.8.8.8
 static constexpr char SecondaryDNS[] = "";    // optional - leave as "" to omit, or for example: 1.1.1.1
 
+
 // Preference for network connection
 static constexpr int PreferIPvX = 4; // 0 - dual-stack (uses both IPv4 and IPv6), LCD shows both IPv4 and IPv6 addresses
                                      // 1 - use IPv4 only, LCD shows IPv4 address only
@@ -154,7 +157,11 @@ static constexpr int PreferIPvX = 4; // 0 - dual-stack (uses both IPv4 and IPv6)
 // (required) Time zone setting for your region - for more information see https://gist.github.com/alwynallan/24d96091655391107939
 static constexpr const char *timeZoneSpec = "EST5EDT,M3.2.0/2,M11.1.0/2";
 
-// Unless you know what you are doing, the options below should be left as is
+// Unless you know what you are doing, the options below should be left as is:
+
+static constexpr int64_t ntpHoldoverDurationUs = 180LL * 1000000LL; // Holdover duration in microseconds (180 seconds)
+// Conservative uncertainty growth while coasting on the learned oscillator rate.
+static constexpr uint32_t ntpHoldoverDispersionPpm = 200;
 
 // This project was designed and tested to work with a SparkFun GNSS Receiver Breakout board which uses a u-blox - MAX-M10S module.
 // ( https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html )
@@ -211,7 +218,26 @@ static constexpr int TXPin = 22;  // note: prior to release 2.4 pin 16 was used 
 static constexpr int RXPin = 21;  // note: prior to release 2.4 pin 17 was used for RX
 static constexpr int PPSPin = 20; // note: prior to release 2.4 pin 18 was used for PPS
 
-// (required) GPIO pin definitions for the Waveshare:
+// Optional internal PTP PPS loopback. Requires ESP32-P4 chip revision v3.0 or later
+// and a free, unconnected GPIO.
+// The pin is driven by the EMAC and captured by MCPWM; no external wire is needed.
+// Set to the number of an unused GPIO pin for the internal PTP PPS loopback; set to -1 if not used
+static constexpr int PTPPPSLoopbackPin = 54; // -1;  
+
+// ESP32-P4 IP101 PHY and external 50 MHz RMII clock (Waveshare Ethernet boards).
+static constexpr int EthernetMDCGPIO = 31;
+static constexpr int EthernetMDIOGPIO = 52;
+static constexpr int EthernetPHYResetGPIO = 51;
+static constexpr int EthernetPHYAddress = 1;
+static constexpr int EthernetRMIIClockGPIO = 50;
+static constexpr int EthernetRMIITXEnableGPIO = 49;
+static constexpr int EthernetRMIITX0GPIO = 34;
+static constexpr int EthernetRMIITX1GPIO = 35;
+static constexpr int EthernetRMIICRSDVGPIO = 28;
+static constexpr int EthernetRMIIRX0GPIO = 29;
+static constexpr int EthernetRMIIRX1GPIO = 30;
+
+// (required) TF Card GPIO pin definitions for the Waveshare:
 // ESP32-P4-ETH, ESP32-P4-POE-ETH, ESP32-P4-WIFI-ETH, ESP32-P4-WIFI-POE-ETH
 // if your using this board do not change these
 static constexpr int TFCardCommandPin = 44;
