@@ -63,7 +63,6 @@ static constexpr int upTimeRestartPin = 3;
 // (optional) Over The Ethernet updates support
 // Please also see ESP32TimeServerSettingsSecretes.h for the configuration of the OTE password.
 #define OTE_UPDATES_ENABLED 1 // 0 = Disabled; 1 = Enabled
-static constexpr char DeviceName[] = "ESP32TimeServer";
 static constexpr uint16_t OTEPort = 3232;
 static constexpr unsigned int OTEReceiveTimeoutSeconds = 15;
 static constexpr unsigned int OTEMaxUploadTimeSeconds = 300;
@@ -115,6 +114,9 @@ static constexpr int MQTT_QOS = 0;
 //         The reason this value is shown in the settings but MQTT_MAX_REPORT_SIZE is not is simply to draw
 //         your attention to the limit below - and if you're ok with it great - otherwise there is more work to do.
 static constexpr size_t MQTT_TF_Client_Limit = 500;
+
+// Device Name - is also as the hostname that the device will announce
+static constexpr char DeviceName[] = "ESP32TimeServer";
 
 // (optional) setting of the ESP32-P4's MAC address support
 // set the value below to "" to use the ESP32-P4's default MAC address, or
