@@ -23,12 +23,9 @@ Time Server's PCB.
 > - ESP32-P4-ETH GPIO21 (RX) connected to the GPS TX pin
 > - ESP32-P4-ETH GPIO20 connected to the GPS PPS pin
 >
-> However, if your setup is running fine in version 2.4 and beyond with the
-> original GPIO16, 17, and 18 pin selections, this PCB will still work as long
-> as the setting files specify the older pin usage.
+> The PCB files in this repository have now been updated by github
+> user TMW2N to use the current GPIO pins (as described above)
 >
-> If a newer version of the PCB is developed to use the new pins, it will
-> eventually be posted here.
 
 The BOM components part numbers needed to order this board via JLCPBC are as
 follows:
@@ -43,13 +40,7 @@ follows:
 | connector for button:          | 1   | C5251182           | https://jlcpcb.com/partdetail/JST-B2B_PH_K_SGW/C5251182            |
 
 
-
-Note: When I designed the board I didn't think to label the pins for the LCD
-connector on the board.
-
-If I ever need more boards I'll fix this, but for now the photo of the board
-below has edited onto it the missing pin markings:
-
+(picture of old PCB prior to update descrbed above)
 ![ESP32 Time Server PCB](photo02.jpg)
 
 Also, when looking at the other photos of the PCB with the components (below)
