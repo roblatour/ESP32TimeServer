@@ -5,31 +5,16 @@ Time Server's PCB.
 
 > **Important:**
 >
-> **This PCB is only compatible when using the RX, TX, and PPS pin
-> configurations used in the ESP32TimeServer v2.3.1 software and earlier.**
+> **This PCB is compatible with a Waveshare ESP32-P4-ETH development board
+> (or its POE variant) when the GPIO pin defaults for ESP32TimeServer v2.4
+> and beyond are used.**
 >
-> In version 2.4, the RX, TX, and PPS pin configurations were changed for better
-> forward and backward compatibility between revisions of the ESP32-P4 chip.
->
-> In version 2.3.1 and earlier, the following were used:
->
-> - ESP32-P4-ETH GPIO16 (TX) connected to the GPS RX pin
-> - ESP32-P4-ETH GPIO17 (RX) connected to the GPS TX pin
-> - ESP32-P4-ETH GPIO18 connected to the GPS PPS pin
->
-> In version 2.4, the pin configurations have been changed to:
->
-> - ESP32-P4-ETH GPIO22 (TX) connected to the GPS RX pin
-> - ESP32-P4-ETH GPIO21 (RX) connected to the GPS TX pin
-> - ESP32-P4-ETH GPIO20 connected to the GPS PPS pin
->
-> The PCB files in this repository have now been updated by github
-> user TMW2N to use the current GPIO pins (as described above)
->
+> Special thanks to gitbub user **TMW2N** who updated the PCB files
+> in this repository for use with ESP32TimeServer v2.4 and beyond.
+> 
 
 The BOM components part numbers needed to order this board via JLCPBC are as
 follows:
-
 
 
 | Item                           | Qty | JLCPCB Part Number | Url                                                                |
@@ -40,7 +25,6 @@ follows:
 | connector for button:          | 1   | C5251182           | https://jlcpcb.com/partdetail/JST-B2B_PH_K_SGW/C5251182            |
 
 
-(picture of old PCB prior to update descrbed above)
 ![ESP32 Time Server PCB](photo02.jpg)
 
 Also, when looking at the other photos of the PCB with the components (below)
