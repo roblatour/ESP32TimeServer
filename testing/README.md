@@ -1,13 +1,32 @@
 # Ways to test an NTP Time Server
 
+## Host firmware regression tests
+
+The host regression suite covers NTP, PTP, MQTT, GNSS/PPS, authentication,
+networking, recovery, restart, and leap-second behavior using Windows host
+builds. It runs the full suite plus additional network tests in both debug
+modes; optional compiler-variant checks require an existing ESP-IDF build.
+Results are written outside the source tree. See [host regression setup and
+coverage](firmware_regression/README.md).
+
 ## Functional testing
 
 ### Internal functional health checks
 
 ESP32TimeServer has a built in self health check logic which is disabled by default.  Enabling it allows the program to basically run tests on itself at startup - for example it will send itself an NTP request, receive and process it as it would any other external request, once done it will verify ther  results - including metrics accumulated for MQTT reporting.  In all there are 37 such tests.  
 
-To enable a self health check set `STARTUP_HEALTH_TEST_ENABLED` to `1` near the top
-of the `main.cpp` file. Once done, at startup the program will run its health tests and report the results in the console log.
+To enable a self health check set `STARTUP_HEALTH_TEST_ENABLED` to `1` in
+[`main/custom/health_check.h`](../main/custom/health_check.h). At startup the
+program will run its health tests and report the results in the console log.
+The implementation is in `main/custom/health_check.cpp`; `perform_health_check()`
+and its startup call remain in `main/main.cpp`.
+
+For stack diagnostics, set `CALCULATE_STACK_SIZES_ENABLED` to `1` in
+[`main/custom/determine_stack_sizes.h`](../main/custom/determine_stack_sizes.h).
+That header also holds the task stack allocations. The implementation owns the
+peak measurements and reporting mutex; existing task reporting calls remain in
+`main/main.cpp`. As before, enabling stack diagnostics forces debug processing
+and, when MQTT is enabled, its client, memory, and historical reporting paths.
 
 This feature is disable by default as it is primary purpose is to help ensure, pre-release, code changes development do not introduce  unexpect regression issues.  Also it adds time to startup time delaying the point at which the server can come online (be open for business).
 

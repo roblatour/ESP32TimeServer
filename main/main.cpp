@@ -1,4 +1,4 @@
-// ESP32 Time Server v3.0.5
+// ESP32 Time Server v4.0
 // Copyright Rob Latour, 2026
 // License: MIT
 // Website: https://github.com/roblatour/ESP32TimeServer
@@ -39,6 +39,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cinttypes>
+#include <climits>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -53,15 +54,52 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include <new>
 
-#include "Arduino.h"
-#include "SparkFun_u-blox_GNSS_v3.h"
+#include "sdkconfig.h"
 #include "ESP32TimeServerSettings.h"
+#include "custom/gnss_receiver.h"
+#include "custom/gnss_uart.h"
 #include "custom/app_metadata.h"
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#include "custom/determine_stack_sizes.h"
+#include "custom/health_check.h"
+#include "custom/leap_seconds.h"
+#include "custom/internet_checksum.h"
+#if NTP_SERVER_ENABLED && NTP_AUTHENTICATION_ENABLED
 #include "custom/ntp_auth.h"
 #endif
+#if NTP_SERVER_ENABLED
 #include "custom/ntp_cache.h"
+#endif
+#if PTP_ENABLED
+#include "custom/ptp_followers.h"
+#include "custom/ptp_l2_protocol.h"
+#endif
+#if PTP_L3_SERVER_ENABLED
+#include "custom/ptp_l3_udp.h"
+#endif
+#if MQTT_ENABLED
+#include "custom/mqtt_report_queue.h"
+#ifndef MQTT_USE_TF_CARD
+#define MQTT_USE_TF_CARD 1
+#endif
+#endif
+
+#if PTP_ENABLED && !CONFIG_ETH_TRANSMIT_MUTEX
+#error "PTP requires CONFIG_ETH_TRANSMIT_MUTEX for per-frame TX timestamps"
+#endif
+static_assert(NTP_AUTHENTICATION_REQUIRED == 0 || NTP_AUTHENTICATION_REQUIRED == 1, "NTP_AUTHENTICATION_REQUIRED must be 0 or 1");
+static_assert(!NTP_SERVER_ENABLED || !NTP_AUTHENTICATION_REQUIRED || NTP_AUTHENTICATION_ENABLED,
+              "NTP authenticated-only policy requires NTP_AUTHENTICATION_ENABLED");
+#if PTP_L2_SERVER_ENABLED
+static_assert(PTP_L2_AUTHENTICATION_REQUIRED == 0 || PTP_L2_AUTHENTICATION_REQUIRED == 1, "PTP_L2_AUTHENTICATION_REQUIRED must be 0 or 1");
+static_assert(PTP_L2_AUTHENTICATION_ENABLED == 0 || PTP_L2_AUTHENTICATION_ENABLED == 1, "PTP_L2_AUTHENTICATION_ENABLED must be 0 or 1");
+static_assert(!PTP_L2_SERVER_ENABLED || !PTP_L2_AUTHENTICATION_REQUIRED || PTP_L2_AUTHENTICATION_ENABLED,
+              "PTP authenticated-only policy requires PTP_L2_AUTHENTICATION_ENABLED");
+static_assert(PTP_L2_AUTHENTICATION_SPP >= 0 && PTP_L2_AUTHENTICATION_SPP <= 255, "PTP_L2_AUTHENTICATION_SPP must be 0..255");
+static_assert(PTP_L2_AUTHENTICATION_ACTIVE_KEY_ID > 0 && PTP_L2_AUTHENTICATION_ACTIVE_KEY_ID <= UINT32_MAX,
+              "PTP_L2_AUTHENTICATION_ACTIVE_KEY_ID must be a nonzero uint32");
+#endif
 #include "custom/native_ote.h"
 
 extern "C"
@@ -75,27 +113,46 @@ extern "C"
 #include "esp_eth_phy.h"
 #include "esp_eth_netif_glue.h"
 #include "esp_log.h"
+#if MQTT_ENABLED && TIME_SERVER_BOARD_HAS_TF_CARD
 #include "ff.h"
+#endif
 #include "esp_mac.h"
-#if MQTT_ENABLED
+#if MQTT_ENABLED || (CONFIG_SPIRAM && !CONFIG_SPIRAM_BOOT_INIT)
 #include "esp_heap_caps.h"
+#endif
+#if MQTT_ENABLED
 #include "mqtt_client.h"
 #endif
+#if CONFIG_SPIRAM && !CONFIG_SPIRAM_BOOT_INIT
+#include "esp_psram.h"
+#include "esp_private/esp_psram_extram.h"
+#endif
 #include "esp_netif.h"
+#include "esp_ota_ops.h"
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
+#if MQTT_ENABLED && TIME_SERVER_BOARD_HAS_TF_CARD
 #include "esp_vfs_fat.h"
+#endif
 #include "nvs.h"
 #include "driver/mcpwm_cap.h"
+#include "driver/uart.h"
 #if RBG_LED_KY_016_MODULE_ENABLED
 #include "driver/ledc.h"
 #endif
 #if RBG_LED_WS2812_MODULE_ENABLED
 #include "led_strip.h"
 #endif
+#if MQTT_ENABLED && TIME_SERVER_BOARD_HAS_TF_CARD
+#if CONFIG_IDF_TARGET_ESP32P4
 #include "driver/sdmmc_host.h"
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
+#elif CONFIG_IDF_TARGET_ESP32S31
+#include "driver/sdspi_host.h"
+#include "driver/spi_common.h"
+#endif
 #include "sdmmc_cmd.h"
+#endif
 #include "nvs_flash.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -105,13 +162,43 @@ extern "C"
 #include "freertos/task.h"
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
 #include "hd44780.h"
+#if CONFIG_IDF_TARGET_ESP32P4
 #include "pcf8574.h"
+#endif
 #endif
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 }
 
+#if !SOC_EMAC_IEEE1588V2_SUPPORTED || !SOC_MCPWM_SUPPORTED
+#error "ESP32TimeServer requires EMAC hardware timestamps and MCPWM capture"
+#endif
+
+#if CONFIG_ESP_CONSOLE_UART && CONFIG_ESP_CONSOLE_UART_NUM == 1
+#error "The console cannot use UART1 because it is reserved for GNSS"
+#endif
+
+#if CONFIG_SPIRAM && !CONFIG_SPIRAM_BOOT_INIT && (!CONFIG_SPIRAM_BOOT_HW_INIT || !CONFIG_SPIRAM_PRE_CONFIGURE_MEMORY_PROTECTION)
+#error "Delayed PSRAM initialization requires CONFIG_SPIRAM_BOOT_HW_INIT and CONFIG_SPIRAM_PRE_CONFIGURE_MEMORY_PROTECTION"
+#endif
+
 static const char *TAG = "main_cpp";
+
+static uint32_t uptime_ms()
+{
+    return static_cast<uint32_t>(esp_timer_get_time() / 1000);
+}
+
+// The system clock, PPS model and PHC run in continuous TAI. Convert only at UTC consumers.
+static timescale::LeapState s_leap_state;
+static std::atomic<bool> s_timescale_requalification_required{true};
+
+static time_t utc_now()
+{
+    const time_t tai = time(nullptr);
+    const auto leap = s_leap_state.read();
+    return leap.valid ? static_cast<time_t>(leap.to_utc_ns(static_cast<int64_t>(tai) * 1000000000LL) / 1000000000LL) : 0;
+}
 
 #define TIMING_LOGI(...)           \
     do                             \
@@ -132,391 +219,19 @@ static const char *TAG = "main_cpp";
             ESP_LOGE(__VA_ARGS__); \
     } while (0)
 
-// the following is used to determine the NTP load shedding threshold based on the ESP32-P4 chip version
+// the following is used to determine the NTP load shedding threshold by chip model and revision
 // load shedding is used to limit the number of NTP requests per second that the server will process
 // it can prevent the server from being overwhelmed by too many requests but has a limited effectiveness
 // for example if the threshold is set at 10,000 it can allow for ~10,000 to be processed and shed the rest
 // however, it cannot prevent the server from being overwhelmed if the number of requests exceeds the threshold by a
 // large margin in which case the server will stop responding and preform a controlled restart
 static constexpr uint32_t NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32P4_ChipVersion1_3 = 7000;
-static constexpr uint32_t NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32P4_ChipVersion_above_1_3 = 10000;  
+static constexpr uint32_t NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32P4_ChipVersion_above_1_3 = 10000;
+// This S31 bring-up limit must be measured on hardware before production use.
+static constexpr uint32_t NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32S31 = 8500;
 static uint32_t NTP_Requests_Per_Second_Load_Shedding_Threshold = 0;
 static constexpr uint32_t NTP_ADMISSION_BURST_REQUESTS = 8;
 static constexpr uint64_t NTP_ADMISSION_TOKEN_SCALE = 1000000ULL;
-
-// Optional startup health test
-//
-// When enabled the startup health test will perform a series of checks to ensure the system is functioning correctly at boot.
-//
-// These tests include:
-//
-// Part 1: the program sends itself NTPv3 and NTPv4 (standard and interleaved ) requests via IPv4 and IPv6,
-// using loop back and assigned addresses,
-//
-// Part 2: it health test the same logic that all NTP requests go through to receive those requests,
-// process and reply to them using standard and RFC 9769-compatible interleaved  responses,
-//
-// Part 3: it verifying the responses to ensure proper operations and reports a pass/fail result.
-//
-// Additionally, this activity is reflected in regular receive/send/client stats within MQTT reporting. .
-//
-// The startup health test can be useful during development and troubleshooting, but it slightly increase boot time
-// and resource usage.
-//
-// However, it is recommended to keep this option be disabled in production builds to minimize boot time and resource usage.
-// Also, and perhaps more importantly, as its results may be misinterpreted.
-// For example: if the user's network does not support IPv6 the IPv6 tests may fail even though the system is
-// functioning correctly.
-//
-// Here is what a successful startup health test looks like in the logs:
-/*
-
-
-I (39724) main_cpp: Health Check started
-I (39725) main_cpp: Health Check 01 - IPv4 loopback: NTPv3 standard      - Passed
-I (39725) main_cpp: Health Check 02 - IPv4 loopback: NTPv4 standard      - Passed
-I (39731) main_cpp: Health Check 03 - IPv4 loopback: NTPv4 interleaved   - Passed
-I (39739) main_cpp: Health Check 04 - IPv4 loopback: NTPv4 auth standard - Passed
-I (39746) main_cpp: Health Check 05 - IPv4 loopback: NTPv4 auth interlv  - Passed
-I (39753) main_cpp: Health Check 06 - IPv4 loopback: NTPv4 invalid auth  - Passed
-I (39760) main_cpp: Health Check 07 - IPv4 loopback: NTPv4 unknown key   - Passed
-I (39767) main_cpp: Health Check 08 - IPv4 loopback: NTPv4 truncated MAC - Passed
-I (39775) main_cpp: Health Check 09 - IPv4 loopback: NTPv4 altered reply - Passed
-I (39782) main_cpp: Health Check 10 - IPv4 assigned: NTPv3 standard      - Passed
-I (39789) main_cpp: Health Check 11 - IPv4 assigned: NTPv4 standard      - Passed
-I (39796) main_cpp: Health Check 12 - IPv4 assigned: NTPv4 interleaved   - Passed
-I (39803) main_cpp: Health Check 13 - IPv4 assigned: NTPv4 auth standard - Passed
-I (39811) main_cpp: Health Check 14 - IPv4 assigned: NTPv4 auth interlv  - Passed
-I (39818) main_cpp: Health Check 15 - IPv4 assigned: NTPv4 invalid auth  - Passed
-I (39825) main_cpp: Health Check 16 - IPv4 assigned: NTPv4 unknown key   - Passed
-I (39832) main_cpp: Health Check 17 - IPv4 assigned: NTPv4 truncated MAC - Passed
-I (39839) main_cpp: Health Check 18 - IPv4 assigned: NTPv4 altered reply - Passed
-I (39847) main_cpp: Health Check 19 - IPv6 loopback: NTPv3 standard      - Passed
-I (39854) main_cpp: Health Check 20 - IPv6 loopback: NTPv4 standard      - Passed
-I (39861) main_cpp: Health Check 21 - IPv6 loopback: NTPv4 interleaved   - Passed
-I (39868) main_cpp: Health Check 22 - IPv6 loopback: NTPv4 auth standard - Passed
-I (39876) main_cpp: Health Check 23 - IPv6 loopback: NTPv4 auth interlv  - Passed
-I (39883) main_cpp: Health Check 24 - IPv6 loopback: NTPv4 invalid auth  - Passed
-I (39890) main_cpp: Health Check 25 - IPv6 loopback: NTPv4 unknown key   - Passed
-I (39897) main_cpp: Health Check 26 - IPv6 loopback: NTPv4 truncated MAC - Passed
-I (39904) main_cpp: Health Check 27 - IPv6 loopback: NTPv4 altered reply - Passed
-I (39912) main_cpp: Health Check 28 - IPv6 assigned: NTPv3 standard      - Passed
-I (39919) main_cpp: Health Check 29 - IPv6 assigned: NTPv4 standard      - Passed
-I (39926) main_cpp: Health Check 30 - IPv6 assigned: NTPv4 interleaved   - Passed
-I (39933) main_cpp: Health Check 31 - IPv6 assigned: NTPv4 auth standard - Passed
-I (39940) main_cpp: Health Check 32 - IPv6 assigned: NTPv4 auth interlv  - Passed
-I (39948) main_cpp: Health Check 33 - IPv6 assigned: NTPv4 invalid auth  - Passed
-I (39955) main_cpp: Health Check 34 - IPv6 assigned: NTPv4 unknown key   - Passed
-I (39962) main_cpp: Health Check 35 - IPv6 assigned: NTPv4 truncated MAC - Passed
-I (39969) main_cpp: Health Check 36 - IPv6 assigned: NTPv4 altered reply - Passed
-I (39976) main_cpp: Health Check 37 - MQTT metrics                       - Passed
-I (39984) main_cpp: Health Check completed
-
-Most of the health checks have fairly obvious purposes based on their names, but a couple of them,
-truncated MAC and altered reply tests, may require more explanation (detailed below).
-
-For truncated MAC:
-This test sends an otherwise valid NTP packet but deliberately cuts off part of the authentication field (the Message Authentication Code)
-before the server processes it. The server receives a packet whose header and timestamps look fine, but whose MAC is shorter than expected,
-so when it tries to verify the MAC at the end of the packet, the check fails and the reply is rejected or flagged as invalid. In effect,
-it’s testing that the server does not accept packets where the integrity/authentication data has been damaged or partially missing, even
-though the rest of the packet structure appears normal.
-
-For altered reply:
-This test takes a valid NTP response and then modifies some of its contents—typically one or more timestamp fields or other critical header
-values—after the server has generated it but before the client treats it as trustworthy. When the client compares the altered reply against
-what it expects (e.g., matching originate/receive/transmit timestamps or internal state), the inconsistency causes the response to be rejected
-or treated as an error rather than used to adjust time. By doing this, the test checks that the client detects tampering or corruption in the
-reply and doesn’t blindly accept time data that has been changed in transit.
-
-*/
-
-#define STARTUP_HEALTH_TEST_ENABLED 0 // 0 = Disabled; 1 = Enabled
-
-// The following conditional compile flag is used to determine the ideal stack sizes for
-// xTaskCreatePinnedToCore calls used throughout the program.
-//
-// Unless you are changing the code associated with options below and need to know the impacts of
-// those changes have on the stack sizes then the conditional compile flags below should be disabled
-
-#define CALCULATE_STACK_SIZES_ENABLED 0 // 0 = Disabled; 1 = Enabled
-
-// FreeRTOS task stack allocations, in bytes.
-
-static constexpr size_t Ethernet_Transport_Recovery_Task_Stack_Size = 2409;
-static constexpr size_t GNSS_Recovery_Task_Stack_Size = 12288;
-static constexpr size_t GNSS_Time_Sync_Task_Stack_Size = 2522;
-static constexpr size_t Hardware_NTP_Server_Task_Stack_Size = 2719;
-static constexpr size_t LED_LCD_Button_Task_Stack_Size = 3239;
-static constexpr size_t Ethernet_Setup_Task_Stack_Size = 4096;
-static constexpr size_t MQTT_Service_Task_Stack_Size = 3512;
-static constexpr size_t NTP_Cache_Purge_Task_Stack_Size = 2222;
-static constexpr size_t NTP_Server_Task_Stack_Size = 3560;
-static constexpr size_t OTE_Service_Task_Stack_Size = 3560;
-static constexpr size_t PPS_Discipline_Task_Stack_Size = 3584; // was 3135: the PTP servo runs in this task (measure again)
-
-static constexpr unsigned int Default_Safety_Margin_Percent = 30; // unless otherwise specified add this percentage to the highest stack usage as a safety margin
-
-#if CALCULATE_STACK_SIZES_ENABLED
-
-// For the purposes of calculating stack sizes force DEBUG_ENABLED if any of the stack size calculations are enabled
-// so that the task includes all debug processing is included in the stack size calculations
-#define DEBUG_ENABLED 1
-
-// For the purposes of calculating stack sizes force all MQTT tasks as enabled if MQTT_ENABLED is enabled
-#if MQTT_ENABLED
-#define MQTT_CLIENT_REPORTING_ENABLED 1
-#define MQTT_MEMORY_REPORTING_ENABLED 1
-#define MQTT_HISTORICAL_REPORTING_ENABLED 1
-#endif
-
-typedef enum
-{
-    Ethernet_Transport_Recovery,
-    GNSS_Recovery,
-    GNSS_Time_Sync,
-    Hardware_NTP_Server,
-    LED_LCD_Button,
-    MQTT_Service,
-    NTP_Cache_Purge,
-    NTP_Server,
-    OTE_Service,
-    PPS_Discipline
-} TaskToPinToCore_t;
-
-static size_t Highest_Ethernet_Transport_Recovery_Task_Stack_Size = 0;
-static size_t Highest_GNSS_Recovery_Task_Stack_Size = 0;
-static size_t Highest_GNSS_Time_Sync_Task_Stack_Size = 0;
-static size_t Highest_Hardware_NTP_Server_Task_Stack_Size = 0;
-static size_t Highest_LED_LCD_Button_Task_Stack_Size = 0;
-static size_t Highest_MQTT_Service_Task_Stack_Size = 0;
-static size_t Highest_NTP_Cache_Purge_Task_Stack_Size = 0;
-static size_t Highest_NTP_Server_Task_Stack_Size = 0;
-static size_t Highest_OTE_Service_Task_Stack_Size = 0;
-static size_t Highest_PPS_Discipline_Task_Stack_Size = 0;
-
-static SemaphoreHandle_t s_task_stack_usage_mutex = nullptr;
-
-static void report_current_task_stack_usage(TaskToPinToCore_t task_id)
-{
-    xSemaphoreTake(s_task_stack_usage_mutex, portMAX_DELAY);
-
-    const char *task_name = nullptr;
-    size_t allocated_bytes = 0;
-    unsigned int safety_margin_percent = 30;
-    bool highest_value_changed = false;
-    bool show_details = false;
-
-    switch (task_id)
-    {
-    case Ethernet_Transport_Recovery:
-        task_name = "ethernet_transport_task";
-        allocated_bytes = Ethernet_Transport_Recovery_Task_Stack_Size;
-        break;
-    case GNSS_Recovery:
-        task_name = "gnss_recovery_task";
-        allocated_bytes = GNSS_Recovery_Task_Stack_Size;
-        break;
-    case GNSS_Time_Sync:
-        task_name = "gnss_time_sync_task";
-        allocated_bytes = GNSS_Time_Sync_Task_Stack_Size;
-        break;
-    case Hardware_NTP_Server:
-        task_name = "hardware_ntp_server_task";
-        allocated_bytes = Hardware_NTP_Server_Task_Stack_Size;
-        break;
-    case LED_LCD_Button:
-        task_name = "LED_LCD_Button_task";
-        allocated_bytes = LED_LCD_Button_Task_Stack_Size;
-        safety_margin_percent = 70;
-        break;
-    case MQTT_Service:
-        task_name = "mqtt_service_task";
-        allocated_bytes = MQTT_Service_Task_Stack_Size;
-        break;
-    case NTP_Cache_Purge:
-        task_name = "ntp_cache_purge_task";
-        allocated_bytes = NTP_Cache_Purge_Task_Stack_Size;
-        break;
-    case NTP_Server:
-        task_name = "ntp_server_task";
-        allocated_bytes = NTP_Server_Task_Stack_Size;
-        safety_margin_percent = 50;
-        break;
-    case OTE_Service:
-        task_name = "ote_service_task";
-        allocated_bytes = OTE_Service_Task_Stack_Size;
-        break;
-    case PPS_Discipline:
-        task_name = "pps_discipline_task";
-        allocated_bytes = PPS_Discipline_Task_Stack_Size;
-        break;
-    default:
-        task_name = "unknown_task";
-        break;
-    }
-
-    // calculate the suggested stack size based on the peak usage and safety margin
-
-    const size_t high_watermark_bytes = uxTaskGetStackHighWaterMark(nullptr);
-    const size_t peak_usage_bytes = allocated_bytes > high_watermark_bytes ? allocated_bytes - high_watermark_bytes : 0;
-    const size_t curent_suggestion = (peak_usage_bytes * (100U + safety_margin_percent) + 99U) / 100U;
-
-    if (show_details)
-    {
-        ESP_LOGI(task_name,
-                 "Stack report: Allocated=%u bytes, HighWater=%u bytes unused, PeakUsage=%u bytes, Suggested=%u bytes",
-                 static_cast<unsigned int>(allocated_bytes),
-                 static_cast<unsigned int>(high_watermark_bytes),
-                 static_cast<unsigned int>(peak_usage_bytes),
-                 static_cast<unsigned int>(curent_suggestion));
-    }
-
-    if (curent_suggestion == 0)
-        ESP_LOGE(task_name, "Error: Suggested stack size is 0 bytes. Try increasing the allocted bytes of %u", static_cast<unsigned int>(allocated_bytes));
-
-    switch (task_id)
-    {
-    case Ethernet_Transport_Recovery:
-        if (curent_suggestion > Highest_Ethernet_Transport_Recovery_Task_Stack_Size)
-        {
-            Highest_Ethernet_Transport_Recovery_Task_Stack_Size = curent_suggestion;
-            highest_value_changed = true;
-        }
-        break;
-    case GNSS_Recovery:
-        if (curent_suggestion > Highest_GNSS_Recovery_Task_Stack_Size)
-        {
-            Highest_GNSS_Recovery_Task_Stack_Size = curent_suggestion;
-            highest_value_changed = true;
-        }
-        break;
-    case GNSS_Time_Sync:
-        if (curent_suggestion > Highest_GNSS_Time_Sync_Task_Stack_Size)
-        {
-            Highest_GNSS_Time_Sync_Task_Stack_Size = curent_suggestion;
-            highest_value_changed = true;
-        }
-        break;
-    case Hardware_NTP_Server:
-        if (curent_suggestion > Highest_Hardware_NTP_Server_Task_Stack_Size)
-        {
-            Highest_Hardware_NTP_Server_Task_Stack_Size = curent_suggestion;
-            highest_value_changed = true;
-        }
-        break;
-    case LED_LCD_Button:
-        if (curent_suggestion > Highest_LED_LCD_Button_Task_Stack_Size)
-        {
-            Highest_LED_LCD_Button_Task_Stack_Size = curent_suggestion;
-            highest_value_changed = true;
-        }
-        break;
-    case MQTT_Service:
-        if (curent_suggestion > Highest_MQTT_Service_Task_Stack_Size)
-        {
-            Highest_MQTT_Service_Task_Stack_Size = curent_suggestion;
-            highest_value_changed = true;
-        }
-        break;
-    case NTP_Cache_Purge:
-        if (curent_suggestion > Highest_NTP_Cache_Purge_Task_Stack_Size)
-        {
-            Highest_NTP_Cache_Purge_Task_Stack_Size = curent_suggestion;
-            highest_value_changed = true;
-        }
-        break;
-    case NTP_Server:
-        if (curent_suggestion > Highest_NTP_Server_Task_Stack_Size)
-        {
-            Highest_NTP_Server_Task_Stack_Size = curent_suggestion;
-            highest_value_changed = true;
-        }
-        break;
-    case OTE_Service:
-        if (curent_suggestion > Highest_OTE_Service_Task_Stack_Size)
-        {
-            Highest_OTE_Service_Task_Stack_Size = curent_suggestion;
-            highest_value_changed = true;
-        }
-
-        break;
-    case PPS_Discipline:
-        if (curent_suggestion > Highest_PPS_Discipline_Task_Stack_Size)
-        {
-            Highest_PPS_Discipline_Task_Stack_Size = curent_suggestion;
-            highest_value_changed = true;
-        }
-        break;
-    default:
-
-        break;
-    }
-
-    // Report the highest suggested stack sizes for all tasks to date in such a way that they can be easily copied into the code above
-    // If no new highest value has yet been reported for a task the value shown will be 0, the old value will remain as the comment
-    if (highest_value_changed)
-    {
-        ESP_LOGI(TAG, "Suggested updated task stack sizes:");
-        ESP_LOGI(TAG, " ");
-
-        if (Highest_Ethernet_Transport_Recovery_Task_Stack_Size > Ethernet_Transport_Recovery_Task_Stack_Size)
-            ESP_LOGW(TAG, "static constexpr size_t Ethernet_Transport_Recovery_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_Ethernet_Transport_Recovery_Task_Stack_Size), static_cast<unsigned int>(Ethernet_Transport_Recovery_Task_Stack_Size));
-        else
-            ESP_LOGI(TAG, "static constexpr size_t Ethernet_Transport_Recovery_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_Ethernet_Transport_Recovery_Task_Stack_Size), static_cast<unsigned int>(Ethernet_Transport_Recovery_Task_Stack_Size));
-
-        if (Highest_GNSS_Recovery_Task_Stack_Size > GNSS_Recovery_Task_Stack_Size)
-            ESP_LOGW(TAG, "static constexpr size_t GNSS_Recovery_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_GNSS_Recovery_Task_Stack_Size), static_cast<unsigned int>(GNSS_Recovery_Task_Stack_Size));
-        else
-            ESP_LOGI(TAG, "static constexpr size_t GNSS_Recovery_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_GNSS_Recovery_Task_Stack_Size), static_cast<unsigned int>(GNSS_Recovery_Task_Stack_Size));
-
-        if (Highest_GNSS_Time_Sync_Task_Stack_Size > GNSS_Time_Sync_Task_Stack_Size)
-            ESP_LOGW(TAG, "static constexpr size_t GNSS_Time_Sync_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_GNSS_Time_Sync_Task_Stack_Size), static_cast<unsigned int>(GNSS_Time_Sync_Task_Stack_Size));
-        else
-            ESP_LOGI(TAG, "static constexpr size_t GNSS_Time_Sync_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_GNSS_Time_Sync_Task_Stack_Size), static_cast<unsigned int>(GNSS_Time_Sync_Task_Stack_Size));
-
-        if (Highest_Hardware_NTP_Server_Task_Stack_Size > Hardware_NTP_Server_Task_Stack_Size)
-            ESP_LOGW(TAG, "static constexpr size_t Hardware_NTP_Server_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_Hardware_NTP_Server_Task_Stack_Size), static_cast<unsigned int>(Hardware_NTP_Server_Task_Stack_Size));
-        else
-            ESP_LOGI(TAG, "static constexpr size_t Hardware_NTP_Server_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_Hardware_NTP_Server_Task_Stack_Size), static_cast<unsigned int>(Hardware_NTP_Server_Task_Stack_Size));
-
-        if (Highest_LED_LCD_Button_Task_Stack_Size > LED_LCD_Button_Task_Stack_Size)
-            ESP_LOGW(TAG, "static constexpr size_t LED_LCD_Button_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_LED_LCD_Button_Task_Stack_Size), static_cast<unsigned int>(LED_LCD_Button_Task_Stack_Size));
-        else
-            ESP_LOGI(TAG, "static constexpr size_t LED_LCD_Button_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_LED_LCD_Button_Task_Stack_Size), static_cast<unsigned int>(LED_LCD_Button_Task_Stack_Size));
-
-        if (Highest_MQTT_Service_Task_Stack_Size > MQTT_Service_Task_Stack_Size)
-            ESP_LOGW(TAG, "static constexpr size_t MQTT_Service_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_MQTT_Service_Task_Stack_Size), static_cast<unsigned int>(MQTT_Service_Task_Stack_Size));
-        else
-            ESP_LOGI(TAG, "static constexpr size_t MQTT_Service_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_MQTT_Service_Task_Stack_Size), static_cast<unsigned int>(MQTT_Service_Task_Stack_Size));
-
-        if (Highest_NTP_Cache_Purge_Task_Stack_Size > NTP_Cache_Purge_Task_Stack_Size)
-            ESP_LOGW(TAG, "static constexpr size_t NTP_Cache_Purge_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_NTP_Cache_Purge_Task_Stack_Size), static_cast<unsigned int>(NTP_Cache_Purge_Task_Stack_Size));
-        else
-            ESP_LOGI(TAG, "static constexpr size_t NTP_Cache_Purge_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_NTP_Cache_Purge_Task_Stack_Size), static_cast<unsigned int>(NTP_Cache_Purge_Task_Stack_Size));
-
-        if (Highest_NTP_Server_Task_Stack_Size > NTP_Server_Task_Stack_Size)
-            ESP_LOGW(TAG, "static constexpr size_t NTP_Server_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_NTP_Server_Task_Stack_Size), static_cast<unsigned int>(NTP_Server_Task_Stack_Size));
-        else
-            ESP_LOGI(TAG, "static constexpr size_t NTP_Server_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_NTP_Server_Task_Stack_Size), static_cast<unsigned int>(NTP_Server_Task_Stack_Size));
-
-        if (Highest_OTE_Service_Task_Stack_Size > OTE_Service_Task_Stack_Size)
-            ESP_LOGW(TAG, "static constexpr size_t OTE_Service_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_OTE_Service_Task_Stack_Size), static_cast<unsigned int>(OTE_Service_Task_Stack_Size));
-        else
-            ESP_LOGI(TAG, "static constexpr size_t OTE_Service_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_OTE_Service_Task_Stack_Size), static_cast<unsigned int>(OTE_Service_Task_Stack_Size));
-
-        if (Highest_PPS_Discipline_Task_Stack_Size > PPS_Discipline_Task_Stack_Size)
-            ESP_LOGW(TAG, "static constexpr size_t PPS_Discipline_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_PPS_Discipline_Task_Stack_Size), static_cast<unsigned int>(PPS_Discipline_Task_Stack_Size));
-        else
-            ESP_LOGI(TAG, "static constexpr size_t PPS_Discipline_Task_Stack_Size = %u; // %u;", static_cast<unsigned int>(Highest_PPS_Discipline_Task_Stack_Size), static_cast<unsigned int>(PPS_Discipline_Task_Stack_Size));
-
-        ESP_LOGI(TAG, " ");
-    };
-
-    xSemaphoreGive(s_task_stack_usage_mutex);
-}
-
-#endif
 
 #ifndef UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
 #define UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED 1
@@ -527,13 +242,13 @@ static esp_netif_t *s_eth_netif = nullptr;
 
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
 static constexpr i2c_port_t LCD_I2C_PORT = I2C_NUM_0;
-static constexpr gpio_num_t LCD_I2C_SDA_GPIO = GPIO_NUM_8;
-static constexpr gpio_num_t LCD_I2C_SCL_GPIO = GPIO_NUM_7;
+static constexpr gpio_num_t LCD_I2C_SDA_GPIO = static_cast<gpio_num_t>(LCDI2CSDAPin);
+static constexpr gpio_num_t LCD_I2C_SCL_GPIO = static_cast<gpio_num_t>(LCDI2CSCLPin);
 #endif
 
 static constexpr uint16_t NTP_PORT = 123;
 static constexpr size_t NTP_PACKET_SIZE = 48;
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#if NTP_SERVER_ENABLED && NTP_AUTHENTICATION_ENABLED
 static constexpr size_t NTP_MAX_PACKET_SIZE = NTP_PACKET_SIZE + NTP_AUTH_TRAILER_SIZE;
 #else
 static constexpr size_t NTP_MAX_PACKET_SIZE = NTP_PACKET_SIZE;
@@ -552,17 +267,20 @@ static constexpr uint32_t OTE_Failure_Display_Time_Ms = 10000;
 static constexpr uint32_t OTE_Reboot_Delay_Ms = 5000;
 
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
+#if CONFIG_IDF_TARGET_ESP32P4
 static i2c_dev_t s_lcd_io{};
+static hd44780_t s_lcd{};
+#else
+static hd44780_t *s_lcd = nullptr;
+static lcd_bus_hd44780_t *s_lcd_bus = nullptr;
+#endif
 static uint8_t s_lcd_addr = 0;
 static bool s_lcd_ready = false;
-static hd44780_t s_lcd{};
 static char s_lcd_last_lines[lcdRows][lcdColumns + 1] = {};
 static bool s_lcd_line_cached[lcdRows] = {};
 #else
 #define display_line(...)
 #endif
-
-static std::string MACToBeUsed;
 
 struct PpsCaptureEvent
 {
@@ -602,6 +320,30 @@ static std::atomic<bool> s_time_has_been_set{false};
 static std::atomic<uint64_t> s_ntp_reference_time_64{0};
 static std::atomic<bool> s_ntp_reference_valid{false};
 static std::atomic<bool> s_ptp_clock_ready{false};
+
+#if PTP_ENABLED
+static std::atomic<uint32_t> s_ptp_clock_generation{0};
+static std::atomic<uint8_t> s_ptp_service_active{0}; // bit 0: L2; bit 1: UDP (either family)
+static portMUX_TYPE s_ptp_followers_mux = portMUX_INITIALIZER_UNLOCKED;
+static constexpr size_t PTP_FOLLOWER_CAPACITY =
+    (PTP_L2_SERVER_ENABLED ? PTP_L2_FOLLOWER_CAPACITY : 0) +
+    (PTP_L3_SERVER_ENABLED ? PTP_L3_UDP_FOLLOWER_CAPACITY * ((PreferIPvX != 2) + (PreferIPvX != 1)) : 0);
+static ptp::FollowerTable<PTP_FOLLOWER_CAPACITY, MQTT_PTP_CLIENT_REPORT_LIMIT> s_ptp_followers(PTP_L2_FOLLOWER_TIMEOUT_SECONDS * 1000000LL);
+
+static void ptp_clear_followers()
+{
+    portENTER_CRITICAL(&s_ptp_followers_mux);
+    s_ptp_followers.clear();
+    portEXIT_CRITICAL(&s_ptp_followers_mux);
+}
+
+static void ptp_invalidate_service()
+{
+    s_ptp_clock_generation.fetch_add(2, std::memory_order_acq_rel);
+    s_ptp_service_active.store(false, std::memory_order_release);
+    ptp_clear_followers();
+}
+#endif
 
 // ---- PPS / clock compensation ----
 // Actual tick rate of the MCPWM capture timer (queried in setup_pps_input()).
@@ -756,6 +498,9 @@ static constexpr uint32_t ptp_pps_capture_ring_size = 4;
 static std::atomic<uint32_t> s_ptp_pps_captures[ptp_pps_capture_ring_size]{};
 static std::atomic<uint32_t> s_ptp_pps_capture_head{0};
 static std::atomic<bool> s_ptp_loopback_active{false};
+static mcpwm_cap_channel_handle_t s_ptp_pps_capture_channel = nullptr;
+static bool s_ptp_pps_capture_enabled = false;
+static bool s_ptp_pps_output_configured = false;
 
 static constexpr int64_t ptpmap_max_age_ns = 3600LL * 1000000000LL; // like the model clock: holdover for one hour
 static constexpr int64_t ptpmap_max_rate_mppb = 500000000LL;        // +-500 ppm (plausibility limit)
@@ -816,18 +561,18 @@ static bool ptp_map_offset_at(int64_t raw_ns, int64_t &offset_ns)
 #endif
 
 // ---- Fine local timebase ----
-// esp_timer_get_time() returns whole microseconds: the systimer counter (16 MHz on the ESP32-P4) divided by 16 and
+// esp_timer_get_time() returns whole microseconds: the 16 MHz P4/S31 systimer counter divided by 16 and
 // truncated. All time critical readings (PPS interrupt, model clock reads, PTP offset measurements, interrupt latency
 // test) use the counter itself instead, so the 1 us truncation (0.29 us RMS per reading) no longer enters the
 // software time stamps and the PTP measurements. Resolution: 62.5 ns. esp_timer_get_time() is still used for
 // timeouts and statistics, where 1 us does not matter.
 // 1 = raw systimer counter (recommended), 0 = esp_timer_get_time() (1 us, previous behaviour)
 #define FINE_LOCAL_TIMEBASE 1
-#if FINE_LOCAL_TIMEBASE && defined(CONFIG_IDF_TARGET_ESP32P4)
+#if FINE_LOCAL_TIMEBASE && (CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S31)
 // Counter behind esp_timer_get_time() (esp_timer/src/esp_timer_impl_systimer.c, placed in IRAM like esp_timer_get_time).
 // It is declared in a private esp_timer header, therefore the declaration is repeated here.
 extern "C" uint64_t esp_timer_impl_get_counter_reg(void);
-static constexpr uint32_t LOCAL_TICKS_PER_US = 16; // ESP32-P4 systimer: 16 MHz from the 40 MHz crystal
+static constexpr uint32_t LOCAL_TICKS_PER_US = 16; // P4/S31 systimer: 16 MHz from the 40 MHz crystal
 static inline __attribute__((always_inline)) uint64_t local_ticks() { return esp_timer_impl_get_counter_reg(); }
 static inline __attribute__((always_inline)) int64_t local_ticks_to_ns(uint64_t ticks) { return static_cast<int64_t>((ticks * 125u) >> 1); } // 62.5 ns per tick
 static constexpr int8_t LOCAL_TIMEBASE_PRECISION_EXPONENT = -24;                                                                             // 2^-24 s = 60 ns
@@ -914,8 +659,12 @@ static bool model_ns_at(int64_t esp_ns, int64_t &unix_ns)
     return true;
 }
 
-static_assert(PreferIPvX == 0 || PreferIPvX == 1 || PreferIPvX == 2 || PreferIPvX == 4 || PreferIPvX == 6 || PreferIPvX == 8 || PreferIPvX == 9,
-              "PreferIPvX must be 0, 1, 2, 4, 6, 8, or 9");
+static_assert(PreferIPvX == 0 || PreferIPvX == 1 || PreferIPvX == 2 || PreferIPvX == 4 || PreferIPvX == 6 || PreferIPvX == 7 || PreferIPvX == 8 || PreferIPvX == 9,
+              "PreferIPvX must be 0, 1, 2, 4, 6, 7, 8, or 9");
+static_assert(NTP_SERVER_ENABLED || !PTP_L2_SERVER_ENABLED || PTP_L3_SERVER_ENABLED || OTE_UPDATES_ENABLED || MQTT_ENABLED || PreferIPvX == 7,
+              "PTP-only operation with OTE and MQTT disabled requires PreferIPvX = 7");
+static_assert(PreferIPvX != 7 || (!NTP_SERVER_ENABLED && PTP_L2_SERVER_ENABLED && !PTP_L3_SERVER_ENABLED && !OTE_UPDATES_ENABLED && !MQTT_ENABLED),
+              "PreferIPvX = 7 requires PTP enabled and NTP, OTE, and MQTT disabled");
 
 static char s_ip_address[IP_ADDRESS_TEXT_SIZE] = "";
 static char s_ipv4_address[INET_ADDRSTRLEN] = "";
@@ -943,11 +692,14 @@ struct network_address_snapshot_t
     ipv6_address_priority_t ipv6_priority;
 };
 
-static constexpr bool IPV4_ENABLED = PreferIPvX != 2;
-static constexpr bool IPV6_ENABLED = PreferIPvX != 1;
+static constexpr bool L2_ONLY = PreferIPvX == 7;
+static constexpr bool IPV4_ENABLED = !L2_ONLY && PreferIPvX != 2;
+static constexpr bool IPV6_ENABLED = !L2_ONLY && PreferIPvX != 1;
 
 static bool has_usable_network_address(EventBits_t event_bits)
 {
+    if (L2_ONLY)
+        return (event_bits & ETH_CONNECTED_BIT) != 0;
     if (PreferIPvX == 1)
         return (event_bits & ETH_GOT_IP_BIT) != 0;
     if (PreferIPvX == 2)
@@ -1216,6 +968,9 @@ static bool configure_hardware_timestamps();
 #if PTP_FREE_RUNNING
 static void setup_ptp_pps_loopback(esp_eth_mac_t *mac);
 #endif
+static esp_err_t read_active_ethernet_mac(uint8_t mac[6]);
+static void format_mac_address(const uint8_t mac[6], char *text, size_t text_size);
+static esp_err_t log_active_ethernet_mac();
 static void start_ethernet_driver();
 
 static bool format_socket_address(const struct sockaddr_storage &address, char *buffer, size_t buffer_size)
@@ -1241,22 +996,40 @@ static bool format_socket_address(const struct sockaddr_storage &address, char *
 
 static constexpr uint32_t MQTTFrequencyOfKeepAliveRequest = 30; // in seconds (do not raise above 30
 
-// MQTT_MAX_REPORT_SIZE is based on MQTT_TF_Client_Limit (in ESP32TimeServerSetting.h)
-// please see the spreadsheet at tools/json_message_calculator.xlsx for calculation details
-// Note: increasing this limit will increase memory usage for MQTT report buffering and may impact system performance.
-static constexpr size_t MQTT_MAX_REPORT_SIZE = 39166;
-
-// MQTT_REPORT_SIZE based on MQTT_CLIENT_SIZE (below)
-// please see the spreadsheet at tools/json_message_calculator.xlsx for calculation details
-// Note: increasing this limit will increase memory usage for MQTT report buffering and may impact system performance.
-static constexpr size_t MQTT_CLIENT_LIMIT = 50;
-static constexpr size_t MQTT_REPORT_SIZE = 4966;
+// The report buffer is sized from the client limits in ESP32TimeServerSettings.h. The host regression suite
+// builds a worst-case report (every counter at its maximum, every NTP client IPv6, every PTP MAC) and fails if
+// it does not fit, so new report fields that outgrow MQTT_REPORT_BASE_BYTES are caught there.
+static constexpr size_t MQTT_REPORT_BASE_BYTES = 1536;     // every field except the NTP and PTP client lists
+static constexpr size_t MQTT_NTP_CLIENT_RECORD_BYTES = 82; // ,{"address":"<45-character IPv6>","requests":4294967295}
+static constexpr bool MQTT_NTP_CLIENTS_REPORTED = NTP_SERVER_ENABLED && MQTT_CLIENT_REPORTING_ENABLED;
+static constexpr size_t MQTT_NTP_CLIENT_LIMIT = MQTT_NTP_CLIENTS_REPORTED ? MQTT_NTP_CLIENT_REPORT_LIMIT : 1;
+#if PTP_ENABLED
+static constexpr size_t MQTT_PTP_REPORT_BYTES = ptp::follower_report_capacity(MQTT_PTP_CLIENT_REPORT_LIMIT);
+#else
+static constexpr size_t MQTT_PTP_REPORT_BYTES = 0;
+#endif
+static constexpr size_t MQTT_REPORT_BUFFER_SIZE = MQTT_REPORT_BASE_BYTES +
+                                                  (MQTT_NTP_CLIENTS_REPORTED ? MQTT_NTP_CLIENT_REPORT_LIMIT * MQTT_NTP_CLIENT_RECORD_BYTES : 0) +
+                                                  MQTT_PTP_REPORT_BYTES + 1;
+// Reports queued on a TF card by earlier firmware could be up to about 46 KB; still accept them.
+static constexpr size_t MQTT_TF_REPORT_READ_LIMIT = MQTT_REPORT_BUFFER_SIZE > 48 * 1024 ? MQTT_REPORT_BUFFER_SIZE : 48 * 1024;
+static_assert(MQTT_NTP_CLIENT_REPORT_LIMIT >= 1 && MQTT_NTP_CLIENT_REPORT_LIMIT <= 4096,
+              "MQTT_NTP_CLIENT_REPORT_LIMIT must be between 1 and 4096");
+static_assert(MQTT_PTP_CLIENT_REPORT_LIMIT <= 1024, "MQTT_PTP_CLIENT_REPORT_LIMIT must not exceed 1024");
+static_assert(!PTP_ENABLED || MQTT_PTP_CLIENT_REPORT_LIMIT >=
+                                  (PTP_L2_SERVER_ENABLED ? PTP_L2_FOLLOWER_CAPACITY : 0) +
+                                      (PTP_L3_SERVER_ENABLED ? PTP_L3_UDP_FOLLOWER_CAPACITY * ((PreferIPvX != 2) + (PreferIPvX != 1)) : 0),
+              "MQTT_PTP_CLIENT_REPORT_LIMIT must cover all enabled PTP transport follower capacities");
+static_assert(MQTT_RAM_QUEUE_BYTES % 4 == 0, "MQTT_RAM_QUEUE_BYTES must be a multiple of 4");
+static_assert(MQTT_USE_TF_CARD == 0 || MQTT_USE_TF_CARD == 1, "MQTT_USE_TF_CARD must be 0 or 1");
+static_assert(MQTT_QOS == 0 || mqtt_queue::ReportQueue<MQTT_RAM_QUEUE_BYTES>::record_bytes(MQTT_REPORT_BUFFER_SIZE) <= MQTT_RAM_QUEUE_BYTES,
+              "MQTT_RAM_QUEUE_BYTES must hold at least one largest report; raise it or lower the MQTT client report limits");
 
 static constexpr size_t MQTT_NTP_EVENT_QUEUE_DEPTH = 1024;
-static constexpr size_t MQTT_REPORT_QUEUE_DEPTH = 4;
 static constexpr size_t MQTT_NTP_EVENT_BATCH_LIMIT = 128;
 
 static constexpr uint32_t MQTT_RESTART_PUBLISH_TIMEOUT_MS = 1000;
+static constexpr uint32_t MQTT_RESTART_LOCK_TIMEOUT_MS = 1500;
 static constexpr uint32_t MQTT_QUEUED_PUBLISH_DELAY_MS = 250;
 static constexpr char TF_MOUNT_POINT[] = "/tfcard";
 static constexpr char TF_QUEUE_DIRECTORY[] = "/tfcard/Queue";
@@ -1268,13 +1041,10 @@ struct mqtt_client_request_t
     uint32_t requests = 0;
 };
 
-struct mqtt_report_t
-{
-    char payload[MQTT_REPORT_SIZE] = "";
-};
-
+#if NTP_SERVER_ENABLED
 static SemaphoreHandle_t s_mqtt_stats_mutex = nullptr;
 static QueueHandle_t s_mqtt_ntp_event_queue = nullptr;
+#endif
 static esp_mqtt_client_handle_t s_mqtt_client = nullptr;
 static std::atomic<bool> s_mqtt_setup_failed{false};
 static std::atomic<bool> s_mqtt_connected{false};
@@ -1326,21 +1096,29 @@ static std::atomic<bool> s_historical_gnss_fault_active{false};
 static std::atomic<bool> s_historical_pps_fault_active{false};
 #endif
 
-#if MQTT_ENABLED && MQTT_CLIENT_REPORTING_ENABLED
+#if NTP_SERVER_ENABLED && MQTT_CLIENT_REPORTING_ENABLED
 static std::atomic<bool> s_mqtt_client_table_overflown{false};
 static size_t s_mqtt_client_count = 0;
 #endif
 
 static int64_t s_mqtt_last_link_up_us = 0;
-static mqtt_report_t s_mqtt_reports[MQTT_REPORT_QUEUE_DEPTH]{};
-static char s_mqtt_payload[MQTT_MAX_REPORT_SIZE] = "";
-static char s_mqtt_final_payload[MQTT_REPORT_SIZE] = "";
-static size_t s_mqtt_report_head = 0;
+// One buffer serves periodic reports, queued TF reports and the final restart report; s_mqtt_report_mutex
+// serializes it together with the RAM queue and the discarded-report counter.
+static char s_mqtt_payload[MQTT_REPORT_BUFFER_SIZE] = "";
+using mqtt_ram_queue_t = mqtt_queue::ReportQueue<MQTT_RAM_QUEUE_BYTES>;
+static mqtt_ram_queue_t *s_mqtt_ram_queue = nullptr;
+static bool s_mqtt_ram_queue_allocation_attempted = false;
+static std::atomic<int> s_mqtt_queue_fallback_status{0};
+static SemaphoreHandle_t s_mqtt_report_mutex = nullptr;
 static std::atomic<size_t> s_mqtt_queued_messages_count{0};
 static uint32_t s_mqtt_queued_messages_discarded = 0;
-static mqtt_client_request_t s_mqtt_clients[MQTT_TF_Client_Limit]{};
+#if NTP_SERVER_ENABLED && MQTT_CLIENT_REPORTING_ENABLED
+static mqtt_client_request_t s_mqtt_clients[MQTT_NTP_CLIENT_LIMIT]{};
+#endif
 static std::atomic<bool> s_tf_queue_available{false};
+#if TIME_SERVER_BOARD_HAS_TF_CARD
 static sdmmc_card_t *s_tf_card = nullptr;
+#endif
 static uint64_t s_tf_queue_next_sequence = 0;
 static std::atomic<uint32_t> s_ntp_most_requests_per_second{0};
 static char s_mqtt_uri[64] = "";
@@ -1348,16 +1126,45 @@ static char s_mqtt_report_topic[128] = "";
 static char s_mqtt_status_topic[128] = "";
 
 static void mqtt_publish_final_report();
+#if NTP_SERVER_ENABLED
 static void mqtt_enqueue_ntp_request(const struct sockaddr_storage &source_address);
+#endif
 #endif
 
 static void controlled_restart(const char *reason);
 
-static HardwareSerial s_gnss_serial(1);
-static SFE_UBLOX_GNSS_SERIAL s_gnss;
+static gnss::Receiver s_gnss;
+static gnss::TimeSolution s_gnss_time_solution{};
 static uint32_t s_detected_gnss_baud = 0;
 static std::atomic<bool> s_saved_gnss_baud_communication_failed{false};
 static bool s_gnss_required_assume_success = false;
+
+static bool reopen_gnss_uart(uint32_t baud)
+{
+    const esp_err_t err = gnss_uart_open(TXPin, RXPin, baud);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Unable to open GNSS UART at %lu baud: %s",
+                 static_cast<unsigned long>(baud), esp_err_to_name(err));
+        return false;
+    }
+    s_gnss.reset();
+    s_gnss_time_solution = {};
+    return true;
+}
+
+static bool read_gnss_uart_byte(uint8_t *value, bool *has_data)
+{
+    size_t count = 0;
+    const esp_err_t err = gnss_uart_read(value, 1, 0, &count);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Unable to read GNSS UART: %s", esp_err_to_name(err));
+        return false;
+    }
+    *has_data = count == 1;
+    return true;
+}
 
 // The following flag for National Marine Electronics Association (NEMA) fallback doesn't determine if it is allowed or not
 // rather the program sets it to true if it is required (due to an older / ubox noncompliant hardware gnss module being used)
@@ -1540,7 +1347,7 @@ static void sync_state_note_pps_timeout(int64_t now_us)
 {
 #if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
     if (s_time_has_been_set.load() && !s_historical_pps_fault_active.exchange(true))
-        s_last_pps_undisciplined.store(time(nullptr));
+        s_last_pps_undisciplined.store(utc_now());
 #endif
 
     if (xSemaphoreTake(s_sync_state_mutex, portMAX_DELAY) == pdTRUE)
@@ -1577,7 +1384,7 @@ static void sync_state_note_gnss_validity(bool valid)
 
 #if MQTT_ENABLED && MQTT_HISTORICAL_REPORTING_ENABLED
     if (!valid && s_time_has_been_set.load() && !s_historical_gnss_fault_active.exchange(true))
-        s_last_gnss_unsynchronized.store(time(nullptr));
+        s_last_gnss_unsynchronized.store(utc_now());
 #endif
 
     if (xSemaphoreTake(s_sync_state_mutex, portMAX_DELAY) == pdTRUE)
@@ -1603,9 +1410,9 @@ static uint32_t sync_state_note_failure(const sync_faults_t &faults, time_t upda
     if (s_time_has_been_set.load())
     {
         if (faults.gnss_invalid && !s_historical_gnss_fault_active.exchange(true))
-            s_last_gnss_unsynchronized.store(time(nullptr));
+            s_last_gnss_unsynchronized.store(utc_now());
         if (faults.pps_missing && !s_historical_pps_fault_active.exchange(true))
-            s_last_pps_undisciplined.store(time(nullptr));
+            s_last_pps_undisciplined.store(utc_now());
     }
 #endif
 
@@ -1675,7 +1482,7 @@ static void sync_state_note_success(time_t update_delta)
     bool recovery_completed = s_historical_gnss_fault_active.exchange(false) ||
                               s_historical_pps_fault_active.exchange(false);
     if (s_last_synchronized_and_disciplined.load() == 0 || recovery_completed)
-        s_last_synchronized_and_disciplined.store(time(nullptr));
+        s_last_synchronized_and_disciplined.store(utc_now());
 #endif
 
     if (xSemaphoreTake(s_sync_state_mutex, portMAX_DELAY) == pdTRUE)
@@ -1720,6 +1527,7 @@ static bool first_sync_candidates_are_plausible(const sync_candidate_t &first_ca
 }
 
 #if LIQUID_CRYSTAL_DISPLAY_ENABLED
+#if CONFIG_IDF_TARGET_ESP32P4
 static esp_err_t lcd_write_i2c(const hd44780_t *lcd, uint8_t data)
 {
     (void)lcd;
@@ -1741,6 +1549,7 @@ static void init_lcd_descriptor()
     s_lcd.pins.bl = 3;
     s_lcd.backlight = true;
 }
+#endif
 
 static void display_line(uint8_t row, const char *text)
 {
@@ -1779,7 +1588,11 @@ static void display_line(uint8_t row, const char *text)
         return;
     }
 
+#if CONFIG_IDF_TARGET_ESP32P4
     esp_err_t err = hd44780_gotoxy(&s_lcd, 0, row);
+#else
+    esp_err_t err = lcd_try_set_cursor(s_lcd, 0, row);
+#endif
     if (err != ESP_OK)
     {
 #if DEBUG_ENABLED
@@ -1790,7 +1603,11 @@ static void display_line(uint8_t row, const char *text)
         return;
     }
 
+#if CONFIG_IDF_TARGET_ESP32P4
     err = hd44780_puts(&s_lcd, padded);
+#else
+    err = lcd_try_write_str(s_lcd, padded);
+#endif
     if (err != ESP_OK)
     {
 #if DEBUG_ENABLED
@@ -1809,6 +1626,7 @@ static void display_line(uint8_t row, const char *text)
 
 static esp_err_t lcd_try_device_address(uint8_t address)
 {
+#if CONFIG_IDF_TARGET_ESP32P4
     uint8_t port_state = 0;
 
     memset(&s_lcd_io, 0, sizeof(s_lcd_io));
@@ -1823,6 +1641,11 @@ static esp_err_t lcd_try_device_address(uint8_t address)
         memset(&s_lcd_io, 0, sizeof(s_lcd_io));
         return err;
     }
+#else
+    s_lcd_bus = lcd_bus_pcf8574_i2c_create(LCD_I2C_PORT, address, LCD_I2C_SDA_GPIO, LCD_I2C_SCL_GPIO, 100000);
+    if (s_lcd_bus == nullptr)
+        return ESP_ERR_NOT_FOUND;
+#endif
 
     s_lcd_addr = address;
     return ESP_OK;
@@ -1830,11 +1653,33 @@ static esp_err_t lcd_try_device_address(uint8_t address)
 
 static esp_err_t setup_lcd()
 {
+#if CONFIG_IDF_TARGET_ESP32P4
     init_lcd_descriptor();
 
     esp_err_t err = i2cdev_init();
     if (err != ESP_OK)
         return err;
+#else
+    hd44780_geometry_t geometry;
+    if (lcdColumns == 8 && lcdRows == 2)
+        geometry = HD44780_GEOMETRY_8X2;
+    else if (lcdColumns == 16 && lcdRows == 2)
+        geometry = HD44780_GEOMETRY_16X2;
+    else if (lcdColumns == 16 && lcdRows == 4)
+        geometry = HD44780_GEOMETRY_16X4;
+    else if (lcdColumns == 20 && lcdRows == 2)
+        geometry = HD44780_GEOMETRY_20X2;
+    else if (lcdColumns == 20 && lcdRows == 4)
+        geometry = HD44780_GEOMETRY_20X4;
+    else if (lcdColumns == 40 && lcdRows == 2)
+        geometry = HD44780_GEOMETRY_40X2;
+    else
+    {
+        ESP_LOGE(TAG, "Unsupported LCD geometry %dx%d", lcdColumns, lcdRows);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    esp_err_t err = ESP_OK;
+#endif
 
     err = lcd_try_device_address(lcdI2CAddressPrimary);
     if (err != ESP_OK)
@@ -1843,6 +1688,7 @@ static esp_err_t setup_lcd()
     if (err != ESP_OK)
         return err;
 
+#if CONFIG_IDF_TARGET_ESP32P4
     err = hd44780_init(&s_lcd);
     if (err != ESP_OK)
         return err;
@@ -1858,6 +1704,29 @@ static esp_err_t setup_lcd()
     err = hd44780_clear(&s_lcd);
     if (err != ESP_OK)
         return err;
+#else
+    s_lcd = lcd_init(s_lcd_bus, geometry, true);
+    s_lcd_bus = nullptr; // Ownership transfers to lcd_init, including failure paths.
+    if (s_lcd == nullptr)
+        return ESP_FAIL;
+
+    err = lcd_try_backlight_on(s_lcd);
+    if (err == ESP_OK)
+        err = lcd_try_display_on(s_lcd);
+    if (err == ESP_OK)
+        err = lcd_try_cursor_off(s_lcd);
+    if (err == ESP_OK)
+        err = lcd_try_blink_off(s_lcd);
+    if (err == ESP_OK)
+        err = lcd_try_clear_screen(s_lcd);
+    if (err != ESP_OK)
+    {
+        const esp_err_t cleanup_error = lcd_deinit(&s_lcd);
+        if (cleanup_error != ESP_OK)
+            ESP_LOGE(TAG, "LCD cleanup failed: %s", esp_err_to_name(cleanup_error));
+        return err;
+    }
+#endif
 
     s_lcd_ready = true;
     return ESP_OK;
@@ -1866,11 +1735,33 @@ static esp_err_t setup_lcd()
 
 static void display_selected_ip_address(int seconds)
 {
+
     if (PreferIPvX == 9)
     {
         display_line(3, "");
         return;
     }
+
+#if PTP_L2_SERVER_ENABLED
+
+    char mac_line[21] = "";
+    if (s_eth_handle != nullptr)
+    {
+        uint8_t mac[6]{};
+        const esp_err_t result = read_active_ethernet_mac(mac);
+        if (result == ESP_OK)
+            format_mac_address(mac, mac_line, sizeof(mac_line));
+    }
+
+    if (PreferIPvX == 7)
+    {
+        display_line(3, mac_line);
+        return;
+    }
+
+#endif
+
+#if NTP_SERVER_ENABLED || PTP_L3_SERVER_ENABLED || OTE_UPDATES_ENABLED || MQTT_ENABLED
 
     static char last_known_IPv6_addresss[IP_ADDRESS_TEXT_SIZE] = "";
 
@@ -1947,7 +1838,26 @@ static void display_selected_ip_address(int seconds)
     {
     case 0:
 
-        // no preference between IPv4 and IPv6
+        // no preference
+
+#if NTP_SERVER_ENABLED && PTP_L2_SERVER_ENABLED
+
+        // each minute:
+        // display the IPv4 address for the first 15 seconds
+        // display the first part of the IPv6 address in next 15 seconds
+        // display the second part of the IPv6 address in the next 15 seconds
+        // display the mac address in the last 15 seconds
+
+        if (seconds < 15)
+            display_line(3, addresses.ipv4);
+        else if (seconds < 30)
+            display_line(3, ipv6_part1);
+        else if (seconds < 45)
+            display_line(3, ipv6_part2);
+        else if (seconds < 60)
+            display_line(3, mac_line);
+#else
+
         // each minute:
         // display the IPv4 address for the first 20 seconds
         // display the first part of the IPv6 address in next 20 seconds
@@ -1959,6 +1869,7 @@ static void display_selected_ip_address(int seconds)
             display_line(3, ipv6_part1);
         else
             display_line(3, ipv6_part2);
+#endif
 
         break;
 
@@ -1985,6 +1896,7 @@ static void display_selected_ip_address(int seconds)
             display_line(3, ipv6_part2);
         break;
     }
+#endif
 }
 
 static void apply_timezone_settings()
@@ -2055,9 +1967,7 @@ static bool initialize_nvs_storage()
 
     if (err != ESP_OK)
     {
-#if DEBUG_ENABLED
         ESP_LOGE(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
-#endif
         return false;
     }
 
@@ -2249,44 +2159,35 @@ static gnss_identity_t query_gnss_identity()
 {
     gnss_identity_t identity{};
 
-    UBX_SEC_UNIQID_data_t unique_chip_data{};
-    if (s_gnss.getUniqueChipId(&unique_chip_data, 2000))
+    char unique_chip_id[13]{};
+    const gnss::Status unique_result = s_gnss.unique_id(unique_chip_id, 2000);
+    if (unique_result == gnss::Status::ok && unique_chip_id[0] != '\0')
     {
-        const char *unique_chip_id = s_gnss.getUniqueChipIdStr(&unique_chip_data, 2000);
-        if (unique_chip_id != nullptr && unique_chip_id[0] != '\0')
-        {
-            snprintf(identity.type, sizeof(identity.type), "%s", gnss_ID_TYPE_UNIQID);
-            snprintf(identity.value, sizeof(identity.value), "%s", unique_chip_id);
-            identity.valid = true;
-            return identity;
-        }
+        snprintf(identity.type, sizeof(identity.type), "%s", gnss_ID_TYPE_UNIQID);
+        snprintf(identity.value, sizeof(identity.value), "%s", unique_chip_id);
+        identity.valid = true;
+        return identity;
     }
+    TIMING_LOGW(TAG, "GNSS unique-ID query failed: %s", gnss::status_name(unique_result));
 
-    if (s_gnss.getModuleInfo(2000))
+    gnss::ModuleInformation module{};
+    const gnss::Status module_result = s_gnss.module_information(module, 2000);
+    if (module_result == gnss::Status::ok && module.module_name[0] != '\0')
     {
-        const char *module_name = s_gnss.getModuleName(2000);
-        const char *firmware_type = s_gnss.getFirmwareType(2000);
-        uint8_t firmware_high = s_gnss.getFirmwareVersionHigh(2000);
-        uint8_t firmware_low = s_gnss.getFirmwareVersionLow(2000);
-        uint8_t protocol_high = s_gnss.getProtocolVersionHigh(2000);
-        uint8_t protocol_low = s_gnss.getProtocolVersionLow(2000);
-
-        if (module_name != nullptr && module_name[0] != '\0')
-        {
-            snprintf(identity.type, sizeof(identity.type), "%s", gnss_ID_TYPE_MODULE_FP);
-            snprintf(identity.value,
-                     sizeof(identity.value),
-                     "%s|%s|FW%u.%u|PR%u.%u",
-                     module_name,
-                     firmware_type == nullptr ? "" : firmware_type,
-                     static_cast<unsigned int>(firmware_high),
-                     static_cast<unsigned int>(firmware_low),
-                     static_cast<unsigned int>(protocol_high),
-                     static_cast<unsigned int>(protocol_low));
-            identity.valid = true;
-            return identity;
-        }
+        snprintf(identity.type, sizeof(identity.type), "%s", gnss_ID_TYPE_MODULE_FP);
+        snprintf(identity.value,
+                 sizeof(identity.value),
+                 "%s|%s|FW%u.%u|PR%u.%u",
+                 module.module_name,
+                 module.firmware_type,
+                 static_cast<unsigned int>(module.firmware_high),
+                 static_cast<unsigned int>(module.firmware_low),
+                 static_cast<unsigned int>(module.protocol_high),
+                 static_cast<unsigned int>(module.protocol_low));
+        identity.valid = true;
+        return identity;
     }
+    TIMING_LOGW(TAG, "GNSS module-information query failed: %s", gnss::status_name(module_result));
 
     snprintf(identity.type, sizeof(identity.type), "%s", gnss_ID_TYPE_GENERIC);
     snprintf(identity.value, sizeof(identity.value), "%s", gnss_ID_VALUE_UNDETERMINED);
@@ -2327,9 +2228,9 @@ static bool check_uptime_request()
     if (!button_was_pressed)
     {
         button_was_pressed = true;
-        button_press_start_ms = millis();
+        button_press_start_ms = uptime_ms();
     }
-    else if (millis() - button_press_start_ms >= holdUpTimeRestartButtonForThisManySecondsToTriggerAReset * 1000UL)
+    else if (uptime_ms() - button_press_start_ms >= holdUpTimeRestartButtonForThisManySecondsToTriggerAReset * 1000UL)
     {
         clear_gnss_nvs_data();
         controlled_restart("manual_restart");
@@ -2363,12 +2264,23 @@ static inline uint64_t ntp64_from_unix_ns(int64_t unix_ns)
     return (sec << 32) | ((rem << 32) / 1000000000ULL);
 }
 
+static uint64_t ntp64_from_tai_ns(int64_t tai_ns)
+{
+    const auto leap = s_leap_state.read();
+    if (!leap.fresh(esp_timer_get_time()) || tai_ns <= 0)
+        return 0;
+    return ntp64_from_unix_ns(leap.to_utc_ns(tai_ns));
+}
+
+static int64_t get_disciplined_time_in_tai_ns()
+{
+    int64_t tai_ns = 0;
+    return model_ns_at(local_now_ns(), tai_ns) && tai_ns > 0 ? tai_ns : 0;
+}
+
 static uint64_t get_disciplined_time_in_ntp64_format()
 {
-    int64_t unix_ns = 0;
-    if (model_ns_at(local_now_ns(), unix_ns) && unix_ns > 0)
-        return ntp64_from_unix_ns(unix_ns);
-    return 0;
+    return ntp64_from_tai_ns(get_disciplined_time_in_tai_ns());
 }
 
 static uint64_t get_current_time_in_ntp64_format()
@@ -2380,9 +2292,8 @@ static uint64_t get_current_time_in_ntp64_format()
     struct timeval now{};
     gettimeofday(&now, nullptr);
 
-    const uint64_t seconds = NTP_EPOCH_OFFSET + static_cast<uint64_t>(now.tv_sec);
-    const uint64_t fraction = (static_cast<uint64_t>(now.tv_usec) << 32) / 1000000ULL;
-    uint64_t ts = (seconds << 32) | fraction;
+    int64_t tai_ns = static_cast<int64_t>(now.tv_sec) * 1000000000LL +
+                     static_cast<int64_t>(now.tv_usec) * 1000LL;
 
     if (s_clock_comp_valid.load(std::memory_order_acquire))
     {
@@ -2390,10 +2301,10 @@ static uint64_t get_current_time_in_ntp64_format()
         if (elapsed_us > 0 && elapsed_us < 3600000000LL)
         {
             const int64_t corr_ns = elapsed_us * static_cast<int64_t>(s_clock_ppb.load(std::memory_order_relaxed)) / 1000000LL;
-            ts = static_cast<uint64_t>(static_cast<int64_t>(ts) - (corr_ns * 4294967296LL) / 1000000000LL);
+            tai_ns -= corr_ns;
         }
     }
-    return ts;
+    return ntp64_from_tai_ns(tai_ns);
 }
 
 static void write_ntp_timestamp(uint8_t *reply, size_t offset, uint64_t timestamp)
@@ -2422,6 +2333,11 @@ struct ntp_reply_status_t
 
 static ntp_reply_status_t get_ntp_reply_status()
 {
+    const auto leap = s_leap_state.read();
+    if (!leap.fresh(esp_timer_get_time()) ||
+        s_timescale_requalification_required.load(std::memory_order_acquire))
+        return {};
+    const uint8_t leap_indicator = leap.leap_indicator(static_cast<int64_t>(time(nullptr)));
     for (size_t attempt = 0; attempt < 3; ++attempt)
     {
         uint32_t sequence_before = s_ntp_sync_state_sequence.load(std::memory_order_acquire);
@@ -2457,7 +2373,7 @@ static ntp_reply_status_t get_ntp_reply_status()
                            s_ntp_reference_valid.load(std::memory_order_acquire);
 
         if (stratum_one)
-            return {0, 1, "GPS", true, gnss_synchronized, pps_active};
+            return {leap_indicator, 1, "GPS", true, gnss_synchronized, pps_active};
         const bool holdover = s_time_has_been_set.load(std::memory_order_acquire) &&
                               !s_time_setting_in_progress.load(std::memory_order_acquire) &&
                               last_pps_us > 0 && pps_age_us > Gnss_Validity_Timeout_Us &&
@@ -2474,7 +2390,7 @@ static ntp_reply_status_t get_ntp_reply_status()
         {
             const uint32_t growth = static_cast<uint32_t>(
                 (pps_age_us * ntpHoldoverDispersionPpm * 65536LL + 999999999999LL) / 1000000000000LL);
-            return {0, 1, "GPS", true, false, false, true, NTP_ROOT_DISPERSION + growth};
+            return {leap_indicator, 1, "GPS", true, false, false, true, NTP_ROOT_DISPERSION + growth};
         }
         return {3, 16, "INIT", false, gnss_synchronized, pps_active};
     }
@@ -2482,6 +2398,7 @@ static ntp_reply_status_t get_ntp_reply_status()
     return {};
 }
 
+#if NTP_SERVER_ENABLED
 static constexpr uint8_t NTP_REPLY_TEMPLATE[NTP_PACKET_SIZE] = {
     0, 0, 4, static_cast<uint8_t>(NTP_PRECISION_EXPONENT),
     0, 0, 0, 0,
@@ -2506,6 +2423,8 @@ static void build_ntp_reply(const uint8_t *request, uint8_t *reply, uint8_t vers
     write_ntp_timestamp(reply, 32, receive_time);
 }
 
+#endif
+
 static constexpr size_t ETH_HEADER_SIZE = 14;
 static constexpr size_t IPV4_HEADER_SIZE = 20;
 static constexpr size_t IPV6_HEADER_SIZE = 40;
@@ -2525,6 +2444,7 @@ static constexpr uint32_t ETHERNET_RECOVERY_TASK_PRIORITY = 16;
 static constexpr uint32_t ETHERNET_RECOVERY_TIMEOUT_MS = 45000;
 static constexpr int64_t NTP_TRANSPORT_STALL_TIMEOUT_US = 35000000LL;
 
+#if NTP_SERVER_ENABLED
 struct hardware_ntp_request_t
 {
     esp_eth_handle_t handle;
@@ -2588,25 +2508,18 @@ static void deinitialize_hardware_ntp_server()
     ntp_cache_deinit();
 }
 
+#endif
+
+#if NTP_SERVER_ENABLED
 // One's complement sum (not folded, not inverted) of a byte range, added to sum
 static uint32_t ones_complement_add(uint32_t sum, const uint8_t *data, size_t length)
 {
-    while (length >= 2)
-    {
-        sum += static_cast<uint16_t>((data[0] << 8) | data[1]);
-        data += 2;
-        length -= 2;
-    }
-    if (length != 0)
-        sum += static_cast<uint16_t>(data[0] << 8);
-    return sum;
+    return net_packet::add(sum, data, length);
 }
 
 static uint16_t ones_complement_fold(uint32_t sum)
 {
-    while ((sum >> 16) != 0)
-        sum = (sum & 0xFFFFU) + (sum >> 16);
-    return static_cast<uint16_t>(sum);
+    return net_packet::fold(sum);
 }
 
 static uint16_t internet_checksum(const uint8_t *data, size_t length)
@@ -2617,12 +2530,7 @@ static uint16_t internet_checksum(const uint8_t *data, size_t length)
 // One's complement sum of the UDP pseudo header (source, destination, protocol, UDP length)
 static uint32_t udp_pseudo_header_sum(const uint8_t *source, const uint8_t *destination, size_t address_length, size_t udp_length)
 {
-    uint32_t sum = ones_complement_add(0, source, address_length);
-    sum = ones_complement_add(sum, destination, address_length);
-    sum += IPPROTO_UDP;
-    sum += static_cast<uint32_t>(udp_length & 0xFFFFU);
-    sum += static_cast<uint32_t>(udp_length >> 16);
-    return sum;
+    return net_packet::udp_pseudo_sum(source, destination, address_length, udp_length);
 }
 
 // true if the UDP checksum of a received datagram is correct (for IPv4 a checksum of 0 means "not used")
@@ -2635,7 +2543,9 @@ static bool udp_checksum_is_valid(const uint8_t *source, const uint8_t *destinat
     return ones_complement_fold(sum) == 0xFFFFU;
 }
 
-static uint64_t ntp64_from_hardware_timestamp(const eth_mac_time_t &timestamp)
+#endif
+
+static int64_t tai_ns_from_hardware_timestamp(const eth_mac_time_t &timestamp)
 {
     if (timestamp.nanoseconds >= 1000000000U)
         return 0;
@@ -2651,7 +2561,7 @@ static uint64_t ntp64_from_hardware_timestamp(const eth_mac_time_t &timestamp)
         {
             const int64_t unix_ns = ptp_ns - offset_ns;
             if (unix_ns > 0)
-                return ntp64_from_unix_ns(unix_ns);
+                return unix_ns;
         }
     }
 #else
@@ -2670,11 +2580,17 @@ static uint64_t ntp64_from_hardware_timestamp(const eth_mac_time_t &timestamp)
         {
             const int64_t unix_ns = anchor_ns + el - (el * static_cast<int64_t>(s_clock_ppb.load(std::memory_order_relaxed))) / 1000000000LL;
             if (unix_ns > 0)
-                return ntp64_from_unix_ns(unix_ns);
+                return unix_ns;
         }
     }
 #endif
     return 0;
+}
+
+static uint64_t ntp64_from_hardware_timestamp(const eth_mac_time_t &timestamp)
+{
+    const int64_t unix_ns = tai_ns_from_hardware_timestamp(timestamp);
+    return unix_ns > 0 ? ntp64_from_tai_ns(unix_ns) : 0;
 }
 
 static bool timestamp_is_valid(const eth_mac_time_t *timestamp)
@@ -2772,14 +2688,14 @@ static constexpr uint32_t tx_delay_min_samples = 16; // compensate only after th
 static constexpr int32_t tx_delay_max_ns = 500000;   // plausible range of a sample
 static constexpr int32_t tx_delay_ewma_shift = 5;    // running mean with weight 1/32
 
-// Adds the estimated transmit delay to a software T3 (NTP 32.32 format)
-static uint64_t compensate_basic_t3(uint64_t t3, bool ipv6, bool authenticated)
+// Apply the delay before UTC conversion: addition in NTP format is wrong across a leap.
+static uint64_t compensate_basic_t3(uint64_t t3, int64_t tai_ns, bool ipv6, bool authenticated)
 {
     const tx_delay_estimate_t &estimate = s_tx_delay[ipv6 ? 1 : 0][authenticated ? 1 : 0];
     if (estimate.samples.load(std::memory_order_relaxed) < tx_delay_min_samples)
         return t3;
     const int64_t delay_ns = estimate.delay_ns.load(std::memory_order_relaxed);
-    return t3 + static_cast<uint64_t>((delay_ns << 32) / 1000000000LL);
+    return ntp64_from_tai_ns(tai_ns + delay_ns);
 }
 
 // Called by the hardware NTP task (only writer) with the uncompensated software T3 and the hardware TX time stamp
@@ -2807,10 +2723,11 @@ static void update_tx_delay_estimate(bool ipv6, bool authenticated, uint64_t sof
         estimate.samples.store(n + 1, std::memory_order_relaxed);
 }
 #else
-static inline uint64_t compensate_basic_t3(uint64_t t3, bool, bool) { return t3; }
+static inline uint64_t compensate_basic_t3(uint64_t t3, int64_t, bool, bool) { return t3; }
 static inline void update_tx_delay_estimate(bool, bool, uint64_t, uint64_t) {}
 #endif
 
+#if NTP_SERVER_ENABLED
 static bool is_ipv4_ntp_request(const uint8_t *frame, uint32_t length, size_t *ip_offset, size_t *udp_offset)
 {
     if (frame == nullptr || length < ETH_HEADER_SIZE + IPV4_HEADER_SIZE + UDP_HEADER_SIZE + NTP_PACKET_SIZE || frame[12] != 0x08 || frame[13] != 0x00)
@@ -3036,7 +2953,7 @@ static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *
         return ESP_OK;
     }
 
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#if NTP_AUTHENTICATION_ENABLED
     const size_t request_length = static_cast<size_t>((frame[udp_offset + 4] << 8) | frame[udp_offset + 5]) - UDP_HEADER_SIZE;
     uint32_t authentication_key_id = 0;
     const ntp_auth_result_t authentication_result = ntp_auth_verify_request(request, request_length, version, &authentication_key_id);
@@ -3044,7 +2961,7 @@ static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *
     {
 #if MQTT_ENABLED
         s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
-        if (version == 4)
+        if (version == 4 && authentication_result != ntp_auth_result_t::authentication_required)
             s_ntp_authenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
         else
             s_ntp_unauthenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
@@ -3167,17 +3084,18 @@ static esp_err_t process_hardware_ntp_request(esp_eth_handle_t handle, uint8_t *
             {
                 for (uint32_t attempt = 0; attempt < HARDWARE_NTP_TRANSMIT_RETRY_COUNT; ++attempt)
                 {
-                    raw_transmit_time = get_disciplined_time_in_ntp64_format();
+                    const int64_t transmit_tai_ns = get_disciplined_time_in_tai_ns();
+                    raw_transmit_time = ntp64_from_tai_ns(transmit_tai_ns);
                     if (raw_transmit_time == 0)
                         break;
-                    own_transmit_time = compensate_basic_t3(raw_transmit_time, false, authenticated_request);
+                    own_transmit_time = compensate_basic_t3(raw_transmit_time, transmit_tai_ns, false, authenticated_request);
                     if (!interleaved_reply)
                     {
                         write_ntp_timestamp(reply, 40, own_transmit_time);
                     }
 
                     size_t reply_length = NTP_PACKET_SIZE;
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#if NTP_AUTHENTICATION_ENABLED
                     if (authenticated_request && !ntp_auth_append_response(reply, sizeof(reply), &reply_length, authentication_key_id))
                         break;
 #endif
@@ -3253,7 +3171,7 @@ static esp_err_t process_hardware_ipv6_ntp_request(esp_eth_handle_t handle, uint
         return ESP_OK;
     }
 
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#if NTP_AUTHENTICATION_ENABLED
     const size_t request_length = static_cast<size_t>((frame[udp_offset + 4] << 8) | frame[udp_offset + 5]) - UDP_HEADER_SIZE;
     uint32_t authentication_key_id = 0;
     const ntp_auth_result_t authentication_result = ntp_auth_verify_request(request, request_length, version, &authentication_key_id);
@@ -3261,7 +3179,7 @@ static esp_err_t process_hardware_ipv6_ntp_request(esp_eth_handle_t handle, uint
     {
 #if MQTT_ENABLED
         s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
-        if (version == 4)
+        if (version == 4 && authentication_result != ntp_auth_result_t::authentication_required)
             s_ntp_authenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
         else
             s_ntp_unauthenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
@@ -3364,16 +3282,17 @@ static esp_err_t process_hardware_ipv6_ntp_request(esp_eth_handle_t handle, uint
         {
             for (uint32_t attempt = 0; attempt < HARDWARE_NTP_TRANSMIT_RETRY_COUNT; ++attempt)
             {
-                raw_transmit_time = get_disciplined_time_in_ntp64_format();
+                const int64_t transmit_tai_ns = get_disciplined_time_in_tai_ns();
+                raw_transmit_time = ntp64_from_tai_ns(transmit_tai_ns);
                 if (raw_transmit_time == 0)
                     break;
-                own_transmit_time = compensate_basic_t3(raw_transmit_time, true, authenticated_request);
+                own_transmit_time = compensate_basic_t3(raw_transmit_time, transmit_tai_ns, true, authenticated_request);
                 if (!interleaved_reply)
                 {
                     write_ntp_timestamp(reply, 40, own_transmit_time);
                 }
                 size_t reply_length = NTP_PACKET_SIZE;
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#if NTP_AUTHENTICATION_ENABLED
                 if (authenticated_request && !ntp_auth_append_response(reply, sizeof(reply), &reply_length, authentication_key_id))
                     break;
 #endif
@@ -3414,9 +3333,502 @@ static esp_err_t process_hardware_ipv6_ntp_request(esp_eth_handle_t handle, uint
     return result;
 }
 
+#endif
+
+#if PTP_ENABLED
+static uint8_t s_ptp_source_mac[6]{};
+static uint8_t s_ptp_identity[8]{};
+static std::atomic<uint32_t> s_ptp_queue_drops{0};
+static std::atomic<uint32_t> s_ptp_tx_timestamp_misses{0};
+static std::atomic<uint32_t> s_ptp_delay_responses{0};
+static std::atomic<uint32_t> s_ptp_valid_requests{0};
+static std::atomic<uint32_t> s_ptp_invalid_requests{0};
+static std::atomic<uint32_t> s_ptp_authentication_rejections{0};
+static std::atomic<uint32_t> s_ptp_rx_timestamp_misses{0};
+
+#if PTP_L2_SERVER_ENABLED
+static constexpr uint8_t PTP_L2_MULTICAST_MAC[6] = {0x01, 0x1b, 0x19, 0x00, 0x00, 0x00};
+static constexpr size_t PTP_L2_FRAME_HEADER_SIZE = 14;
+static constexpr size_t PTP_L2_HEADER_SIZE = 34;
+static constexpr size_t PTP_L2_EVENT_SIZE = 44;
+static constexpr size_t PTP_L2_ANNOUNCE_SIZE = 64;
+static constexpr size_t PTP_L2_DELAY_RESP_SIZE = 54;
+static constexpr size_t PTP_L2_RX_FRAME_SIZE = PTP_L2_FRAME_HEADER_SIZE + PTP_L2_ANNOUNCE_SIZE +
+                                               (PTP_L2_AUTHENTICATION_ENABLED ? PTP_L2_AUTH_TLV_SIZE : 0);
+static constexpr size_t PTP_L2_TX_FRAME_SIZE = PTP_L2_RX_FRAME_SIZE;
+
+struct ptp_l2_received_frame_t
+{
+    uint8_t data[PTP_L2_RX_FRAME_SIZE];
+    uint8_t length;
+    eth_mac_time_t timestamp;
+    uint32_t clock_generation;
+};
+
+static QueueHandle_t s_ptp_l2_queue = nullptr;
+static std::atomic<bool> s_ptp_l2_tx_healthy{true};
+static std::atomic<bool> s_ptp_l2_rx_healthy{true};
+static std::atomic<bool> s_ptp_l2_worker_ready{false};
+static ptp::MasterSelection<PTP_L2_FOREIGN_MASTER_CAPACITY> s_ptp_l2_master_selection{
+    PTP_L2_MASTER_SELECTION_ENABLED != 0, PTP_L2_FOREIGN_ANNOUNCE_TIMEOUT_SECONDS * 1000000LL,
+    2000000LL << PTP_L2_LOG_ANNOUNCE_INTERVAL};
+
+static ptp::MasterDataset ptp_l2_local_master_dataset()
+{
+    ptp::MasterDataset dataset{};
+    dataset.priority1 = PTP_L2_PRIORITY1;
+    dataset.priority2 = PTP_L2_PRIORITY2;
+    memcpy(dataset.identity, s_ptp_identity, sizeof(dataset.identity));
+    return dataset;
+}
+#endif
+
+static void ptp_write_u16(uint8_t *destination, uint16_t value)
+{
+    destination[0] = static_cast<uint8_t>(value >> 8);
+    destination[1] = static_cast<uint8_t>(value);
+}
+
+static bool ptp_write_timestamp(uint8_t *destination, const eth_mac_time_t &timestamp)
+{
+    if (!s_leap_state.read().fresh(esp_timer_get_time()))
+        return false;
+    if (!timestamp_is_valid(&timestamp))
+        return false;
+    const int64_t unix_ns = tai_ns_from_hardware_timestamp(timestamp);
+    if (unix_ns <= 0)
+        return false;
+    const uint64_t seconds = static_cast<uint64_t>(unix_ns / 1000000000LL);
+    const uint32_t nanoseconds = static_cast<uint32_t>(unix_ns % 1000000000LL);
+    for (size_t i = 0; i < 6; ++i)
+        destination[i] = static_cast<uint8_t>(seconds >> (8 * (5 - i)));
+    for (size_t i = 0; i < 4; ++i)
+        destination[6 + i] = static_cast<uint8_t>(nanoseconds >> (8 * (3 - i)));
+    return true;
+}
+
+// Two-step Sync originTimestamp: IEEE 1588 permits an approximate value, and some followers (Windows W32Time) use a
+// zero placeholder as a real sample. Follow_Up still carries the precise egress timestamp.
+static void ptp_write_sync_origin(uint8_t *destination)
+{
+    timespec raw{};
+    if (clock_gettime(CLOCK_PTP_SYSTEM, &raw) != 0 || raw.tv_sec < 0)
+        return;
+    eth_mac_time_t now{};
+    now.seconds = static_cast<uint32_t>(raw.tv_sec);
+    now.nanoseconds = static_cast<uint32_t>(raw.tv_nsec);
+    ptp_write_timestamp(destination, now);
+}
+
+class ptp_clock_lock_t
+{
+public:
+    ptp_clock_lock_t() : locked(xSemaphoreTake(s_time_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {}
+    ~ptp_clock_lock_t()
+    {
+        if (locked)
+            xSemaphoreGive(s_time_mutex);
+    }
+    ptp_clock_lock_t(const ptp_clock_lock_t &) = delete;
+    ptp_clock_lock_t &operator=(const ptp_clock_lock_t &) = delete;
+    const bool locked;
+};
+
+static bool ptp_time_qualified()
+{
+    const ntp_reply_status_t status = get_ntp_reply_status();
+    if (!s_leap_state.read().fresh(esp_timer_get_time()) ||
+        s_timescale_requalification_required.load(std::memory_order_acquire) ||
+        !s_ethernet_connected.load(std::memory_order_acquire) ||
+        !s_ptp_clock_ready.load(std::memory_order_acquire) ||
+        s_ethernet_recovery_in_progress.load(std::memory_order_acquire) ||
+        status.stratum != 1 || status.holdover)
+        return false;
+
+    return s_model_valid.load(std::memory_order_acquire) &&
+           s_model_rate_valid.load(std::memory_order_acquire) &&
+           s_ptp_comp_valid.load(std::memory_order_acquire);
+}
+
+static void ptp_build_message(uint8_t *message, uint8_t type, uint16_t sequence, uint16_t message_size,
+                              uint8_t domain, int8_t sync_interval, int8_t announce_interval,
+                              const ptp::MasterDataset &dataset, bool authenticated)
+{
+    memset(message, 0, message_size);
+    message[0] = type;
+    message[1] = authenticated ? 0x12 : 0x02;
+    ptp_write_u16(message + 2, message_size);
+    message[4] = domain;
+    if (type == 0)
+        message[6] = 0x02;
+    if (type == 11)
+    {
+        message[47] = dataset.priority1;
+        message[48] = dataset.clock_class;
+        message[49] = dataset.clock_accuracy;
+        ptp_write_u16(message + 50, dataset.variance);
+        message[52] = dataset.priority2;
+        memcpy(message + 53, dataset.identity, sizeof(dataset.identity));
+        message[63] = 0x20; // GPS; traceability flags remain clear pending physical verification.
+        const auto leap = s_leap_state.read();
+        const int64_t tai = static_cast<int64_t>(time(nullptr));
+        if (leap.fresh(esp_timer_get_time()))
+        {
+            message[7] = static_cast<uint8_t>(0x0c | leap.leap_indicator(tai));
+            ptp_write_u16(message + 44, static_cast<uint16_t>(leap.utc_offset(tai)));
+        }
+    }
+    memcpy(message + 20, s_ptp_identity, 8);
+    ptp_write_u16(message + 28, 1);
+    ptp_write_u16(message + 30, sequence);
+    message[32] = authenticated || type == 0 ? 0 : type == 8 ? 2
+                                               : type == 9   ? 3
+                                                             : 5;
+    message[33] = type == 0 || type == 8 ? sync_interval : type == 11 ? announce_interval
+                                                                      : 0x7f;
+}
+
+static bool ptp_transmit_raw(uint8_t *frame, uint32_t frame_size, eth_mac_time_t *timestamp)
+{
+    if (!s_ethernet_connected.load(std::memory_order_acquire) ||
+        !s_ptp_clock_ready.load(std::memory_order_acquire) ||
+        s_ethernet_recovery_in_progress.load(std::memory_order_acquire))
+        return false;
+    if (xSemaphoreTake(s_hardware_ntp_transmit_mutex, pdMS_TO_TICKS(20)) != pdTRUE)
+        return false;
+    const bool ready = s_ptp_clock_ready.load(std::memory_order_acquire) &&
+                       !s_ethernet_recovery_in_progress.load(std::memory_order_acquire);
+    const esp_err_t result = ready
+                                 ? esp_eth_transmit_ctrl_vargs(s_eth_handle, timestamp, 2, frame, frame_size)
+                                 : ESP_ERR_INVALID_STATE;
+    xSemaphoreGive(s_hardware_ntp_transmit_mutex);
+    if (result != ESP_OK)
+        TIMING_LOGW(TAG, "PTP transmit failed: %s", esp_err_to_name(result));
+    return result == ESP_OK;
+}
+
+#if PTP_L2_SERVER_ENABLED
+static void ptp_l2_build_frame(uint8_t *frame, uint8_t type, uint16_t sequence, uint16_t message_size)
+{
+    memset(frame, 0, PTP_L2_FRAME_HEADER_SIZE);
+    memcpy(frame, PTP_L2_MULTICAST_MAC, 6);
+    memcpy(frame + 6, s_ptp_source_mac, 6);
+    frame[12] = 0x88;
+    frame[13] = 0xf7;
+    bool authenticated = false;
+#if PTP_L2_AUTHENTICATION_ENABLED
+    authenticated = ptp_l2_auth_available();
+#endif
+    ptp_build_message(frame + PTP_L2_FRAME_HEADER_SIZE, type, sequence, message_size, PTP_L2_DOMAIN,
+                      PTP_L2_LOG_SYNC_INTERVAL, PTP_L2_LOG_ANNOUNCE_INTERVAL, ptp_l2_local_master_dataset(), authenticated);
+}
+
+static bool ptp_l2_transmit(uint8_t *frame, size_t message_size, size_t capacity, eth_mac_time_t *timestamp = nullptr)
+{
+#if PTP_L2_AUTHENTICATION_ENABLED
+    if (!ptp_l2_auth_initialize())
+        return false;
+    if (ptp_l2_auth_available() &&
+        (capacity < PTP_L2_FRAME_HEADER_SIZE ||
+         !ptp_l2_auth_append(frame + PTP_L2_FRAME_HEADER_SIZE, capacity - PTP_L2_FRAME_HEADER_SIZE, &message_size)))
+        return false;
+#endif
+    const uint32_t frame_size = static_cast<uint32_t>(std::max(60U, static_cast<unsigned>(PTP_L2_FRAME_HEADER_SIZE + message_size)));
+    if (frame_size > capacity)
+    {
+        ESP_LOGE(TAG, "PTP L2 transmit buffer is too small");
+        return false;
+    }
+    return ptp_transmit_raw(frame, frame_size, timestamp);
+}
+
+static bool ptp_l2_receive_frame(const uint8_t *frame, uint32_t length, const eth_mac_time_t *timestamp)
+{
+    if (length < PTP_L2_FRAME_HEADER_SIZE || frame[12] != 0x88 || frame[13] != 0xf7)
+        return false;
+    if (length < PTP_L2_FRAME_HEADER_SIZE + PTP_L2_HEADER_SIZE || length > PTP_L2_RX_FRAME_SIZE ||
+        s_ptp_l2_queue == nullptr || !s_ptp_l2_worker_ready.load(std::memory_order_acquire))
+    {
+        s_ptp_queue_drops.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    const uint32_t generation = s_ptp_clock_generation.load(std::memory_order_acquire);
+    if ((generation & 1U) != 0 || !s_ptp_clock_ready.load(std::memory_order_acquire) ||
+        s_ethernet_recovery_in_progress.load(std::memory_order_acquire))
+        return true;
+    ptp_l2_received_frame_t request{};
+    request.clock_generation = generation;
+    request.length = static_cast<uint8_t>(length);
+    memcpy(request.data, frame, length);
+    if (timestamp != nullptr)
+        request.timestamp = *timestamp;
+    if (xQueueSend(s_ptp_l2_queue, &request, 0) != pdTRUE)
+        s_ptp_queue_drops.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+static ptp::MessageKind ptp_l2_parse_received_frame(const uint8_t *frame, size_t length, ptp::ParsedMessage &parsed)
+{
+    const ptp::MessageKind kind = ptp::parse_l2_frame(frame, length, PTP_L2_DOMAIN, s_ptp_identity, parsed,
+                                                      PTP_L2_AUTHENTICATION_ENABLED);
+#if PTP_L2_AUTHENTICATION_ENABLED
+    if (kind == ptp::MessageKind::DelayRequest || kind == ptp::MessageKind::Announce)
+    {
+        const uint8_t *message = frame + PTP_L2_FRAME_HEADER_SIZE;
+        const size_t message_length = (static_cast<size_t>(message[2]) << 8) | message[3];
+        const ptp_l2_auth_result_t authentication = ptp_l2_auth_verify(message, message_length);
+        if (authentication != ptp_l2_auth_result_t::valid && authentication != ptp_l2_auth_result_t::unauthenticated)
+        {
+            s_ptp_authentication_rejections.fetch_add(1, std::memory_order_relaxed);
+            return ptp::MessageKind::Invalid;
+        }
+    }
+#endif
+    return kind;
+}
+
+static bool ptp_l2_service_qualified(int64_t now_us)
+{
+    return ptp_time_qualified() && s_ptp_l2_tx_healthy.load(std::memory_order_acquire) &&
+           s_ptp_l2_rx_healthy.load(std::memory_order_acquire) &&
+           s_ptp_l2_master_selection.role(now_us) == ptp::SelectionRole::Master;
+}
+
+static void ptp_l2_service_task(void *parameter)
+{
+    (void)parameter;
+    uint16_t sync_sequence = 0;
+    uint16_t announce_sequence = 0;
+    int64_t last_sync_us = 0;
+    int64_t last_announce_us = 0;
+    int64_t last_report_us = 0;
+    uint32_t last_generation = s_ptp_clock_generation.load(std::memory_order_acquire);
+    s_ptp_l2_master_selection.reset(ptp_l2_local_master_dataset(), esp_timer_get_time());
+    for (;;)
+    {
+        const uint32_t generation = s_ptp_clock_generation.load(std::memory_order_acquire);
+        if (generation != last_generation)
+        {
+            last_generation = generation;
+            last_sync_us = 0;
+            last_announce_us = 0;
+            portENTER_CRITICAL(&s_ptp_followers_mux);
+            s_ptp_followers.clear_transport(0);
+            portEXIT_CRITICAL(&s_ptp_followers_mux);
+#if PTP_L2_MASTER_SELECTION_ENABLED
+            s_ptp_l2_master_selection.reset(ptp_l2_local_master_dataset(), esp_timer_get_time());
+#endif
+        }
+        ptp_l2_received_frame_t received{};
+        if (xQueueReceive(s_ptp_l2_queue, &received, pdMS_TO_TICKS(20)) == pdTRUE)
+        {
+            ptp::ParsedMessage parsed{};
+            const ptp::MessageKind kind = ptp_l2_parse_received_frame(received.data, received.length, parsed);
+            const int64_t received_us = esp_timer_get_time();
+            const bool current_generation = received.clock_generation ==
+                                            s_ptp_clock_generation.load(std::memory_order_acquire);
+            if (kind == ptp::MessageKind::Invalid)
+                s_ptp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
+            if (kind == ptp::MessageKind::Announce && current_generation)
+                s_ptp_l2_master_selection.observe(parsed.announce_dataset, parsed.source_port_identity, parsed.sequence_id,
+                                                  parsed.log_announce_interval, received_us);
+            if (kind == ptp::MessageKind::DelayRequest)
+            {
+                s_ptp_valid_requests.fetch_add(1, std::memory_order_relaxed);
+                const bool timestamp_ok = received.timestamp.nanoseconds < 1000000000U &&
+                                          timestamp_is_valid(&received.timestamp);
+                if (!timestamp_ok)
+                {
+                    s_ptp_rx_timestamp_misses.fetch_add(1, std::memory_order_relaxed);
+                    if (current_generation && ptp_time_qualified())
+                        s_ptp_l2_rx_healthy.store(false, std::memory_order_release);
+                }
+                if (timestamp_ok && current_generation && ptp_l2_service_qualified(received_us))
+                {
+                    ptp_clock_lock_t clock_lock;
+                    if (clock_lock.locked && ptp_l2_service_qualified(esp_timer_get_time()) &&
+                        received.clock_generation == s_ptp_clock_generation.load(std::memory_order_acquire))
+                    {
+                        portENTER_CRITICAL(&s_ptp_followers_mux);
+                        if (s_ethernet_connected.load(std::memory_order_acquire) &&
+                            received.clock_generation == s_ptp_clock_generation.load(std::memory_order_acquire))
+                            s_ptp_followers.observe(parsed.domain, parsed.source_port_identity, received_us, received.data + 6,
+                                                    0, PTP_L2_FOLLOWER_TIMEOUT_SECONDS * 1000000LL, PTP_L2_FOLLOWER_CAPACITY);
+                        portEXIT_CRITICAL(&s_ptp_followers_mux);
+                        uint8_t response[PTP_L2_TX_FRAME_SIZE]{};
+                        ptp_l2_build_frame(response, 9, parsed.sequence_id, PTP_L2_DELAY_RESP_SIZE);
+                        const bool mapped = ptp_write_timestamp(response + PTP_L2_FRAME_HEADER_SIZE + 34, received.timestamp);
+                        memcpy(response + PTP_L2_FRAME_HEADER_SIZE + 44, parsed.source_port_identity, 10);
+                        if (mapped)
+                        {
+                            if (ptp_l2_transmit(response, PTP_L2_DELAY_RESP_SIZE, sizeof(response)))
+                                s_ptp_delay_responses.fetch_add(1, std::memory_order_relaxed);
+                            else
+                                s_ptp_l2_tx_healthy.store(false, std::memory_order_release);
+                        }
+                    }
+                }
+            }
+        }
+
+        const int64_t now_us = esp_timer_get_time();
+        if (DEBUG_ENABLED && now_us - last_report_us >= 60000000LL)
+        {
+            last_report_us = now_us;
+            ESP_LOGI(TAG, "PTP L2: valid_requests=%lu invalid_frames=%lu queue_drops=%lu rx_timestamp_misses=%lu tx_timestamp_misses=%lu delay_responses=%lu auth_rejections=%lu selection_role=%u foreign_overflow=%lu unsupported_announces=%lu",
+                     static_cast<unsigned long>(s_ptp_valid_requests.load(std::memory_order_relaxed)),
+                     static_cast<unsigned long>(s_ptp_invalid_requests.load(std::memory_order_relaxed)),
+                     static_cast<unsigned long>(s_ptp_queue_drops.load(std::memory_order_relaxed)),
+                     static_cast<unsigned long>(s_ptp_rx_timestamp_misses.load(std::memory_order_relaxed)),
+                     static_cast<unsigned long>(s_ptp_tx_timestamp_misses.load(std::memory_order_relaxed)),
+                     static_cast<unsigned long>(s_ptp_delay_responses.load(std::memory_order_relaxed)),
+                     static_cast<unsigned long>(s_ptp_authentication_rejections.load(std::memory_order_relaxed)),
+                     static_cast<unsigned>(s_ptp_l2_master_selection.role(now_us)),
+                     static_cast<unsigned long>(s_ptp_l2_master_selection.overflow_drops()),
+                     static_cast<unsigned long>(s_ptp_l2_master_selection.unsupported_announces()));
+        }
+
+        const bool service_qualified = ptp_l2_service_qualified(now_us);
+#if CALCULATE_STACK_SIZES_ENABLED
+        report_current_task_stack_usage(PTP_L2_Service);
+#endif
+        if (service_qualified)
+            s_ptp_service_active.fetch_or(1U, std::memory_order_acq_rel);
+        else
+            s_ptp_service_active.fetch_and(static_cast<uint8_t>(~1U), std::memory_order_acq_rel);
+        portENTER_CRITICAL(&s_ptp_followers_mux);
+        if (service_qualified)
+            s_ptp_followers.expire(now_us);
+        else
+            s_ptp_followers.clear_transport(0);
+        portEXIT_CRITICAL(&s_ptp_followers_mux);
+        if (!service_qualified)
+            continue;
+
+        const int64_t sync_interval_us = 1000000LL << PTP_L2_LOG_SYNC_INTERVAL;
+        const int64_t announce_interval_us = 1000000LL << PTP_L2_LOG_ANNOUNCE_INTERVAL;
+        if (now_us - last_sync_us >= sync_interval_us)
+        {
+            ptp_clock_lock_t clock_lock;
+            if (!clock_lock.locked || !ptp_l2_service_qualified(esp_timer_get_time()))
+                continue;
+            last_sync_us = now_us;
+            uint8_t frame[PTP_L2_TX_FRAME_SIZE]{};
+            ptp_l2_build_frame(frame, 0, sync_sequence, PTP_L2_EVENT_SIZE);
+            ptp_write_sync_origin(frame + PTP_L2_FRAME_HEADER_SIZE + 34);
+            eth_mac_time_t egress{};
+            const uint32_t generation = s_ptp_clock_generation.load(std::memory_order_acquire);
+            const bool sent = (generation & 1U) == 0 && ptp_l2_transmit(frame, PTP_L2_EVENT_SIZE, sizeof(frame), &egress);
+            struct timespec raw_now{};
+            bool recent = false;
+            if (sent && timestamp_is_valid(&egress) && clock_gettime(CLOCK_PTP_SYSTEM, &raw_now) == 0)
+            {
+                const int64_t age_ns = static_cast<int64_t>(raw_now.tv_sec) * 1000000000LL + raw_now.tv_nsec -
+                                       (static_cast<int64_t>(egress.seconds) * 1000000000LL + egress.nanoseconds);
+                recent = age_ns > -2000000LL && age_ns < 100000000LL;
+            }
+            if (recent &&
+                generation == s_ptp_clock_generation.load(std::memory_order_acquire) &&
+                ptp_l2_service_qualified(esp_timer_get_time()))
+            {
+                ptp_l2_build_frame(frame, 8, sync_sequence, PTP_L2_EVENT_SIZE);
+                if (!ptp_write_timestamp(frame + PTP_L2_FRAME_HEADER_SIZE + 34, egress) ||
+                    !ptp_l2_transmit(frame, PTP_L2_EVENT_SIZE, sizeof(frame)))
+                {
+                    s_ptp_tx_timestamp_misses.fetch_add(1, std::memory_order_relaxed);
+                    s_ptp_l2_tx_healthy.store(false, std::memory_order_release);
+                }
+            }
+            else if ((generation & 1U) == 0 || sent)
+            {
+                s_ptp_tx_timestamp_misses.fetch_add(1, std::memory_order_relaxed);
+                s_ptp_l2_tx_healthy.store(false, std::memory_order_release);
+            }
+            ++sync_sequence;
+        }
+        if (now_us - last_announce_us >= announce_interval_us && ptp_l2_service_qualified(esp_timer_get_time()))
+        {
+            ptp_clock_lock_t clock_lock;
+            if (!clock_lock.locked || !ptp_l2_service_qualified(esp_timer_get_time()))
+                continue;
+            last_announce_us = now_us;
+            uint8_t frame[PTP_L2_TX_FRAME_SIZE]{};
+            ptp_l2_build_frame(frame, 11, announce_sequence++, PTP_L2_ANNOUNCE_SIZE);
+            if (!ptp_l2_transmit(frame, PTP_L2_ANNOUNCE_SIZE, sizeof(frame)))
+                s_ptp_l2_tx_healthy.store(false, std::memory_order_release);
+        }
+    }
+}
+
+static bool start_ptp_l2_service()
+{
+#if PTP_L2_AUTHENTICATION_ENABLED
+    if (!ptp_l2_auth_initialize())
+    {
+        ESP_LOGE(TAG, "PTP service disabled: authentication policy initialization failed; no unsigned fallback");
+        return false;
+    }
+#endif
+    const esp_eth_handle_t handle = s_eth_handle;
+    esp_eth_mac_t *mac = nullptr;
+    if (handle == nullptr || esp_eth_ioctl(handle, ETH_CMD_G_MAC_ADDR, s_ptp_source_mac) != ESP_OK ||
+        esp_eth_get_mac_instance(handle, &mac) != ESP_OK || mac == nullptr ||
+        mac->add_mac_filter(mac, const_cast<uint8_t *>(PTP_L2_MULTICAST_MAC)) != ESP_OK)
+        return false;
+    memcpy(s_ptp_identity, s_ptp_source_mac, 3);
+    s_ptp_identity[3] = 0xff;
+    s_ptp_identity[4] = 0xfe;
+    memcpy(s_ptp_identity + 5, s_ptp_source_mac + 3, 3);
+    s_ptp_l2_queue = xQueueCreate(PTP_L2_REQUEST_QUEUE_DEPTH, sizeof(ptp_l2_received_frame_t));
+    if (s_ptp_l2_queue == nullptr)
+        return false;
+    if (xTaskCreatePinnedToCore(ptp_l2_service_task, "ptp_l2_service", PTP_L2_Service_Task_Stack_Size, nullptr, 12, nullptr, 0) != pdPASS)
+    {
+        vQueueDelete(s_ptp_l2_queue);
+        s_ptp_l2_queue = nullptr;
+        return false;
+    }
+    s_ptp_l2_worker_ready.store(true, std::memory_order_release);
+    bool authentication_available = false;
+#if PTP_L2_AUTHENTICATION_ENABLED
+    authentication_available = ptp_l2_auth_available();
+#endif
+    ESP_LOGI(TAG, "L2 PTP GNSS enabled; selection=%s; authentication enabled=%d required=%d available=%d; outgoing=%s",
+             PTP_L2_MASTER_SELECTION_ENABLED ? "ranked election/standby" : "legacy any-Announce suppression",
+             PTP_L2_AUTHENTICATION_ENABLED, PTP_L2_AUTHENTICATION_REQUIRED, authentication_available,
+             authentication_available ? "signed HMAC-SHA256-128 v2.1" : "unsigned v2.0");
+    return true;
+}
+#endif
+#if PTP_L3_SERVER_ENABLED
+#include "custom/ptp_l3_udp_service.h"
+#endif
+#endif
+
 static esp_err_t ntp_ethernet_input(esp_eth_handle_t handle, uint8_t *frame, uint32_t length, void *netif, void *info)
 {
     s_ethernet_rx_frames.fetch_add(1, std::memory_order_relaxed);
+#if PTP_L2_SERVER_ENABLED
+    if (ptp_l2_receive_frame(frame, length, static_cast<const eth_mac_time_t *>(info)))
+    {
+        free(frame);
+        return ESP_OK;
+    }
+#endif
+#if PTP_L3_SERVER_ENABLED
+    if (ptp_l3_udp_receive_frame(frame, length, static_cast<const eth_mac_time_t *>(info)))
+    {
+        free(frame);
+        return ESP_OK;
+    }
+#endif
+    // L2-only operation has no lwIP interface; release all non-PTP traffic here.
+    if (netif == nullptr)
+    {
+        free(frame);
+        return ESP_OK;
+    }
+#if NTP_SERVER_ENABLED
     size_t ip_offset = 0;
     size_t udp_offset = 0;
     const eth_mac_time_t *rx_timestamp = static_cast<const eth_mac_time_t *>(info);
@@ -3490,8 +3902,12 @@ static esp_err_t ntp_ethernet_input(esp_eth_handle_t handle, uint8_t *frame, uin
         }
     }
     return ESP_OK;
+#else
+    return esp_netif_receive(static_cast<esp_netif_t *>(netif), frame, length, nullptr);
+#endif
 }
 
+#if NTP_SERVER_ENABLED
 static void ntp_cache_purge_task(void *parameter)
 {
     (void)parameter;
@@ -3530,6 +3946,8 @@ static void hardware_ntp_server_task(void *parameter)
         }
     }
 }
+
+#endif
 
 enum class ethernet_recovery_result_t : uint8_t
 {
@@ -3573,6 +3991,9 @@ static ethernet_recovery_result_t restart_ethernet_transport()
         return ethernet_recovery_result_t::retry_later;
 
     s_ethernet_recovery_in_progress.store(true, std::memory_order_release);
+#if PTP_ENABLED
+    ptp_invalidate_service();
+#endif
     s_hardware_ntp_accepting.store(false, std::memory_order_release);
     esp_err_t result = esp_eth_stop(handle);
     xSemaphoreGive(s_hardware_ntp_transmit_mutex);
@@ -3587,6 +4008,12 @@ static ethernet_recovery_result_t restart_ethernet_transport()
     vTaskDelay(pdMS_TO_TICKS(ETHERNET_RECOVERY_DELAY_MS));
     const uint32_t rx_before_recovery = s_ethernet_rx_frames.load(std::memory_order_relaxed);
     result = esp_eth_start(handle);
+    if (result != ESP_OK)
+    {
+        s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
+        return ethernet_recovery_result_t::driver_failed;
+    }
+    result = log_active_ethernet_mac();
     if (result != ESP_OK)
     {
         s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
@@ -3607,7 +4034,13 @@ static ethernet_recovery_result_t restart_ethernet_transport()
         s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
         return ethernet_recovery_result_t::timestamp_failed;
     }
+#if PTP_L2_SERVER_ENABLED
+    mac->rm_mac_filter(mac, const_cast<uint8_t *>(PTP_L2_MULTICAST_MAC));
+#endif
     if (esp_eth_mac_ptp_enable(mac, &ptp_config) != ESP_OK ||
+#if PTP_L2_SERVER_ENABLED
+        mac->add_mac_filter(mac, const_cast<uint8_t *>(PTP_L2_MULTICAST_MAC)) != ESP_OK ||
+#endif
         esp_eth_mac_enable_ts4all(mac, true) != ESP_OK ||
         esp_eth_update_input_path_info(handle, ntp_ethernet_input, s_eth_netif) != ESP_OK)
     {
@@ -3652,6 +4085,10 @@ static ethernet_recovery_result_t restart_ethernet_transport()
     s_ptp_clock_ready.store(true, std::memory_order_release);
     xSemaphoreGive(s_time_mutex);
     record_hw_tx_timestamp_result(true);
+#if PTP_L2_SERVER_ENABLED
+    s_ptp_l2_tx_healthy.store(true, std::memory_order_release);
+    s_ptp_l2_rx_healthy.store(true, std::memory_order_release);
+#endif
     s_hardware_ntp_accepting.store(true, std::memory_order_release);
     if ((xEventGroupWaitBits(s_net_event_group, ETH_CONNECTED_BIT, pdFALSE, pdFALSE,
                              pdMS_TO_TICKS(ETHERNET_RECOVERY_IP_TIMEOUT_MS)) &
@@ -3662,6 +4099,7 @@ static ethernet_recovery_result_t restart_ethernet_transport()
                    ? ethernet_recovery_result_t::link_unavailable
                    : ethernet_recovery_result_t::driver_failed;
     }
+#if NTP_SERVER_ENABLED
     const EventBits_t needed_ip = PreferIPvX == 1   ? ETH_GOT_IP_BIT
                                   : PreferIPvX == 2 ? ETH_GOT_ROUTABLE_IP6_BIT
                                   : PreferIPvX == 4 && s_ipv4_ever_acquired.load(std::memory_order_relaxed)
@@ -3675,6 +4113,7 @@ static ethernet_recovery_result_t restart_ethernet_transport()
            esp_timer_get_time() < receive_deadline_us)
         vTaskDelay(pdMS_TO_TICKS(100));
 
+#endif
     const bool linked = s_ethernet_connected.load(std::memory_order_acquire);
     const bool received_frame = s_ethernet_rx_frames.load(std::memory_order_relaxed) != rx_before_recovery;
     s_ethernet_recovery_in_progress.store(false, std::memory_order_release);
@@ -3686,9 +4125,13 @@ static ethernet_recovery_result_t restart_ethernet_transport()
     }
     if (!received_frame)
         return ethernet_recovery_result_t::receive_unavailable;
+#if NTP_SERVER_ENABLED
     return (xEventGroupGetBits(s_net_event_group) & needed_ip) != 0
                ? ethernet_recovery_result_t::recovered
                : ethernet_recovery_result_t::no_ip;
+#else
+    return ethernet_recovery_result_t::recovered;
+#endif
 }
 
 static void ethernet_recovery_worker_task(void *parameter)
@@ -3796,21 +4239,33 @@ static void ethernet_transport_recovery_task(void *parameter)
                 controlled_restart("ethernet_recovery_timestamp_unverified");
             }
         }
-        const bool timestamp_failure = s_hw_tx_timestamp_recovery_requested.load(std::memory_order_acquire);
+        const bool timestamp_failure = s_hw_tx_timestamp_recovery_requested.load(std::memory_order_acquire)
+#if PTP_L3_SERVER_ENABLED
+                                       || (link_up && s_ptp_l3_udp_worker_ready.load(std::memory_order_acquire) &&
+                                           (s_ptp_l3_udp_timestamp_fault.load(std::memory_order_acquire) ||
+                                            !s_ptp_clock_ready.load(std::memory_order_acquire)))
+#endif
+#if PTP_L2_SERVER_ENABLED
+                                       || (link_up && s_ptp_l2_worker_ready.load(std::memory_order_acquire) &&
+                                           (!s_ptp_l2_tx_healthy.load(std::memory_order_acquire) ||
+                                            !s_ptp_l2_rx_healthy.load(std::memory_order_acquire) ||
+                                            !s_ptp_clock_ready.load(std::memory_order_acquire)))
+#endif
+            ;
         const bool confirmed_stall = health == ntp_transport_health_t::stalled &&
                                      old_health == ntp_transport_health_t::stalled && link_up &&
                                      now_us - last_input_us < 2000000LL;
-        const bool silent_transport_failure = link_up && s_ntp_external_responses_enabled.load(std::memory_order_acquire) &&
+        const bool silent_transport_failure = link_up && NTP_SERVER_ENABLED && s_ntp_external_responses_enabled.load(std::memory_order_acquire) &&
                                               last_input_us > s_last_physical_link_down_us.load(std::memory_order_relaxed) &&
                                               now_us - last_input_us >= NTP_TRANSPORT_STALL_TIMEOUT_US &&
                                               now_us - last_rx_progress_us >= NTP_TRANSPORT_STALL_TIMEOUT_US &&
                                               (ipv4_missing || mqtt_unavailable ||
                                                (last_shedding_us > last_physical_link_down_us &&
                                                 last_shedding_us >= last_input_us - 1500000LL));
-        const bool address_failure = link_up && s_ntp_external_responses_enabled.load(std::memory_order_acquire) &&
+        const bool address_failure = link_up && NTP_SERVER_ENABLED && s_ntp_external_responses_enabled.load(std::memory_order_acquire) &&
                                      address_missing_since_us > 0 &&
                                      now_us - address_missing_since_us >= NTP_TRANSPORT_STALL_TIMEOUT_US;
-        const bool link_state_failure = !link_up && s_ntp_external_responses_enabled.load(std::memory_order_acquire) &&
+        const bool link_state_failure = !link_up && NTP_SERVER_ENABLED && s_ntp_external_responses_enabled.load(std::memory_order_acquire) &&
                                         link_missing_since_us > 0 &&
                                         now_us - link_missing_since_us >= NTP_TRANSPORT_STALL_TIMEOUT_US &&
                                         physical_ethernet_link_status() != physical_link_status_t::down;
@@ -3825,6 +4280,7 @@ static void ethernet_transport_recovery_task(void *parameter)
             ESP_LOGW(TAG, "Recovering Ethernet: stalled=%d silent=%d no_ip=%d link_state=%d timestamp=%d",
                      confirmed_stall, silent_transport_failure, address_failure, link_state_failure,
                      timestamp_failure);
+#if NTP_SERVER_ENABLED
             ESP_LOGW(TAG, "Ethernet ingress snapshot: frames=%" PRIu32 " NTP=%" PRIu32 " pending=%u free_buffers=%u",
                      rx_frames, input,
                      s_hardware_ntp_request_queue != nullptr
@@ -3833,6 +4289,7 @@ static void ethernet_transport_recovery_task(void *parameter)
                      s_hardware_ntp_request_buffer_queue != nullptr
                          ? static_cast<unsigned>(uxQueueMessagesWaiting(s_hardware_ntp_request_buffer_queue))
                          : 0U);
+#endif
             const ethernet_recovery_result_t result = recover_ethernet_with_timeout();
             ESP_LOGW(TAG, "Ethernet recovery result: %u (0=recovered)", static_cast<unsigned>(result));
             if (result == ethernet_recovery_result_t::recovered)
@@ -3873,12 +4330,29 @@ static void synchronize_hardware_clock()
         return;
     }
     TIMING_LOGI(TAG, "PTP clock set.");
+#if PTP_ENABLED
+    ptp_invalidate_service();
+#endif
 #if PTP_FREE_RUNNING
     s_ptp_epoch.fetch_add(1, std::memory_order_acq_rel); // the servo starts its estimate again
 #endif
 }
 
 #if PTP_FREE_RUNNING
+static bool ptp_pps_output_available(const esp_chip_info_t &chip_info)
+{
+#if CONFIG_IDF_TARGET_ESP32P4 && defined(CONFIG_ESP32P4_REV_MIN_FULL)
+    // The P4 signal mapping is compiled out when the selected minimum is below v3.0.
+    return chip_info.model == CHIP_ESP32P4 && chip_info.revision >= 300 &&
+           CONFIG_ESP32P4_REV_MIN_FULL >= 300;
+#elif CONFIG_IDF_TARGET_ESP32S31
+    return chip_info.model == CHIP_ESP32S31;
+#else
+    (void)chip_info;
+    return false;
+#endif
+}
+
 // Capture of the EMAC PTP pulse (PTP PPS loopback): only the capture ticks are stored, the PPS task pairs them
 // with the GNSS PPS edges
 static bool IRAM_ATTR ptp_pps_capture_callback(mcpwm_cap_channel_handle_t,
@@ -3894,68 +4368,90 @@ static bool IRAM_ATTR ptp_pps_capture_callback(mcpwm_cap_channel_handle_t,
     return false;
 }
 
-// PTP PPS loopback: the EMAC outputs its PPS on PTPPPSLoopbackPin, and a second channel of the PPS capture timer
-// reads the same pad back. Nothing has to be wired.
-static void setup_ptp_pps_loopback(esp_eth_mac_t *mac)
+// Register both MCPWM capture interrupts on the same core before starting Ethernet tasks.
+static void setup_ptp_pps_capture()
 {
     if (PTPPPSLoopbackPin < 0)
         return;
 
     esp_chip_info_t chip_info{};
     esp_chip_info(&chip_info);
-    if (chip_info.revision < 300)
+    if (!ptp_pps_output_available(chip_info))
     {
-        TIMING_LOGW(TAG, "PTP PPS loopback requires chip revision v3.0 or later (detected v%u.%u); software measurement is used",
+        TIMING_LOGW(TAG, "PTP PPS loopback is unavailable for this chip/build (model %d, revision %u.%u); software measurement is used",
+                    static_cast<int>(chip_info.model),
                     static_cast<unsigned>(chip_info.revision / 100),
                     static_cast<unsigned>(chip_info.revision % 100));
         return;
     }
 
-    if (s_ptp_loopback_active.load(std::memory_order_acquire))
-    {
-        // Already set up: after an Ethernet recovery only the output mode of the EMAC is set again
-        esp_eth_mac_set_pps_out_freq(mac, 0);
-        return;
-    }
     if (PTPPPSLoopbackPin == PPSPin || s_pps_capture_timer == nullptr)
     {
         TIMING_LOGW(TAG, "PTP PPS loopback: GPIO %d cannot be used (it must not be the PPS pin)", PTPPPSLoopbackPin);
         return;
     }
 
-    // 1 PPS output: rising edge at every second of the PTP clock
-    esp_err_t err = esp_eth_mac_set_pps_out_gpio(mac, PTPPPSLoopbackPin);
-    if (err == ESP_OK)
-        err = esp_eth_mac_set_pps_out_freq(mac, 0);
-    if (err != ESP_OK)
-    {
-        TIMING_LOGW(TAG, "PTP PPS loopback: PPS output on GPIO %d failed (%s), software measurement is used",
-                    PTPPPSLoopbackPin, esp_err_to_name(err));
-        return;
-    }
-
     mcpwm_capture_channel_config_t channel_config{};
-    channel_config.gpio_num = PTPPPSLoopbackPin; // also enables the input of the pad, the output stays connected
+    channel_config.gpio_num = PTPPPSLoopbackPin;
     channel_config.prescale = 1;
     channel_config.flags.pos_edge = true;
     mcpwm_cap_channel_handle_t channel = nullptr;
-    err = mcpwm_new_capture_channel(s_pps_capture_timer, &channel_config, &channel);
+    esp_err_t err = mcpwm_new_capture_channel(s_pps_capture_timer, &channel_config, &channel);
     if (err == ESP_OK)
     {
         mcpwm_capture_event_callbacks_t callbacks{};
         callbacks.on_cap = ptp_pps_capture_callback;
         err = mcpwm_capture_channel_register_event_callbacks(channel, &callbacks, nullptr);
-        if (err == ESP_OK)
-            err = mcpwm_capture_channel_enable(channel);
     }
     if (err != ESP_OK)
     {
         TIMING_LOGW(TAG, "PTP PPS loopback: capture channel on GPIO %d failed (%s), software measurement is used",
                     PTPPPSLoopbackPin, esp_err_to_name(err));
         if (channel != nullptr)
-            mcpwm_del_capture_channel(channel);
+        {
+            const esp_err_t cleanup_err = mcpwm_del_capture_channel(channel);
+            if (cleanup_err != ESP_OK)
+                TIMING_LOGE(TAG, "PTP PPS loopback: capture channel cleanup failed (%s)", esp_err_to_name(cleanup_err));
+        }
         return;
     }
+    s_ptp_pps_capture_channel = channel;
+}
+
+// The EMAC outputs PPS and the preallocated capture channel reads the same pad back; no wire is needed.
+static void setup_ptp_pps_loopback(esp_eth_mac_t *mac)
+{
+    if (s_ptp_pps_capture_channel == nullptr)
+        return;
+
+    esp_err_t err = ESP_OK;
+    if (!s_ptp_pps_output_configured)
+    {
+        err = esp_eth_mac_set_pps_out_gpio(mac, PTPPPSLoopbackPin);
+        if (err == ESP_OK)
+            s_ptp_pps_output_configured = true;
+    }
+    if (err == ESP_OK)
+        err = esp_eth_mac_set_pps_out_freq(mac, 0);
+    // Keep pad input enabled alongside the EMAC output for internal loopback.
+    if (err == ESP_OK)
+        err = gpio_input_enable(static_cast<gpio_num_t>(PTPPPSLoopbackPin));
+    if (err == ESP_OK && !s_ptp_pps_capture_enabled)
+    {
+        err = mcpwm_capture_channel_enable(s_ptp_pps_capture_channel);
+        if (err == ESP_OK)
+            s_ptp_pps_capture_enabled = true;
+    }
+    if (err != ESP_OK)
+    {
+        s_ptp_loopback_active.store(false, std::memory_order_release);
+        TIMING_LOGW(TAG, "PTP PPS loopback: activation on GPIO %d failed (%s), software measurement is used",
+                    PTPPPSLoopbackPin, esp_err_to_name(err));
+        return;
+    }
+    if (s_ptp_loopback_active.load(std::memory_order_acquire))
+        return;
+
     s_ptp_loopback_active.store(true, std::memory_order_release);
     TIMING_LOGI(TAG, "PTP PPS loopback on GPIO %d: the PTP clock is measured against the PPS in hardware", PTPPPSLoopbackPin);
 }
@@ -4270,7 +4766,7 @@ static void process_nmea_gsv_sentence(const char *sentence)
     char signal_id[4] = "";
     (void)get_nmea_field(sentence, 4 + satellites_in_message * 4, signal_id, sizeof(signal_id));
 
-    const uint32_t now_ms = millis();
+    const uint32_t now_ms = uptime_ms();
     expire_nmea_gsv_groups(now_ms);
 
     nmea_gsv_group_t *group = nullptr;
@@ -4310,62 +4806,116 @@ static void process_nmea_gsv_sentence(const char *sentence)
 }
 #endif
 
+struct nmea_sentence_buffer_t
+{
+    enum class kind_t : uint8_t
+    {
+        header,
+        rmc,
+        gsv,
+        ignored
+    };
+    char sentence[128]{};
+    size_t length = 0;
+    size_t wire_length = 0;
+    unsigned field = 0;
+    kind_t kind = kind_t::ignored;
+    bool collecting = false;
+
+    bool consume(char ch)
+    {
+        if (ch == '$')
+        {
+            sentence[0] = ch;
+            sentence[1] = '\0';
+            length = wire_length = 1;
+            field = 0;
+            kind = kind_t::header;
+            collecting = true;
+            return false;
+        }
+        if (!collecting)
+            return false;
+        if (ch == '\r' || ch == '\n')
+        {
+            collecting = false;
+            sentence[length] = '\0';
+            return true;
+        }
+        if (ch < 32 || ch > 126)
+            return false;
+        if (wire_length >= sizeof(sentence) - 1)
+        {
+            collecting = false;
+            return false;
+        }
+        ++wire_length;
+        if (kind == kind_t::header && ch == ',')
+        {
+            sentence[length] = '\0';
+            const char *type = sentence + 1;
+            const size_t type_length = strlen(type);
+            if (type_length >= 3 && strcmp(type + type_length - 3, "RMC") == 0)
+                kind = kind_t::rmc;
+#if !UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
+            else if (type_length == 5 && strcmp(type + 2, "GSV") == 0)
+                kind = kind_t::gsv;
+#endif
+            else
+                kind = kind_t::ignored;
+        }
+        if (kind == kind_t::ignored)
+            return false;
+        if (kind == kind_t::rmc)
+        {
+            if (ch == ',')
+            {
+                ++field;
+                if (field > 9)
+                    return false;
+            }
+            else if (ch == '*')
+            {
+                field = 10;
+                return false;
+            }
+            else if (field != 0 && field != 1 && field != 2 && field != 9)
+                return false;
+        }
+        sentence[length++] = ch;
+        sentence[length] = '\0';
+        return false;
+    }
+};
+
 static bool wait_for_nmea_rmc_time(nmea_rmc_time_t *time_data, uint32_t timeout_ms)
 {
     if (time_data == nullptr)
         return false;
 
-    uint32_t start_ms = millis();
-    char sentence[128] = "";
-    size_t index = 0;
-    bool collecting = false;
+    uint32_t start_ms = uptime_ms();
+    nmea_sentence_buffer_t sentence{};
 
-    while ((millis() - start_ms) < timeout_ms)
+    while ((uptime_ms() - start_ms) < timeout_ms)
     {
-        while (s_gnss_serial.available() > 0)
+        for (;;)
         {
-            int value = s_gnss_serial.read();
-            if (value < 0)
+            uint8_t value = 0;
+            bool has_data = false;
+            if (!read_gnss_uart_byte(&value, &has_data))
+                return false;
+            if (!has_data)
                 break;
 
-            char ch = static_cast<char>(value);
-            if (ch == '$')
+            if (sentence.consume(static_cast<char>(value)))
             {
-                collecting = true;
-                index = 0;
-                sentence[index++] = ch;
-                continue;
-            }
-
-            if (!collecting)
-                continue;
-
-            if (ch == '\r' || ch == '\n')
-            {
-                sentence[index] = '\0';
-#if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
-#else
-                process_nmea_gsv_sentence(sentence);
+#if !UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
+                if (sentence.kind == nmea_sentence_buffer_t::kind_t::gsv)
+                    process_nmea_gsv_sentence(sentence.sentence);
 #endif
-                if (parse_nmea_rmc_sentence(sentence, time_data))
+                if (sentence.kind == nmea_sentence_buffer_t::kind_t::rmc &&
+                    parse_nmea_rmc_sentence(sentence.sentence, time_data))
                     return true;
-
-                collecting = false;
-                index = 0;
-                continue;
-            }
-
-            if (ch >= 32 && ch <= 126)
-            {
-                if (index < sizeof(sentence) - 1)
-                {
-                    sentence[index++] = ch;
-                }
-                else
-                {
-                    collecting = false;
-                    index = 0;
-                }
             }
         }
 
@@ -4379,25 +4929,98 @@ struct gnss_probe_result_t
 {
     bool saw_data = false;
     bool saw_valid_protocol_traffic = false;
+    bool transport_error = false;
     size_t bytes_seen = 0;
-    char sample[33] = "";
 };
 
 static bool wait_for_gnss_pvt(uint16_t timeout_ms)
 {
-    const int64_t deadline_us = esp_timer_get_time() + static_cast<int64_t>(timeout_ms) * 1000LL;
-    do
-    {
-        if (s_gnss.getPVT(timeout_ms))
-            return true;
-        if (s_gnss.packetUBXNAVPVT == nullptr ||
-            !s_gnss.packetUBXNAVPVT->automaticFlags.flags.bits.automatic ||
-            esp_timer_get_time() >= deadline_us)
-            return false;
+    const gnss::Status result = s_gnss.next_pvt(s_gnss_time_solution, timeout_ms);
+    if (result != gnss::Status::ok)
+        TIMING_LOGW(TAG, "GNSS NAV-PVT acquisition failed: %s", gnss::status_name(result));
+    return result == gnss::Status::ok;
+}
 
-        vTaskDelay(pdMS_TO_TICKS(10));
-    } while (esp_timer_get_time() < deadline_us);
-    return false;
+static bool publish_leap_information(int64_t utc, bool second_60,
+                                     const timescale::LeapSeconds &observed = {},
+                                     int16_t reported_offset = 0)
+{
+    const int64_t now_us = esp_timer_get_time();
+    const auto previous = s_leap_state.read();
+    timescale::LeapSeconds selected{};
+    bool qualified = timescale::select_leap_seconds(utc, now_us, previous, observed, selected);
+    const bool near_event = selected.change != 0 && utc >= selected.event_utc - 2 &&
+                            utc <= selected.event_utc + 2 &&
+                            (reported_offset == selected.offset ||
+                             reported_offset == selected.offset + selected.change);
+    if (reported_offset != 0 && reported_offset != timescale::offset_at_utc(selected, utc) && !near_event)
+    {
+        selected = {false, reported_offset, 0, 0, now_us};
+        qualified = false;
+    }
+    int64_t old_tai = 0, new_tai = 0;
+    if (!qualified || !selected.from_utc(utc, second_60, new_tai))
+    {
+        TIMING_LOGW(TAG, "UTC/TAI policy unavailable, conflicting, or incompatible with the GNSS label; service unqualified.");
+        selected.valid = false;
+        s_leap_state.publish(selected);
+        s_timescale_requalification_required.store(true, std::memory_order_release);
+        return false;
+    }
+    if (!previous.valid || !previous.from_utc(utc, second_60, old_tai) || old_tai != new_tai)
+        s_timescale_requalification_required.store(true, std::memory_order_release);
+    if (!previous.valid || previous.source != selected.source)
+        TIMING_LOGI(TAG, "UTC/TAI source: %s; TAI-UTC=%d seconds.",
+                    selected.source == timescale::LeapSource::Gnss ? "GNSS NAV-TIMELS" : selected.source == timescale::LeapSource::Bulletin ? "embedded IANA bulletin"
+                                                                                                                                            : "CGPM continuous UTC",
+                    static_cast<int>(selected.utc_offset(new_tai)));
+    s_leap_state.publish(selected);
+    return true;
+}
+
+static bool refresh_leap_information(const gnss::TimeSolution &input)
+{
+    const gnss::TimeSolution pvt = input;
+    static int64_t last_attempt_us = -30000000LL;
+    const int64_t now_us = esp_timer_get_time();
+    const bool pvt_valid = pvt.date_valid && pvt.time_valid &&
+                           pvt.fully_resolved && pvt.year > 2025 &&
+                           pvt.month >= 1 && pvt.month <= 12 && pvt.day >= 1 && pvt.day <= 31 &&
+                           pvt.hour <= 23 && pvt.minute <= 59 && pvt.second <= 60;
+    if (!pvt_valid)
+    {
+        TIMING_LOGW(TAG, "GNSS UTC label is invalid or unresolved; no leap-policy qualification.");
+        return false;
+    }
+    const int64_t utc = epoch_from_utc(pvt.year, pvt.month, pvt.day, pvt.hour, pvt.minute, pvt.second);
+    if (now_us - last_attempt_us < 30000000LL)
+        return publish_leap_information(utc, pvt.second == 60);
+    last_attempt_us = now_us;
+
+    gnss::LeapInformation data{};
+    const gnss::Status leap_result = s_gnss.leap_information(data, 1500);
+    if (leap_result != gnss::Status::ok)
+    {
+        TIMING_LOGW(TAG, "GNSS NAV-TIMELS unavailable (%s); checking cached data and authoritative UTC policy.",
+                    gnss::status_name(leap_result));
+        return publish_leap_information(utc, pvt.second == 60);
+    }
+    timescale::LeapSeconds decoded{};
+    if (!timescale::decode_leap_seconds(data.version, data.valid, data.current_source,
+                                        data.change_source, data.current_leap_seconds, data.leap_change,
+                                        data.time_to_event, data.itow, pvt.itow,
+                                        utc,
+                                        pvt.second == 60, now_us, s_leap_state.read(), decoded))
+    {
+        decoded = {};
+        TIMING_LOGW(TAG, "GNSS NAV-TIMELS incomplete or invalid; checking authoritative fallback.");
+    }
+    const int16_t reported_offset = data.version == 0 && (data.valid & 1U) != 0 &&
+                                            timescale::live_leap_source(data.current_source) &&
+                                            data.current_leap_seconds >= 0 && data.current_leap_seconds <= 100
+                                        ? static_cast<int16_t>(data.current_leap_seconds + 19)
+                                        : 0;
+    return publish_leap_information(utc, pvt.second == 60, decoded, reported_offset);
 }
 
 static bool current_gnss_timing_is_valid()
@@ -4405,7 +5028,10 @@ static bool current_gnss_timing_is_valid()
     if (s_use_nmea_fallback)
     {
         nmea_rmc_time_t nmea_time{};
-        return wait_for_nmea_rmc_time(&nmea_time, 1200UL);
+        return wait_for_nmea_rmc_time(&nmea_time, 1200UL) &&
+               publish_leap_information(epoch_from_utc(nmea_time.year, nmea_time.month, nmea_time.day,
+                                                       nmea_time.hour, nmea_time.minute, nmea_time.second),
+                                        nmea_time.second == 60);
     }
 
     // Get the latest Position/Velocity/Time solution and fill all global variables
@@ -4418,14 +5044,14 @@ static bool current_gnss_timing_is_valid()
         return false;
     };
 
-    uint8_t fix_type = s_gnss.getFixType(status_query_timeout_ms); // 0 - No fix; 1 - Dead reckoning only; 2 - 2D-fix; 3: 3D-fix; 4 - GNSS + dead reckoning combined; 5 - Time only fix
+    const gnss::TimeSolution pvt = s_gnss_time_solution;
+    const uint8_t fix_type = pvt.fix_type;
 #if MQTT_ENABLED
-    uint8_t satellites = s_gnss.getSIV(status_query_timeout_ms);
-    mqtt_note_satellite_count(satellites);
+    mqtt_note_satellite_count(pvt.satellites);
 #endif
-    bool gnss_fix_ok = s_gnss.getGnssFixOk(status_query_timeout_ms);
-    bool date_valid = s_gnss.getDateValid(status_query_timeout_ms);
-    bool time_valid = s_gnss.getTimeValid(status_query_timeout_ms);
+    const bool gnss_fix_ok = pvt.fix_ok;
+    const bool date_valid = pvt.date_valid;
+    const bool time_valid = pvt.time_valid;
 
 #if DEBUG_ENABLED
 
@@ -4444,7 +5070,8 @@ static bool current_gnss_timing_is_valid()
 
 #endif
 
-    return (fix_type > 2) && gnss_fix_ok && date_valid && time_valid;
+    const bool leap_valid = refresh_leap_information(pvt);
+    return (fix_type > 2) && gnss_fix_ok && date_valid && time_valid && pvt.fully_resolved && leap_valid;
 }
 
 static gnss_probe_result_t probe_gnss_uart(uint32_t baud);
@@ -4454,7 +5081,6 @@ static gnss_probe_result_t probe_gnss_uart(uint32_t baud)
     static constexpr uint16_t gnssProbeListenTimeMs = 1500;
     static constexpr uint16_t max_ubx_payload_length = 1024;
     gnss_probe_result_t result{};
-    size_t sample_len = 0;
     uint8_t nmea_header_length = 0;
     uint8_t ubx_state = 0;
     uint16_t ubx_payload_length = 0;
@@ -4463,34 +5089,30 @@ static gnss_probe_result_t probe_gnss_uart(uint32_t baud)
     uint8_t ubx_checksum_b = 0;
     uint8_t ubx_received_checksum_a = 0;
 
-    s_gnss_serial.end();
-    s_gnss_serial.begin(baud, SERIAL_8N1, RXPin, TXPin);
+    if (!reopen_gnss_uart(baud))
+    {
+        result.transport_error = true;
+        return result;
+    }
     vTaskDelay(pdMS_TO_TICKS(150));
 
-    uint32_t start_ms = millis();
-    while ((millis() - start_ms) < gnssProbeListenTimeMs)
+    uint32_t start_ms = uptime_ms();
+    while ((uptime_ms() - start_ms) < gnssProbeListenTimeMs)
     {
-        while (s_gnss_serial.available() > 0)
+        for (;;)
         {
-            int value = s_gnss_serial.read();
-            if (value < 0)
+            uint8_t byte = 0;
+            bool has_data = false;
+            if (!read_gnss_uart_byte(&byte, &has_data))
+            {
+                result.transport_error = true;
+                return result;
+            }
+            if (!has_data)
                 break;
 
-            uint8_t byte = static_cast<uint8_t>(value);
             result.saw_data = true;
             result.bytes_seen++;
-
-            if (sample_len < (sizeof(result.sample) - 1))
-            {
-                char character = static_cast<char>(byte);
-                if (character >= 32 && character <= 126)
-                    result.sample[sample_len++] = character;
-                else if (character == '\r' || character == '\n' || character == '\t')
-                    result.sample[sample_len++] = ' ';
-                else
-                    result.sample[sample_len++] = '.';
-                result.sample[sample_len] = '\0';
-            }
 
             if (nmea_header_length == 0)
                 nmea_header_length = byte == '$' ? 1 : 0;
@@ -4568,24 +5190,31 @@ static bool try_gnss_begin(uint32_t baud, bool assume_success, bool *saw_serial_
     static constexpr uint16_t gnssBeginMaxWaitMs = 2500;
 
     gnss_probe_result_t probe_result = probe_gnss_uart(baud);
+    if (probe_result.transport_error)
+        return false;
     if (probe_result.saw_data && saw_serial_data != nullptr)
         *saw_serial_data = true;
 
 #if DEBUG_ENABLED
     ESP_LOGI(TAG,
-             "GNSS probe at %lu baud: %u bytes seen, valid protocol traffic=%s, sample: %s",
+             "GNSS probe at %lu baud: %u bytes seen, valid protocol traffic=%s",
              static_cast<unsigned long>(baud),
              static_cast<unsigned int>(probe_result.bytes_seen),
-             probe_result.saw_valid_protocol_traffic ? "yes" : "no",
-             probe_result.saw_data ? probe_result.sample : "<none>");
+             probe_result.saw_valid_protocol_traffic ? "yes" : "no");
 #endif
 
-    s_gnss_serial.end();
-    s_gnss_serial.begin(baud, SERIAL_8N1, RXPin, TXPin);
+    if (!reopen_gnss_uart(baud))
+        return false;
     vTaskDelay(pdMS_TO_TICKS(150));
 
-    bool begin_result = s_gnss.begin(s_gnss_serial, gnssBeginMaxWaitMs, assume_success);
-    bool communication_confirmed = begin_result || (assume_success && probe_result.saw_valid_protocol_traffic);
+    const gnss::Status begin_result = s_gnss.probe(gnssBeginMaxWaitMs);
+    if (begin_result == gnss::Status::transport_error)
+    {
+        ESP_LOGE(TAG, "GNSS UART probe failed: %s", gnss::status_name(begin_result));
+        return false;
+    }
+    const bool communication_confirmed = begin_result == gnss::Status::ok ||
+                                         (assume_success && probe_result.saw_valid_protocol_traffic);
 #if DEBUG_ENABLED
     ESP_LOGI(TAG,
              "GNSS begin at %lu baud with assume_success=%s -> %s",
@@ -4671,13 +5300,15 @@ static bool change_gnss_baud_rate(uint32_t from_baud, uint32_t to_baud)
              static_cast<unsigned long>(to_baud));
 #endif
 
-    bool baud_change_command_reported_success = s_gnss.setSerialRate(to_baud, COM_PORT_UART1, VAL_LAYER_RAM_BBR);
+    const gnss::Status baud_result = s_gnss.set_uart1_baud(to_baud, 250);
+    if (baud_result == gnss::Status::transport_error)
+        ESP_LOGE(TAG, "GNSS baud-change transport failed: %s", gnss::status_name(baud_result));
     vTaskDelay(pdMS_TO_TICKS(200));
     if (!confirm_saved_gnss_baud_rate(to_baud))
         return false;
 
 #if DEBUG_ENABLED
-    if (!baud_change_command_reported_success)
+    if (baud_result != gnss::Status::ok)
         ESP_LOGI(TAG, "While the GNSS baud-rate change command to %lu was not acknowledged, the reconnect succeeded at the new baud.", static_cast<unsigned long>(to_baud));
 #endif
     return true;
@@ -4740,14 +5371,16 @@ static bool set_gnss_baud_rate(int max_attempts, gnss_identity_t *working_baud_i
                              static_cast<unsigned long>(higher_baud));
 #endif
 
-                    bool baud_change_command_reported_success = s_gnss.setSerialRate(higher_baud, COM_PORT_UART1, VAL_LAYER_RAM_BBR);
+                    const gnss::Status baud_result = s_gnss.set_uart1_baud(higher_baud, 250);
+                    if (baud_result == gnss::Status::transport_error)
+                        ESP_LOGE(TAG, "GNSS baud-change transport failed: %s", gnss::status_name(baud_result));
                     vTaskDelay(pdMS_TO_TICKS(200));
 
                     if (confirm_saved_gnss_baud_rate(higher_baud))
                     {
                         highest_working_baud = higher_baud;
 #if DEBUG_ENABLED
-                        if (!baud_change_command_reported_success)
+                        if (baud_result != gnss::Status::ok)
                             ESP_LOGI(TAG, "While the GNSS baud-rate change command to %lu was not acknowledged, the reconnect succeeded at the new baud.", static_cast<unsigned long>(higher_baud));
 #endif
                         continue;
@@ -4784,7 +5417,7 @@ static bool set_gnss_baud_rate(int max_attempts, gnss_identity_t *working_baud_i
 
 #if DEBUG_ENABLED
     if (saw_any_serial_data)
-        ESP_LOGW(TAG, "GNSS serial data was detected, but SparkFun u-blox GNSS v3 could not initialize the module. The module may be an older NEO-6/7/M8 variant.");
+        ESP_LOGW(TAG, "GNSS serial data was detected, but the native u-blox receiver could not initialize the module. The module may be an older NEO-6/7/M8 variant.");
     else
         ESP_LOGW(TAG, "No GNSS serial data was detected on GPIO%d/GPIO%d at any tested baud rate. Check power, TX/RX wiring, and signal levels.", RXPin, TXPin);
 #endif
@@ -4794,19 +5427,30 @@ static bool set_gnss_baud_rate(int max_attempts, gnss_identity_t *working_baud_i
 
 static bool configure_gnss_outputs(bool *uart1_output_set_result)
 {
+    gnss::Status i2c_result = gnss::Status::ok;
+    gnss::Status uart2_result = gnss::Status::ok;
+    gnss::Status i2c_rtcm_result = gnss::Status::ok;
+    gnss::Status uart2_rtcm_result = gnss::Status::ok;
 #if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
-    bool i2c_output_disabled = s_gnss.setI2COutput(0);
-    bool uart2_output_disabled = s_gnss.setUART2Output(0);
-#else
-    bool i2c_output_disabled = true;
-    bool uart2_output_disabled = true;
+    i2c_result = s_gnss.configure_output(gnss::OutputPort::i2c, false, false, &i2c_rtcm_result, 1500);
+    uart2_result = s_gnss.configure_output(gnss::OutputPort::uart2, false, false, &uart2_rtcm_result, 1500);
 #endif
 
-    bool uart1_output_set = s_gnss.setUART1Output(COM_TYPE_UBX | COM_TYPE_NMEA);
+    gnss::Status uart1_rtcm_result = gnss::Status::ok;
+    const gnss::Status uart1_result = s_gnss.configure_output(gnss::OutputPort::uart1, true, true, &uart1_rtcm_result, 1500);
+    const bool uart1_output_set = uart1_result == gnss::Status::ok;
+    if (i2c_result == gnss::Status::transport_error || uart2_result == gnss::Status::transport_error ||
+        uart1_result == gnss::Status::transport_error)
+        ESP_LOGE(TAG, "GNSS UART transport failed during receiver output configuration");
+    TIMING_LOGI(TAG, "GNSS RTCM output disable: I2C=%s, UART1=%s, UART2=%s",
+                gnss::status_name(i2c_rtcm_result), gnss::status_name(uart1_rtcm_result),
+                gnss::status_name(uart2_rtcm_result));
     bool timing_output_set = uart1_output_set;
 #if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
-    const bool auto_pvt_set = uart1_output_set &&
-                              s_gnss.setAutoPVT(true, true, VAL_LAYER_RAM, 1500);
+    const gnss::Status auto_result = uart1_output_set ? s_gnss.enable_automatic_pvt(1500) : uart1_result;
+    const bool auto_pvt_set = auto_result == gnss::Status::ok;
+    if (auto_result == gnss::Status::transport_error)
+        ESP_LOGE(TAG, "GNSS UART transport failed while enabling automatic NAV-PVT");
     timing_output_set = uart1_output_set && auto_pvt_set;
     if (auto_pvt_set)
         TIMING_LOGI(TAG, "GNSS timing: automatic NAV-PVT enabled on UART1 (RAM only).");
@@ -4818,6 +5462,8 @@ static bool configure_gnss_outputs(bool *uart1_output_set_result)
         *uart1_output_set_result = timing_output_set;
 
 #if DEBUG_ENABLED
+    const bool i2c_output_disabled = i2c_result == gnss::Status::ok;
+    const bool uart2_output_disabled = uart2_result == gnss::Status::ok;
     ESP_LOGI(TAG,
              "GNSS port config results: I2C off=%s, UART1 UBX=%s, UART2 off=%s",
              i2c_output_disabled ? "ok" : "failed",
@@ -4919,8 +5565,7 @@ static void setup_pps_input()
     // Query the actual resolution: the driver may differ from the requested value
     uint32_t actual_hz = 0;
     ESP_ERROR_CHECK(mcpwm_capture_timer_get_resolution(s_pps_capture_timer, &actual_hz));
-    if (actual_hz == 0)
-        actual_hz = PPS_CAPTURE_RESOLUTION_HZ;
+    ESP_ERROR_CHECK(actual_hz != 0 ? ESP_OK : ESP_ERR_INVALID_STATE);
     s_pps_capture_hz = actual_hz;
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "PPS capture timer resolution: %lu Hz (requested %lu Hz)",
@@ -4936,6 +5581,9 @@ static void setup_pps_input()
     mcpwm_capture_event_callbacks_t callbacks{};
     callbacks.on_cap = pps_capture_callback;
     ESP_ERROR_CHECK(mcpwm_capture_channel_register_event_callbacks(s_pps_capture_channel, &callbacks, nullptr));
+#if PTP_FREE_RUNNING
+    setup_ptp_pps_capture();
+#endif
     ESP_ERROR_CHECK(mcpwm_capture_channel_enable(s_pps_capture_channel));
     ESP_ERROR_CHECK(mcpwm_capture_timer_enable(s_pps_capture_timer));
     ESP_ERROR_CHECK(mcpwm_capture_timer_start(s_pps_capture_timer));
@@ -5551,6 +6199,9 @@ static bool ptp_write_from_edge(int64_t pps_second, double edge_local_us, bool c
         struct timespec ts{};
         ts.tv_sec = static_cast<time_t>(total_ns / 1000000000LL);
         ts.tv_nsec = static_cast<long>(total_ns % 1000000000LL);
+#if PTP_ENABLED
+        ptp_invalidate_service();
+#endif
         if (clock_settime(CLOCK_PTP_SYSTEM, &ts) != 0)
             continue;
         written = true;
@@ -5832,6 +6483,9 @@ static void ptp_servo_step(int64_t edge_sec, double edge_local_us, double offset
 {
     ptp_servo_state_t &st = s_ptp_servo;
     s_ptp_comp_valid.store(false, std::memory_order_release);
+#if PTP_ENABLED
+    ptp_invalidate_service();
+#endif
     // Run at the estimated GNSS rate right away, so the raw clock is usable until the next measurement
     ptp_apply_command(static_cast<int32_t>(std::clamp(llround(-st.free_ppb), static_cast<long long>(-ptp_max_command_ppb),
                                                       static_cast<long long>(ptp_max_command_ppb))));
@@ -6696,17 +7350,19 @@ static void setup_gnss()
     static constexpr uint16_t gnssBeginMaxWaitMs = 2500;
     bool assume_success = false;
 
-    s_gnss_serial.end();
-    s_gnss_serial.begin(baud, SERIAL_8N1, RXPin, TXPin);
+    if (!reopen_gnss_uart(baud))
+        halt_with_display("GNSS UART failed", "Check TX/RX pins", "See serial log");
     vTaskDelay(pdMS_TO_TICKS(150));
 
-    bool begin_result = s_gnss.begin(s_gnss_serial, gnssBeginMaxWaitMs, assume_success);
+    const gnss::Status begin_result = s_gnss.probe(gnssBeginMaxWaitMs);
+    if (begin_result == gnss::Status::transport_error)
+        halt_with_display("GNSS UART failed", "Check TX/RX pins", "See serial log");
 #if DEBUG_ENABLED
     ESP_LOGI(TAG,
              "GNSS begin at %lu baud with assume_success=%s -> %s",
              static_cast<unsigned long>(baud),
              assume_success ? "true" : "false",
-             begin_result ? "success" : "failed");
+             begin_result == gnss::Status::ok ? "success" : "failed");
 #endif
 
 #endif
@@ -6766,7 +7422,7 @@ static void setup_gnss()
     static constexpr uint32_t gnssFixEscalationToNmeaFallbackMs = 120000UL;
 
     bool nmea_fallback_enabled = s_use_nmea_fallback;
-    uint32_t wait_start_ms = millis();
+    uint32_t wait_start_ms = uptime_ms();
     uint32_t last_status_log_ms = 0;
     uint32_t last_long_wait_warning_ms = 0;
 
@@ -6782,11 +7438,15 @@ static void setup_gnss()
 
         if (!s_use_nmea_fallback)
         {
-            fix_type = s_gnss.getFixType();
-            gnss_fix_ok = s_gnss.getGnssFixOk();
-            satellites_used = s_gnss.getSIV();
-            date_valid = s_gnss.getDateValid();
-            time_valid = s_gnss.getTimeValid();
+            if (wait_for_gnss_pvt(1500))
+            {
+                const gnss::TimeSolution pvt = s_gnss_time_solution;
+                fix_type = pvt.fix_type;
+                gnss_fix_ok = pvt.fix_ok;
+                satellites_used = pvt.satellites;
+                date_valid = pvt.date_valid;
+                time_valid = pvt.time_valid;
+            }
             ubx_fix_ready = (fix_type == 3 || fix_type == 4 || fix_type == 5) && gnss_fix_ok && date_valid && time_valid;
 
             if ((fix_type == 3 || fix_type == 4) && satellites_used >= 4 && !gnss_fix_ok)
@@ -6808,7 +7468,7 @@ static void setup_gnss()
             }
         }
 
-        uint32_t now_ms = millis();
+        uint32_t now_ms = uptime_ms();
         if (!ubx_fix_ready && !nmea_fallback_enabled && allowFallbackProcessing && (now_ms - wait_start_ms) >= gnssFixEscalationToNmeaFallbackMs)
         {
             nmea_fallback_enabled = true;
@@ -6831,12 +7491,12 @@ static void setup_gnss()
 #if DEBUG_ENABLED
             if (ubx_fix_ready)
                 ESP_LOGI(TAG, "GNSS fix obtained after %lu ms: fix_type=%u (%s)",
-                         static_cast<unsigned long>(millis() - wait_start_ms),
+                         static_cast<unsigned long>(uptime_ms() - wait_start_ms),
                          static_cast<unsigned int>(fix_type),
                          fix_type_to_text(fix_type));
             else
                 ESP_LOGI(TAG, "GNSS fix obtained after %lu ms via NMEA fallback.",
-                         static_cast<unsigned long>(millis() - wait_start_ms));
+                         static_cast<unsigned long>(uptime_ms() - wait_start_ms));
 #endif
 
             if (wait_for_gnss_startup_qualification())
@@ -6898,6 +7558,7 @@ static void format_time_to_ISO8601(time_t value, char *output, size_t output_siz
 
 #if MQTT_ENABLED
 
+#if NTP_SERVER_ENABLED
 static void mqtt_enqueue_ntp_request(const struct sockaddr_storage &source_address)
 {
     if (ntp_load_shedding_active() || s_mqtt_ntp_event_queue == nullptr ||
@@ -6938,7 +7599,7 @@ static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
         }
     }
 
-    if (s_mqtt_client_count < (s_tf_queue_available.load() ? MQTT_TF_Client_Limit : MQTT_CLIENT_LIMIT))
+    if (s_mqtt_client_count < MQTT_NTP_CLIENT_LIMIT)
     {
         mqtt_client_request_t &client = s_mqtt_clients[s_mqtt_client_count];
         client.address_family = source_address.ss_family;
@@ -6964,6 +7625,8 @@ static void mqtt_note_ntp_request(const struct sockaddr_storage &source_address)
 
     xSemaphoreGive(s_mqtt_stats_mutex);
 }
+
+#endif
 
 static void mqtt_note_ethernet_disconnected()
 {
@@ -6996,37 +7659,109 @@ static void mqtt_event_handler(void *arguments, esp_event_base_t base, int32_t e
     }
 }
 
-static bool mqtt_publish_report(const char *payload)
+static bool mqtt_publish_report(const char *payload, size_t length)
 {
     if (!s_mqtt_connected.load())
         return false;
 
-    return esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain) >= 0;
+    return esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, static_cast<int>(length), MQTT_QOS, MQTTBrokerRetain) >= 0;
 }
 
-static std::vector<std::string> mqtt_tf_queue_files()
+// Startup precedes the MQTT task; runtime callers hold s_mqtt_report_mutex.
+static void *mqtt_allocate_queue_storage(size_t bytes)
 {
-    std::vector<std::string> files;
+#if CONFIG_HEAP_ABORT_WHEN_ALLOCATION_FAILS
+    // A concurrent allocation could exhaust the heap after the checks below.
+    (void)bytes;
+    return nullptr;
+#else
+    constexpr uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    constexpr size_t reserve = 64 * 1024;
+    constexpr size_t minimum_block = 16 * 1024;
+    void *storage = nullptr;
+    const size_t available = heap_caps_get_free_size(caps);
+    if (available >= reserve && bytes <= available - reserve &&
+        heap_caps_get_largest_free_block(caps) >= bytes)
+        storage = heap_caps_malloc(bytes, caps);
+    if (storage != nullptr &&
+        (heap_caps_get_free_size(caps) < reserve || heap_caps_get_largest_free_block(caps) < minimum_block))
+    {
+        heap_caps_free(storage);
+        storage = nullptr;
+    }
+    return storage;
+#endif
+}
+
+static bool mqtt_allocate_ram_queue()
+{
+    if (MQTT_QOS == 0 || s_mqtt_ram_queue_allocation_attempted)
+        return s_mqtt_ram_queue != nullptr;
+    s_mqtt_ram_queue_allocation_attempted = true;
+    void *storage = mqtt_allocate_queue_storage(sizeof(mqtt_ram_queue_t));
+    if (storage == nullptr)
+    {
+        TIMING_LOGE(TAG, "MQTT RAM queue allocation refused or failed; queuing disabled to preserve service heap");
+        return false;
+    }
+    s_mqtt_ram_queue = new (storage) mqtt_ram_queue_t();
+    TIMING_LOGI(TAG, "MQTT RAM queue allocated (%u bytes)", static_cast<unsigned>(sizeof(mqtt_ram_queue_t)));
+    return true;
+}
+
+static void mqtt_fallback_from_tf()
+{
+    s_tf_queue_available.store(false);
+    // Card backlog is left intact for the next boot, not counted as RAM backlog.
+    s_mqtt_queued_messages_count.store(0);
+    TIMING_LOGW(TAG, "TF MQTT queue failed; attempting RAM fallback");
+    s_mqtt_queue_fallback_status.store(mqtt_allocate_ram_queue() ? 16 : 17);
+}
+
+struct mqtt_tf_queue_snapshot_t
+{
+    size_t count = 0;
+    uint64_t next_sequence = 0;
+    char oldest_path[128] = "";
+};
+
+static bool mqtt_tf_queue_files(mqtt_tf_queue_snapshot_t &files)
+{
+    files = {};
     DIR *directory = opendir(TF_QUEUE_DIRECTORY);
     if (directory == nullptr)
-        return files;
+        return false;
 
     dirent *entry = nullptr;
+    errno = 0;
     while ((entry = readdir(directory)) != nullptr)
     {
         unsigned long high = 0;
         unsigned long low = 0;
         if (strlen(entry->d_name) == 12 && sscanf(entry->d_name, "R%7lX.%3lX", &high, &low) == 2)
-            files.emplace_back(std::string(TF_QUEUE_DIRECTORY) + "/" + entry->d_name);
+        {
+            char path[128];
+            snprintf(path, sizeof(path), "%s/%.12s", TF_QUEUE_DIRECTORY, entry->d_name);
+            if (files.count == 0 || strcmp(path, files.oldest_path) < 0)
+                memcpy(files.oldest_path, path, strlen(path) + 1);
+            ++files.count;
+            const uint64_t next = (static_cast<uint64_t>(high) << 12) + low + 1;
+            if (next > files.next_sequence)
+                files.next_sequence = next;
+        }
+        errno = 0;
     }
-    closedir(directory);
-    std::sort(files.begin(), files.end());
-    return files;
+    const bool read_ok = errno == 0;
+    return closedir(directory) == 0 && read_ok;
 }
 
-static void mqtt_tf_refresh_queue_count()
+static bool mqtt_tf_refresh_queue_count()
 {
-    s_mqtt_queued_messages_count.store(mqtt_tf_queue_files().size());
+    mqtt_tf_queue_snapshot_t files;
+    if (!mqtt_tf_queue_files(files))
+        return false;
+    s_mqtt_queued_messages_count.store(files.count);
+    return true;
 }
 
 static bool mqtt_tf_write_report(const char *payload)
@@ -7044,16 +7779,19 @@ static bool mqtt_tf_write_report(const char *payload)
 
     const size_t length = strlen(payload);
     bool written = fwrite(payload, 1, length, file) == length && fflush(file) == 0 && fsync(fileno(file)) == 0;
-    fclose(file);
+    const int close_result = fclose(file);
+    written = written && close_result == 0;
     if (!written || rename(temporary_path, path) != 0)
     {
+        const int error = errno;
         unlink(temporary_path);
+        errno = error;
         return false;
     }
-    mqtt_tf_refresh_queue_count();
-    return true;
+    return mqtt_tf_refresh_queue_count();
 }
 
+// Callers hold s_mqtt_report_mutex.
 static bool mqtt_enqueue_report(const char *payload)
 {
     if (MQTT_QOS == 0)
@@ -7061,43 +7799,40 @@ static bool mqtt_enqueue_report(const char *payload)
 
     if (s_tf_queue_available.load())
     {
-        while (!mqtt_tf_write_report(payload))
+        unsigned trimmed = 0;
+        while (true)
         {
-            std::vector<std::string> files = mqtt_tf_queue_files();
-            if (files.empty() || unlink(files.front().c_str()) != 0)
+            if (mqtt_tf_write_report(payload))
+                return true;
+            mqtt_tf_queue_snapshot_t files;
+            // Only a full card justifies discarding backlog. Bound work on a failing reader.
+            if (errno != ENOSPC || trimmed >= 16 || !mqtt_tf_queue_files(files) ||
+                files.count == 0 || unlink(files.oldest_path) != 0)
             {
-#if DEBUG_ENABLED
-                ESP_LOGE(TAG, "Unable to queue MQTT report on TF card");
-#endif
-                return false;
+                mqtt_fallback_from_tf();
+                break;
             }
+            ++trimmed;
             s_mqtt_queued_messages_discarded++;
-            mqtt_tf_refresh_queue_count();
         }
-        return true;
     }
 
-    if (s_mqtt_queued_messages_count.load() == MQTT_REPORT_QUEUE_DEPTH)
-    {
-        s_mqtt_report_head = (s_mqtt_report_head + 1) % MQTT_REPORT_QUEUE_DEPTH;
-        s_mqtt_queued_messages_count--;
+    const bool queued = s_mqtt_ram_queue != nullptr &&
+                        s_mqtt_ram_queue->push(payload, strlen(payload), s_mqtt_queued_messages_discarded);
+    if (!queued)
         s_mqtt_queued_messages_discarded++;
-    }
-
-    size_t index = (s_mqtt_report_head + s_mqtt_queued_messages_count.load()) % MQTT_REPORT_QUEUE_DEPTH;
-    snprintf(s_mqtt_reports[index].payload, sizeof(s_mqtt_reports[index].payload), "%s", payload);
-    s_mqtt_queued_messages_count++;
-    return true;
+    s_mqtt_queued_messages_count.store(s_mqtt_ram_queue != nullptr ? s_mqtt_ram_queue->count() : 0);
+    return queued;
 }
 
-static bool mqtt_publish_queued_report(const char *payload)
+static bool mqtt_publish_queued_report(const char *payload, size_t length)
 {
     if (MQTT_QOS != 2)
-        return mqtt_publish_report(payload);
+        return mqtt_publish_report(payload, length);
 
     s_mqtt_restart_publish_id.store(-1);
     s_mqtt_restart_publish_completed.store(false);
-    int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, 0, MQTT_QOS, MQTTBrokerRetain);
+    int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, payload, static_cast<int>(length), MQTT_QOS, MQTTBrokerRetain);
     if (message_id < 0)
         return false;
 
@@ -7111,6 +7846,7 @@ static bool mqtt_publish_queued_report(const char *payload)
     return published;
 }
 
+// Callers hold s_mqtt_report_mutex.
 static void mqtt_send_queued_messages()
 {
     if (MQTT_QOS == 0 || !s_mqtt_connected.load() || s_mqtt_queued_messages_count.load() == 0)
@@ -7118,60 +7854,85 @@ static void mqtt_send_queued_messages()
 
     if (!s_tf_queue_available.load())
     {
-        if (mqtt_publish_queued_report(s_mqtt_reports[s_mqtt_report_head].payload))
+        const char *queued = nullptr;
+        size_t length = 0;
+        if (s_mqtt_ram_queue != nullptr && s_mqtt_ram_queue->front(queued, length) && mqtt_publish_queued_report(queued, length))
         {
 #if DEBUG_ENABLED
-            ESP_LOGI(TAG, "Published queued message (RAM): %.200s", s_mqtt_reports[s_mqtt_report_head].payload);
+            ESP_LOGI(TAG, "Published queued message (RAM): %.*s", static_cast<int>(length < 200 ? length : 200), queued);
 #endif
-            s_mqtt_report_head = (s_mqtt_report_head + 1) % MQTT_REPORT_QUEUE_DEPTH;
-            s_mqtt_queued_messages_count--;
+            s_mqtt_ram_queue->pop();
+            s_mqtt_queued_messages_count.store(s_mqtt_ram_queue->count());
         }
         return;
     }
 
-    std::vector<std::string> files = mqtt_tf_queue_files();
-    if (files.empty())
+    mqtt_tf_queue_snapshot_t files;
+    if (!mqtt_tf_queue_files(files))
     {
-        mqtt_tf_refresh_queue_count();
+        mqtt_fallback_from_tf();
+        return;
+    }
+    if (files.count == 0)
+    {
+        s_mqtt_queued_messages_count.store(0);
         return;
     }
 
-    FILE *file = fopen(files.front().c_str(), "rb");
+    FILE *file = fopen(files.oldest_path, "rb");
     if (file == nullptr)
+    {
+        mqtt_fallback_from_tf();
         return;
-    std::string payload;
-    char buffer[512];
-    size_t read = 0;
-    bool too_large = false;
-    while ((read = fread(buffer, 1, sizeof(buffer), file)) > 0)
-    {
-        if (payload.size() + read > MQTT_MAX_REPORT_SIZE)
-        {
-            too_large = true; // corrupted or foreign file: do not let it eat up the heap
-            break;
-        }
-        payload.append(buffer, read);
     }
-    bool read_failed = ferror(file) != 0;
-    fclose(file);
-    if (too_large)
+    if (fseek(file, 0, SEEK_END) != 0)
     {
+        fclose(file);
+        mqtt_fallback_from_tf();
+        return;
+    }
+    const long file_length = ftell(file);
+    if (file_length < 0 || fseek(file, 0, SEEK_SET) != 0)
+    {
+        fclose(file);
+        mqtt_fallback_from_tf();
+        return;
+    }
+    const size_t length = static_cast<size_t>(file_length);
+    if (length > MQTT_TF_REPORT_READ_LIMIT)
+    {
+        const int close_result = fclose(file);
         ++s_mqtt_queued_messages_discarded;
-        TIMING_LOGW(TAG, "MQTT queued report exceeds the report buffer; discarding it");
-        if (unlink(files.front().c_str()) == 0)
-            mqtt_tf_refresh_queue_count();
-        else
-            TIMING_LOGW(TAG, "MQTT oversized queued report could not be deleted: errno %d", errno);
+        TIMING_LOGW(TAG, "MQTT queued report exceeds the report size limit; discarding it");
+        if (close_result != 0 || unlink(files.oldest_path) != 0 || !mqtt_tf_refresh_queue_count())
+            mqtt_fallback_from_tf();
         return;
     }
-    if (!read_failed && mqtt_publish_queued_report(payload.c_str()))
+    char *payload = s_mqtt_payload;
+    if (length >= sizeof(s_mqtt_payload))
+        payload = static_cast<char *>(mqtt_allocate_queue_storage(length + 1));
+    if (payload == nullptr)
+    {
+        TIMING_LOGW(TAG, "Insufficient safe heap to read legacy TF MQTT report; leaving it queued");
+        if (fclose(file) != 0)
+            mqtt_fallback_from_tf();
+        return;
+    }
+    const bool read_ok = fread(payload, 1, length, file) == length && ferror(file) == 0;
+    const int close_result = fclose(file);
+    payload[length] = '\0';
+    if (!read_ok || close_result != 0)
+        mqtt_fallback_from_tf();
+    else if (mqtt_publish_queued_report(payload, length))
     {
 #if DEBUG_ENABLED
-        ESP_LOGW(TAG, "Published queued message (TF): %.200s", payload.c_str());
+        ESP_LOGW(TAG, "Published queued message (TF): %.200s", payload);
 #endif
-        if (unlink(files.front().c_str()) == 0)
-            mqtt_tf_refresh_queue_count();
+        if (unlink(files.oldest_path) != 0 || !mqtt_tf_refresh_queue_count())
+            mqtt_fallback_from_tf();
     }
+    if (payload != s_mqtt_payload)
+        heap_caps_free(payload);
 }
 
 static uint32_t gnss_locked_seconds_this_period()
@@ -7217,11 +7978,21 @@ static bool mqtt_build_report(char *payload, size_t payload_size)
     uint32_t queued_messages = static_cast<uint32_t>(s_mqtt_queued_messages_count.load());
     uint32_t queued_messages_discarded = s_mqtt_queued_messages_discarded;
     s_mqtt_queued_messages_discarded = 0;
+#if PTP_ENABLED
+    const bool ptp_active = ptp_time_qualified() && s_ptp_service_active.load(std::memory_order_acquire);
+    portENTER_CRITICAL(&s_ptp_followers_mux);
+    if (!ptp_active)
+        s_ptp_followers.clear();
+    const auto follower_snapshot = s_ptp_followers.snapshot_and_reset(esp_timer_get_time());
+    portEXIT_CRITICAL(&s_ptp_followers_mux);
+#endif
+#if NTP_SERVER_ENABLED
     uint32_t most_requests_per_second = s_ntp_most_requests_per_second.exchange(0, std::memory_order_relaxed);
     const bool load_shedding_this_period = s_ntp_shed_during_period.exchange(false, std::memory_order_relaxed);
+#endif
 
     char publishing_date_and_time[25] = "";
-    format_time_to_ISO8601(time(nullptr), publishing_date_and_time, sizeof(publishing_date_and_time));
+    format_time_to_ISO8601(utc_now(), publishing_date_and_time, sizeof(publishing_date_and_time));
 
 #if MQTT_HISTORICAL_REPORTING_ENABLED
     char last_synchronized_and_disciplined[25] = "";
@@ -7327,8 +8098,9 @@ static bool mqtt_build_report(char *payload, size_t payload_size)
     len = json_append(payload, payload_size, len, "\"satellites\":{");
     len = json_append(payload, payload_size, len, "\"min\":%u,", (unsigned int)satellite_min);
     len = json_append(payload, payload_size, len, "\"max\":%u", (unsigned int)satellite_max);
-    len = json_append(payload, payload_size, len, "},");
-    len = json_append(payload, payload_size, len, "\"ntp\":{");
+    len = json_append(payload, payload_size, len, "}");
+#if NTP_SERVER_ENABLED
+    len = json_append(payload, payload_size, len, ",\"ntp\":{");
     len = json_append(payload, payload_size, len, "\"requests\":{");
     const uint32_t authenticated_valid = s_ntp_authenticated_valid_requests.exchange(0);
     const uint32_t authenticated_invalid = s_ntp_authenticated_invalid_requests.exchange(0);
@@ -7337,7 +8109,7 @@ static bool mqtt_build_report(char *payload, size_t payload_size)
     s_ntp_valid_requests.exchange(0);
     s_ntp_invalid_requests.exchange(0);
 
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED && MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED
+#if NTP_AUTHENTICATION_ENABLED && MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED
     len = json_append(payload, payload_size, len, "\"authenticated\":{\"valid\":%lu,\"invalid\":%lu},", (unsigned long)authenticated_valid, (unsigned long)authenticated_invalid);
     len = json_append(payload, payload_size, len, "\"unauthenticated\":{\"valid\":%lu,\"invalid\":%lu},", (unsigned long)unauthenticated_valid, (unsigned long)unauthenticated_invalid);
 #else
@@ -7355,9 +8127,8 @@ static bool mqtt_build_report(char *payload, size_t payload_size)
     len = json_append(payload, payload_size, len, "\"pps_undisciplined\":%lu", (unsigned long)s_ntp_responses_pps_undisciplined.exchange(0));
     len = json_append(payload, payload_size, len, "}");
 
-#if MQTT_CLIENT_REPORTING_ENABLED
-    len = json_append(payload, payload_size, len, "},");
-    len = json_append(payload, payload_size, len, "\"clients\":[");
+#if NTP_SERVER_ENABLED && MQTT_CLIENT_REPORTING_ENABLED
+    len = json_append(payload, payload_size, len, ",\"clients\":[");
     bool first_client = true;
     if (xSemaphoreTake(s_mqtt_stats_mutex, portMAX_DELAY) == pdTRUE)
     {
@@ -7403,8 +8174,19 @@ static bool mqtt_build_report(char *payload, size_t payload_size)
     }
     len = json_append(payload, payload_size, len, "],");
     len = json_append(payload, payload_size, len, "\"clients_overflown\":%s", s_mqtt_client_table_overflown.exchange(false) ? "true" : "false");
-#else
+#endif
     len = json_append(payload, payload_size, len, "}");
+#endif
+#if PTP_ENABLED
+    len = json_append(payload, payload_size, len, ",");
+    if (len < payload_size)
+    {
+        const int written = ptp::format_follower_report(payload + len, payload_size - len, follower_snapshot);
+        if (written < 0 || static_cast<size_t>(written) >= payload_size - len)
+            len = payload_size;
+        else
+            len += static_cast<size_t>(written);
+    }
 #endif
 
 #if MQTT_HISTORICAL_REPORTING_ENABLED
@@ -7434,17 +8216,19 @@ static bool mqtt_build_report(char *payload, size_t payload_size)
     return true;
 }
 
+// Callers hold s_mqtt_report_mutex.
 static void mqtt_publish_final_report()
 {
     if (!s_mqtt_connected.load())
         return;
 
-    if (!mqtt_build_report(s_mqtt_final_payload, sizeof(s_mqtt_final_payload)))
+    if (!mqtt_build_report(s_mqtt_payload, sizeof(s_mqtt_payload)))
         return;
 
     s_mqtt_restart_publish_id.store(-1);
     s_mqtt_restart_publish_completed.store(false);
-    int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, s_mqtt_final_payload, 0, MQTT_QOS, MQTTBrokerRetain);
+    int message_id = esp_mqtt_client_publish(s_mqtt_client, s_mqtt_report_topic, s_mqtt_payload, static_cast<int>(strlen(s_mqtt_payload)),
+                                             MQTT_QOS, MQTTBrokerRetain);
     if (message_id < 0)
         return;
 
@@ -7520,28 +8304,37 @@ static void mqtt_service_task(void *parameter)
     TickType_t next_report = xTaskGetTickCount() + pdMS_TO_TICKS(MQTTReportingPeriod * 1000UL);
     for (;;)
     {
+#if NTP_SERVER_ENABLED
         struct sockaddr_storage source_address{};
         for (size_t count = 0; count < MQTT_NTP_EVENT_BATCH_LIMIT &&
                                xQueueReceive(s_mqtt_ntp_event_queue, &source_address, 0) == pdTRUE;
              ++count)
             mqtt_note_ntp_request(source_address);
+#endif
 
         bool connected = s_mqtt_connected.load();
         if (connected && !previously_connected)
             esp_mqtt_client_publish(s_mqtt_client, s_mqtt_status_topic, "online", 0, MQTT_QOS, 1);
         previously_connected = connected;
 
-        if (connected)
-            mqtt_publish_pending_restart_notification();
-
-        if (connected && s_mqtt_queued_messages_count.load() > 0)
-            mqtt_send_queued_messages();
-
-        if (xTaskGetTickCount() >= next_report)
+        const bool report_due = xTaskGetTickCount() >= next_report;
+        if (connected || report_due)
         {
-            if (mqtt_build_report(s_mqtt_payload, sizeof(s_mqtt_payload)) && !mqtt_publish_report(s_mqtt_payload))
-                mqtt_enqueue_report(s_mqtt_payload);
-            next_report += pdMS_TO_TICKS(MQTTReportingPeriod * 1000UL);
+            xSemaphoreTake(s_mqtt_report_mutex, portMAX_DELAY);
+            if (connected)
+                mqtt_publish_pending_restart_notification();
+
+            if (connected && s_mqtt_queued_messages_count.load() > 0)
+                mqtt_send_queued_messages();
+
+            if (report_due)
+            {
+                if (mqtt_build_report(s_mqtt_payload, sizeof(s_mqtt_payload)) &&
+                    !mqtt_publish_report(s_mqtt_payload, strlen(s_mqtt_payload)))
+                    mqtt_enqueue_report(s_mqtt_payload);
+                next_report += pdMS_TO_TICKS(MQTTReportingPeriod * 1000UL);
+            }
+            xSemaphoreGive(s_mqtt_report_mutex);
         }
         vTaskDelay(pdMS_TO_TICKS(MQTT_QUEUED_PUBLISH_DELAY_MS));
 
@@ -7551,6 +8344,7 @@ static void mqtt_service_task(void *parameter)
     }
 }
 
+#if TIME_SERVER_BOARD_HAS_TF_CARD
 static void mqtt_log_tf_directory(const char *path)
 {
 #if DEBUG_ENABLED
@@ -7575,6 +8369,7 @@ static void mqtt_log_tf_directory(const char *path)
     (void)path;
 #endif
 }
+#endif
 
 #endif
 
@@ -7607,7 +8402,11 @@ static void controlled_restart(const char *reason)
 
 #if MQTT_ENABLED
 
-    mqtt_publish_final_report();
+    // The MQTT task may be using the shared report buffer and queue; wait briefly rather than block the restart.
+    const bool reports_locked = s_mqtt_report_mutex != nullptr &&
+                                xSemaphoreTake(s_mqtt_report_mutex, pdMS_TO_TICKS(MQTT_RESTART_LOCK_TIMEOUT_MS)) == pdTRUE;
+    if (reports_locked)
+        mqtt_publish_final_report();
 
     char payload[128] = "";
     snprintf(payload, sizeof(payload), "{\"event\":\"controlled_restart\",\"reason\":\"%s\"}", reason);
@@ -7652,7 +8451,7 @@ static void controlled_restart(const char *reason)
 
         if (MQTT_QOS > 0)
         {
-            if (!mqtt_enqueue_report(payload))
+            if (!reports_locked || !mqtt_enqueue_report(payload))
             {
 #if DEBUG_ENABLED
                 ESP_LOGW(TAG, "Failed to enqueue restart report, falling back to NVS storage");
@@ -7682,6 +8481,8 @@ static void controlled_restart(const char *reason)
             }
         }
     }
+    if (reports_locked)
+        xSemaphoreGive(s_mqtt_report_mutex);
 #endif
 
 #if DEBUG_ENABLED
@@ -7693,14 +8494,20 @@ static void controlled_restart(const char *reason)
     return;
 }
 
-static void setup_mqtt_tf_queue()
+static void setup_mqtt_tf_storage()
 {
 
-#if MQTT_ENABLED
+#if MQTT_ENABLED && TIME_SERVER_BOARD_HAS_TF_CARD && MQTT_USE_TF_CARD
 
     if (MQTT_QOS == 0)
         return;
 
+    esp_vfs_fat_mount_config_t mount_config{};
+    mount_config.format_if_mount_failed = false;
+    mount_config.max_files = 4;
+    mount_config.allocation_unit_size = 16 * 1024;
+
+#if CONFIG_IDF_TARGET_ESP32P4
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     sd_pwr_ctrl_ldo_config_t ldo_config{};
     ldo_config.ldo_chan_id = 4;
@@ -7714,7 +8521,7 @@ static void setup_mqtt_tf_queue()
         return;
     }
     host.pwr_ctrl_handle = power_control;
-    auto cleanup_power_control = [&power_control]()
+    auto cleanup_tf_host = [&power_control]()
     {
         if (power_control != nullptr)
         {
@@ -7732,18 +8539,47 @@ static void setup_mqtt_tf_queue()
     slot.d2 = static_cast<gpio_num_t>(TFCardData2Pin);
     slot.d3 = static_cast<gpio_num_t>(TFCardData3Pin);
     slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
-    esp_vfs_fat_mount_config_t mount_config{};
-    mount_config.format_if_mount_failed = false;
-    mount_config.max_files = 4;
-    mount_config.allocation_unit_size = 16 * 1024;
-
     result = esp_vfs_fat_sdmmc_mount(TF_MOUNT_POINT, &host, &slot, &mount_config, &s_tf_card);
+#elif CONFIG_IDF_TARGET_ESP32S31
+    static_assert(TFCardSPIFrequencyKHz >= 400 && TFCardSPIFrequencyKHz <= 20000,
+                  "TFCardSPIFrequencyKHz must be between 400 and 20000");
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.max_freq_khz = TFCardSPIFrequencyKHz;
+    const spi_host_device_t spi_host = static_cast<spi_host_device_t>(host.slot);
+    spi_bus_config_t bus_config{};
+    bus_config.mosi_io_num = TFCardMOSIPin;
+    bus_config.miso_io_num = TFCardMISOPin;
+    bus_config.sclk_io_num = TFCardClockPin;
+    bus_config.quadwp_io_num = -1;
+    bus_config.quadhd_io_num = -1;
+    bus_config.data4_io_num = -1;
+    bus_config.data5_io_num = -1;
+    bus_config.data6_io_num = -1;
+    bus_config.data7_io_num = -1;
+    bus_config.max_transfer_sz = 4000;
+    esp_err_t result = spi_bus_initialize(spi_host, &bus_config, SDSPI_DEFAULT_DMA);
+    if (result != ESP_OK)
+    {
+        TIMING_LOGW(TAG, "Unable to initialize TF SPI bus: %s. Queued MQTT messages will be stored in ram.", esp_err_to_name(result));
+        return;
+    }
+    auto cleanup_tf_host = [spi_host]()
+    {
+        const esp_err_t cleanup_result = spi_bus_free(spi_host);
+        if (cleanup_result != ESP_OK)
+            TIMING_LOGW(TAG, "Unable to release TF SPI bus: %s", esp_err_to_name(cleanup_result));
+    };
+    sdspi_device_config_t slot = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot.host_id = spi_host;
+    slot.gpio_cs = static_cast<gpio_num_t>(TFCardChipSelectPin);
+    result = esp_vfs_fat_sdspi_mount(TF_MOUNT_POINT, &host, &slot, &mount_config, &s_tf_card);
+#endif
     if (result != ESP_OK)
     {
 #if DEBUG_ENABLED
         ESP_LOGW(TAG, "TF card unavailable: %s. Queued MQTT messages will be stored in ram.", esp_err_to_name(result));
 #endif
-        cleanup_power_control();
+        cleanup_tf_host();
         return;
     }
 
@@ -7756,7 +8592,7 @@ static void setup_mqtt_tf_queue()
 #endif
         esp_vfs_fat_sdcard_unmount(TF_MOUNT_POINT, s_tf_card);
         s_tf_card = nullptr;
-        cleanup_power_control();
+        cleanup_tf_host();
         return;
     }
 
@@ -7769,7 +8605,7 @@ static void setup_mqtt_tf_queue()
 #endif
         esp_vfs_fat_sdcard_unmount(TF_MOUNT_POINT, s_tf_card);
         s_tf_card = nullptr;
-        cleanup_power_control();
+        cleanup_tf_host();
         return;
     }
 #if DEBUG_ENABLED
@@ -7782,10 +8618,15 @@ static void setup_mqtt_tf_queue()
     FILE *probe = fopen(probe_path, "wb+");
     char probe_value = 0;
     bool usable = probe != nullptr && fwrite("T", 1, 1, probe) == 1 && fflush(probe) == 0 &&
-                  fseek(probe, 0, SEEK_SET) == 0 && fread(&probe_value, 1, 1, probe) == 1 && probe_value == 'T';
+                  fsync(fileno(probe)) == 0 && fseek(probe, 0, SEEK_SET) == 0 &&
+                  fread(&probe_value, 1, 1, probe) == 1 && probe_value == 'T';
     if (probe != nullptr)
-        fclose(probe);
-    unlink(probe_path);
+    {
+        const int close_result = fclose(probe);
+        usable = usable && close_result == 0;
+    }
+    const int remove_result = unlink(probe_path);
+    usable = usable && remove_result == 0;
     if (!usable)
     {
 #if DEBUG_ENABLED
@@ -7793,30 +8634,41 @@ static void setup_mqtt_tf_queue()
 #endif
         esp_vfs_fat_sdcard_unmount(TF_MOUNT_POINT, s_tf_card);
         s_tf_card = nullptr;
-        cleanup_power_control();
+        cleanup_tf_host();
         return;
     }
 
-    std::vector<std::string> files = mqtt_tf_queue_files();
-    for (const std::string &path : files)
+    mqtt_tf_queue_snapshot_t files;
+    if (!mqtt_tf_queue_files(files))
     {
-        unsigned long high = 0;
-        unsigned long low = 0;
-        if (sscanf(path.c_str(), "/tfcard/Queue/R%7lX.%3lX", &high, &low) == 2)
-        {
-            uint64_t sequence = (static_cast<uint64_t>(high) << 12) | low;
-            if (sequence >= s_tf_queue_next_sequence)
-                s_tf_queue_next_sequence = sequence + 1;
-        }
+        TIMING_LOGW(TAG, "Unable to read TF MQTT queue directory");
+        esp_vfs_fat_sdcard_unmount(TF_MOUNT_POINT, s_tf_card);
+        s_tf_card = nullptr;
+        cleanup_tf_host();
+        return;
     }
-    s_mqtt_queued_messages_count.store(files.size());
+    s_tf_queue_next_sequence = files.next_sequence;
+    s_mqtt_queued_messages_count.store(files.count);
     s_tf_queue_available.store(true);
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "TF card MQTT queue enabled");
-    if (files.empty())
+    if (files.count == 0)
         ESP_LOGI(TAG, "No queued messages found");
 #endif
 
+#elif MQTT_ENABLED
+    if (MQTT_QOS > 0)
+        TIMING_LOGI(TAG, "TF card support is disabled; MQTT reports use the RAM queue.");
+#endif
+}
+
+static void setup_mqtt_tf_queue()
+{
+    setup_mqtt_tf_storage();
+#if MQTT_ENABLED
+    // [Q]/[q] are reserved for a TF card that fails during operation; startup unavailability only logs.
+    if (MQTT_QOS > 0 && !s_tf_queue_available.load())
+        mqtt_allocate_ram_queue();
 #endif
 }
 
@@ -7834,6 +8686,14 @@ static void setup_mqtt()
         return;
     }
 
+    s_mqtt_report_mutex = xSemaphoreCreateMutex();
+    if (s_mqtt_report_mutex == nullptr)
+    {
+        s_mqtt_setup_failed.store(true);
+        return;
+    }
+
+#if NTP_SERVER_ENABLED
     s_mqtt_stats_mutex = xSemaphoreCreateMutex();
     s_mqtt_ntp_event_queue = xQueueCreate(MQTT_NTP_EVENT_QUEUE_DEPTH, sizeof(struct sockaddr_storage));
     if (s_mqtt_stats_mutex == nullptr || s_mqtt_ntp_event_queue == nullptr)
@@ -7841,6 +8701,7 @@ static void setup_mqtt()
         s_mqtt_setup_failed.store(true);
         return;
     }
+#endif
     snprintf(s_mqtt_uri, sizeof(s_mqtt_uri), "mqtt://%s:%u", MQTTServerIPAddress, static_cast<unsigned int>(MQTTPort));
     snprintf(s_mqtt_report_topic, sizeof(s_mqtt_report_topic), "%s/report", MQTTTopic);
     snprintf(s_mqtt_status_topic, sizeof(s_mqtt_status_topic), "%s/status", MQTTTopic);
@@ -7871,6 +8732,8 @@ static void setup_mqtt()
         s_mqtt_setup_failed.store(true);
         return;
     }
+
+    // setup_mqtt_tf_queue();
 
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "MQTT setup. Keep alive set at %u seconds", MQTTFrequencyOfKeepAliveRequest);
@@ -7919,6 +8782,9 @@ static void ethernet_event_handler(void *, esp_event_base_t, int32_t event, void
         [[fallthrough]];
     case ETHERNET_EVENT_STOP:
         s_ethernet_connected.store(false);
+#if PTP_ENABLED
+        ptp_invalidate_service();
+#endif
         s_first_ntp_input_us.store(0, std::memory_order_relaxed);
         s_last_ntp_response_us.store(0, std::memory_order_relaxed);
 #if MQTT_ENABLED
@@ -8057,8 +8923,11 @@ static bool configure_static_ip()
     if (dhcp_result != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED)
         ESP_ERROR_CHECK(dhcp_result);
     ESP_ERROR_CHECK(esp_netif_set_ip_info(s_eth_netif, &ip_info));
-    ESP_ERROR_CHECK(esp_netif_set_dns_info(s_eth_netif, ESP_NETIF_DNS_MAIN, &dns1));
-    ESP_ERROR_CHECK(esp_netif_set_dns_info(s_eth_netif, ESP_NETIF_DNS_BACKUP, &dns2));
+    // ESP-IDF rejects the zero address left by an omitted DNS setting.
+    if (PrimaryDNS[0] != '\0')
+        ESP_ERROR_CHECK(esp_netif_set_dns_info(s_eth_netif, ESP_NETIF_DNS_MAIN, &dns1));
+    if (SecondaryDNS[0] != '\0')
+        ESP_ERROR_CHECK(esp_netif_set_dns_info(s_eth_netif, ESP_NETIF_DNS_BACKUP, &dns2));
 
 #if DEBUG_ENABLED
     ESP_LOGI(TAG,
@@ -8068,9 +8937,82 @@ static bool configure_static_ip()
     return true;
 }
 
+static void attach_ethernet_network()
+{
+    if (L2_ONLY)
+    {
+        ESP_ERROR_CHECK(esp_eth_update_input_path_info(s_eth_handle, ntp_ethernet_input, nullptr));
+        return;
+    }
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    const esp_netif_config_t netif_config = ESP_NETIF_DEFAULT_ETH();
+    s_eth_netif = esp_netif_new(&netif_config);
+    ESP_ERROR_CHECK(s_eth_netif != nullptr ? ESP_OK : ESP_ERR_NO_MEM);
+    esp_eth_netif_glue_handle_t glue = esp_eth_new_netif_glue(s_eth_handle);
+    ESP_ERROR_CHECK(glue != nullptr ? ESP_OK : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(esp_netif_attach(s_eth_netif, glue));
+    ESP_ERROR_CHECK(esp_netif_set_hostname(s_eth_netif, HostName));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, ethernet_ip_event_handler, nullptr));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_LOST_IP, ethernet_ip_event_handler, nullptr));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_GOT_IP6, ethernet_ip_event_handler, nullptr));
+
+    // Configure static addressing before link-up so DHCP cannot race it.
+    configure_static_ip();
+}
+
+#if CONFIG_IDF_TARGET_ESP32S31
+static esp_err_t yt8531_phy_init(esp_eth_handle_t handle)
+{
+    constexpr uint32_t CHIP_CONFIG = 0xA001;
+    constexpr uint32_t RGMII_CONFIG = 0xA003;
+
+    bool autonegotiation = true;
+    esp_err_t error = esp_eth_ioctl(handle, ETH_CMD_S_AUTONEGO, &autonegotiation);
+    if (error != ESP_OK)
+    {
+        ESP_LOGE(TAG, "YT8531 autonegotiation setup failed: %s", esp_err_to_name(error));
+        return error;
+    }
+
+    const auto modify = [handle](uint32_t address, uint32_t clear_mask, uint32_t set_mask) -> esp_err_t
+    {
+        constexpr uint32_t EXT_ADDRESS_REGISTER = 0x1E;
+        constexpr uint32_t EXT_DATA_REGISTER = 0x1F;
+        uint32_t value = address;
+        esp_eth_phy_reg_rw_data_t access{};
+        access.reg_value_p = &value;
+        access.reg_addr = EXT_ADDRESS_REGISTER;
+        esp_err_t result = esp_eth_ioctl(handle, ETH_CMD_WRITE_PHY_REG, &access);
+        if (result != ESP_OK)
+            return result;
+        access.reg_addr = EXT_DATA_REGISTER;
+        result = esp_eth_ioctl(handle, ETH_CMD_READ_PHY_REG, &access);
+        if (result != ESP_OK)
+            return result;
+        value = (value & ~clear_mask) | set_mask;
+        return esp_eth_ioctl(handle, ETH_CMD_WRITE_PHY_REG, &access);
+    };
+
+    error = modify(CHIP_CONFIG, 0, 1U << 8);
+    if (error != ESP_OK)
+    {
+        ESP_LOGE(TAG, "YT8531 RX delay setup failed: %s", esp_err_to_name(error));
+        return error;
+    }
+    error = modify(RGMII_CONFIG, 0xFFU, 0xDDU);
+    if (error != ESP_OK)
+    {
+        ESP_LOGE(TAG, "YT8531 TX delay setup failed: %s", esp_err_to_name(error));
+        return error;
+    }
+    ESP_LOGI(TAG, "YT8531 RGMII delays and autonegotiation configured");
+    return ESP_OK;
+}
+#endif
+
 static void start_ethernet_driver()
 {
-    ESP_ERROR_CHECK(esp_netif_init());
     const esp_err_t event_loop_result = esp_event_loop_create_default();
     if (event_loop_result != ESP_ERR_INVALID_STATE)
         ESP_ERROR_CHECK(event_loop_result);
@@ -8081,6 +9023,7 @@ static void start_ethernet_driver()
     eth_esp32_emac_config_t emac_config = ETH_ESP32_EMAC_DEFAULT_CONFIG();
     emac_config.smi_gpio.mdc_num = EthernetMDCGPIO;
     emac_config.smi_gpio.mdio_num = EthernetMDIOGPIO;
+#if CONFIG_IDF_TARGET_ESP32P4
     emac_config.interface = EMAC_DATA_INTERFACE_RMII;
     emac_config.clock_config.rmii.clock_mode = EMAC_CLK_EXT_IN;
     emac_config.clock_config.rmii.clock_gpio = EthernetRMIIClockGPIO;
@@ -8090,35 +9033,45 @@ static void start_ethernet_driver()
     emac_config.emac_dataif_gpio.rmii.crs_dv_num = EthernetRMIICRSDVGPIO;
     emac_config.emac_dataif_gpio.rmii.rxd0_num = EthernetRMIIRX0GPIO;
     emac_config.emac_dataif_gpio.rmii.rxd1_num = EthernetRMIIRX1GPIO;
+#elif CONFIG_IDF_TARGET_ESP32S31
+    emac_config.interface = EMAC_DATA_INTERFACE_RGMII;
+    emac_config.clock_config.rgmii.clock_rx_gpio = EthernetRGMIIRXClockGPIO;
+    emac_config.clock_config.rgmii.clock_tx_gpio = EthernetRGMIITXClockGPIO;
+    emac_config.clock_config.rgmii.clock_phy_ref_gpio = EthernetRGMIIPHYRefClockGPIO;
+    emac_config.emac_dataif_gpio.rgmii.tx_ctl_num = EthernetRGMIITXControlGPIO;
+    emac_config.emac_dataif_gpio.rgmii.txd0_num = EthernetRGMIITX0GPIO;
+    emac_config.emac_dataif_gpio.rgmii.txd1_num = EthernetRGMIITX1GPIO;
+    emac_config.emac_dataif_gpio.rgmii.txd2_num = EthernetRGMIITX2GPIO;
+    emac_config.emac_dataif_gpio.rgmii.txd3_num = EthernetRGMIITX3GPIO;
+    emac_config.emac_dataif_gpio.rgmii.rx_ctl_num = EthernetRGMIIRXControlGPIO;
+    emac_config.emac_dataif_gpio.rgmii.rxd0_num = EthernetRGMIIRX0GPIO;
+    emac_config.emac_dataif_gpio.rgmii.rxd1_num = EthernetRGMIIRX1GPIO;
+    emac_config.emac_dataif_gpio.rgmii.rxd2_num = EthernetRGMIIRX2GPIO;
+    emac_config.emac_dataif_gpio.rgmii.rxd3_num = EthernetRGMIIRX3GPIO;
+#endif
     esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&emac_config, &mac_config);
     ESP_ERROR_CHECK(mac != nullptr ? ESP_OK : ESP_ERR_NO_MEM);
 
     eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
     phy_config.phy_addr = EthernetPHYAddress;
     phy_config.reset_gpio_num = EthernetPHYResetGPIO;
-    // IDF 6 uses the IEEE 802.3 driver for IP101 (as did Arduino's IDF 6 alias).
+    // IDF 6 supports both board PHYs through its IEEE 802.3 driver.
     esp_eth_phy_t *phy = esp_eth_phy_new_generic(&phy_config);
     ESP_ERROR_CHECK(phy != nullptr ? ESP_OK : ESP_ERR_NO_MEM);
     const esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(mac, phy);
     ESP_ERROR_CHECK(esp_eth_driver_install(&eth_config, &s_eth_handle));
+#if CONFIG_IDF_TARGET_ESP32S31
+    ESP_ERROR_CHECK(yt8531_phy_init(s_eth_handle));
+#endif
 
-    const esp_netif_config_t netif_config = ESP_NETIF_DEFAULT_ETH();
-    s_eth_netif = esp_netif_new(&netif_config);
-    ESP_ERROR_CHECK(s_eth_netif != nullptr ? ESP_OK : ESP_ERR_NO_MEM);
-    esp_eth_netif_glue_handle_t glue = esp_eth_new_netif_glue(s_eth_handle);
-    ESP_ERROR_CHECK(glue != nullptr ? ESP_OK : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(esp_netif_attach(s_eth_netif, glue));
-    ESP_ERROR_CHECK(esp_netif_set_hostname(s_eth_netif, DeviceName));
+    attach_ethernet_network();
+    // Netif glue must bring the interface up before our handler creates IPv6 link-local.
     ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, ethernet_event_handler, nullptr));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, ethernet_ip_event_handler, nullptr));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_LOST_IP, ethernet_ip_event_handler, nullptr));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_GOT_IP6, ethernet_ip_event_handler, nullptr));
-
-    // Configure static addressing before link-up so DHCP cannot race it.
-    configure_static_ip();
     ESP_ERROR_CHECK(esp_eth_start(s_eth_handle));
+    ESP_ERROR_CHECK(log_active_ethernet_mac());
 }
 
+#if NTP_SERVER_ENABLED
 static void wait_for_startup_ethernet_readiness()
 {
     if (PreferIPvX == 1)
@@ -8143,6 +9096,8 @@ static void wait_for_startup_ethernet_readiness()
     }
 }
 
+#endif
+
 static void setup_ethernet()
 {
     if (s_net_event_group == nullptr)
@@ -8160,8 +9115,10 @@ static void setup_ethernet()
 
     start_ethernet_driver();
 
+    s_hardware_ntp_transmit_mutex = xSemaphoreCreateMutex();
+    ESP_ERROR_CHECK(s_hardware_ntp_transmit_mutex != nullptr ? ESP_OK : ESP_ERR_NO_MEM);
+#if NTP_SERVER_ENABLED
     if (!ntp_cache_init() ||
-        (s_hardware_ntp_transmit_mutex = xSemaphoreCreateMutex()) == nullptr ||
         (s_hardware_ntp_request_queue = xQueueCreate(HARDWARE_NTP_REQUEST_QUEUE_DEPTH, sizeof(hardware_ntp_request_t))) == nullptr ||
         (s_hardware_ntp_request_buffer_queue = xQueueCreate(HARDWARE_NTP_REQUEST_BUFFER_COUNT, sizeof(uint8_t *))) == nullptr ||
         !initialize_hardware_ntp_request_buffers() ||
@@ -8171,21 +9128,61 @@ static void setup_ethernet()
         ESP_LOGE(TAG, "Unable to initialize hardware NTP serving");
         deinitialize_hardware_ntp_server();
     }
-    else if (!configure_hardware_timestamps())
+    else
+#endif
+        if (!configure_hardware_timestamps())
     {
         ESP_LOGE(TAG, "Unable to configure Ethernet hardware timestamping");
     }
 
 #if DEBUG_ENABLED
-    ESP_LOGI(TAG,
-             "Waiting for Ethernet %s address%s...",
-             StaticIPAddress[0] != '\0' ? "static" : "DHCP",
-             PreferIPvX == 1 ? "" : " and routable IPv6");
+    if (L2_ONLY)
+        ESP_LOGI(TAG, "Waiting for L2 Ethernet link (IPv4 and IPv6 disabled)...");
+    else
+        ESP_LOGI(TAG,
+                 "Waiting for Ethernet %s address%s...",
+                 StaticIPAddress[0] != '\0' ? "static" : "DHCP",
+                 PreferIPvX == 1 ? "" : " and routable IPv6");
 #endif
+#if PTP_L2_SERVER_ENABLED
+    bool ptp_policy_ready = true;
+#if PTP_L2_AUTHENTICATION_ENABLED
+    ptp_policy_ready = ptp_l2_auth_initialize();
+#endif
+    if (!ptp_policy_ready)
+        ESP_LOGE(TAG, "PTP disabled by invalid authentication configuration; other services remain available");
+    else if (!s_ptp_clock_ready.load(std::memory_order_acquire) || !start_ptp_l2_service())
+    {
+        ESP_LOGE(TAG, "Unable to start L2 PTP service");
+        controlled_restart("ptp_start_failed");
+    }
+#endif
+#if PTP_L3_SERVER_ENABLED
+    if (!s_ptp_clock_ready.load(std::memory_order_acquire) || !start_ptp_l3_udp_service())
+    {
+        ESP_LOGE(TAG, "Unable to start UDP PTP service");
+        controlled_restart("ptp_l3_udp_start_failed");
+    }
+#endif
+#if NTP_SERVER_ENABLED
     wait_for_startup_ethernet_readiness();
+#else
+    xEventGroupWaitBits(s_net_event_group, ETH_CONNECTED_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+#endif
 #if DEBUG_ENABLED
     const network_address_snapshot_t addresses = get_network_address_snapshot();
     ESP_LOGI(TAG, "Ethernet setup complete, current address: %s", addresses.selected[0] == '\0' ? "<none>" : addresses.selected);
+#endif
+}
+
+static esp_err_t configure_console()
+{
+#if CONFIG_ESP_CONSOLE_UART
+    static_assert(serialMonitorSpeed > 0, "serialMonitorSpeed must be positive");
+    return uart_set_baudrate(static_cast<uart_port_t>(CONFIG_ESP_CONSOLE_UART_NUM),
+                             static_cast<uint32_t>(serialMonitorSpeed));
+#else
+    return ESP_OK;
 #endif
 }
 
@@ -8194,7 +9191,7 @@ void write_opening_messages_to_the_console()
 
     // Note: the console writes in the routine are purposefully not guarded by a DEBUG_ENABLE check - they should always be written
 
-    Serial.begin(serialMonitorSpeed);
+    ESP_ERROR_CHECK(configure_console());
     vTaskDelay(pdMS_TO_TICKS(100));
 
     ESP_LOGI(TAG, "");
@@ -8207,6 +9204,39 @@ void write_opening_messages_to_the_console()
     ESP_LOGI(TAG, "License: %s", meta->license);
     ESP_LOGI(TAG, "Website: %s", meta->homepage);
     ESP_LOGI(TAG, " ");
+
+#if NTP_SERVER_ENABLED
+    ESP_LOGI(TAG, "NTP server support: Enabled");
+#if NTP_AUTHENTICATION_ENABLED
+    ESP_LOGI(TAG, "NTP authentication support: Enabled");
+#else
+    ESP_LOGW(TAG, "NTP authentication support: Disabled");
+#endif
+#if NTP_AUTHENTICATION_REQUIRED
+    ESP_LOGI(TAG, "NTP authentication required: Enabled");
+#else
+    ESP_LOGW(TAG, "NTP authentication required: Disabled");
+#endif
+#else
+    ESP_LOGW(TAG, "NTP server support: Disabled");
+#endif
+
+#if PTP_L2_SERVER_ENABLED
+    ESP_LOGI(TAG, "PTP L2 server support: Enabled");
+#if PTP_L2_AUTHENTICATION_ENABLED
+    ESP_LOGI(TAG, "PTP authentication support: Enabled");
+#else
+    ESP_LOGW(TAG, "PTP authentication support: Disabled");
+#endif
+#if PTP_L2_AUTHENTICATION_REQUIRED
+    ESP_LOGI(TAG, "PTP authentication required: Enabled");
+#else
+    ESP_LOGW(TAG, "PTP authentication required: Disabled");
+#endif
+#else
+    ESP_LOGW(TAG, "PTP L2 server support: Disabled");
+#endif
+    ESP_LOGI(TAG, "PTP L3 UDP server support: %s (unsigned E2E)", PTP_L3_SERVER_ENABLED ? "Enabled" : "Disabled");
 
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "Debug: Enabled");
@@ -8236,12 +9266,6 @@ void write_opening_messages_to_the_console()
     ESP_LOGI(TAG, "Over the Ethernet update support: Enabled");
 #else
     ESP_LOGW(TAG, "Over the Ethernet update support: Disabled");
-#endif
-
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
-    ESP_LOGI(TAG, "Symmetric-key authentication support: Enabled");
-#else
-    ESP_LOGW(TAG, "Symmetric-key authentication support: Disabled");
 #endif
 
 #if MQTT_ENABLED
@@ -8275,12 +9299,41 @@ void write_opening_messages_to_the_console()
     ESP_LOGW(TAG, "MQTT distinguish authenticated and unauthenticated reporting: Disabled");
 #endif
 
+#if MQTT_ENABLED
+#if CONFIG_IDF_TARGET_ESP32P4
+    ESP_LOGI(TAG, "TF card reader: Available (onboard SDMMC)");
+#elif CONFIG_IDF_TARGET_ESP32S31
+#if S31_EXTERNAL_TF_CARD_ENABLED
+    ESP_LOGI(TAG, "TF card reader: Configured (external SPI)");
+#else
+    ESP_LOGW(TAG, "TF card reader: Unavailable (external SPI reader disabled)");
+#endif
+#endif
+
+#if TIME_SERVER_BOARD_HAS_TF_CARD
+    if (MQTT_QOS == 0)
+    {
+        ESP_LOGW(TAG, "TF card MQTT queue: Disabled (MQTT QoS 0)");
+    }
+    else if (s_tf_queue_available.load())
+    {
+        ESP_LOGI(TAG, "TF card MQTT queue: Enabled; startup FAT32 and read/write checks passed");
+    }
+    else
+    {
+        ESP_LOGW(TAG, "TF card MQTT queue: Enabled but unavailable or startup checks failed; using RAM queue");
+    }
+#else
+    ESP_LOGW(TAG, "TF card MQTT queue: Disabled (TF card support disabled)");
+#endif
+#endif
+
     ESP_LOGI(TAG, "");
 }
 
-void setup_NVS_storage(void)
+void setup_NVS_storage(bool initialized)
 {
-    if (!initialize_nvs_storage())
+    if (!initialized)
     {
         ESP_LOGE(TAG, "NVS initialization failed. GNSS module settings persistence is unavailable.");
         return;
@@ -8310,7 +9363,7 @@ void setup_mutexes_and_semaphores(void)
 #endif
 
 #if CALCULATE_STACK_SIZES_ENABLED
-    s_task_stack_usage_mutex = xSemaphoreCreateMutex();
+    setup_task_stack_usage_mutex();
 #endif
 }
 
@@ -8405,75 +9458,83 @@ static void setup_the_button()
 #endif
 }
 
-static std::string configure_mac_address()
+static esp_err_t read_active_ethernet_mac(uint8_t mac[6])
 {
-    uint8_t real_mac_address[6];
-    char real_mac_address_str[18] = {0};
-
-    esp_err_t ret = esp_efuse_mac_get_default(real_mac_address);
-
-    if (ret == ESP_OK)
+    if (mac == nullptr)
     {
-        std::snprintf(real_mac_address_str, sizeof(real_mac_address_str),
-                      "%02x:%02x:%02x:%02x:%02x:%02x",
-                      real_mac_address[0], real_mac_address[1], real_mac_address[2],
-                      real_mac_address[3], real_mac_address[4], real_mac_address[5]);
-
-#if DEBUG_ENABLED
-        ESP_LOGI(TAG, "Real MAC address for this ESP32 is: %s", real_mac_address_str);
-#endif
+        ESP_LOGE(TAG, "Unable to read active Ethernet MAC: output buffer is null");
+        return ESP_ERR_INVALID_ARG;
     }
 
-#if DEBUG_ENABLED
-    else
+    if (s_eth_handle == nullptr)
     {
-        ESP_LOGE(TAG, "Failed to get the MAC address for this ESP32. Error: %d", ret);
-    }
-#endif
-
-    // If MACAddress is empty or matches the real MAC, do nothing
-    if ((MACAddress[0] == '\0') || (std::strcmp(real_mac_address_str, MACAddress) == 0))
-    {
-#if DEBUG_ENABLED
-        ESP_LOGI(TAG, "No need to change the MAC address.");
-#endif
-        return std::string(real_mac_address_str);
+        ESP_LOGE(TAG, "Unable to read active Ethernet MAC: Ethernet driver is not initialized");
+        return ESP_ERR_INVALID_STATE;
     }
 
-    // Parse the desired MAC
-    uint8_t mac[6] = {};
+    const esp_err_t result = esp_eth_ioctl(s_eth_handle, ETH_CMD_G_MAC_ADDR, mac);
+    if (result != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Unable to read active Ethernet MAC: %s", esp_err_to_name(result));
+    }
+    return result;
+}
+
+static void format_mac_address(const uint8_t mac[6], char *text, size_t text_size)
+{
+    std::snprintf(text, text_size, "%02X:%02X:%02X:%02X:%02X:%02X",
+                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+static esp_err_t log_active_ethernet_mac()
+{
+    uint8_t mac[6]{};
+    const esp_err_t result = read_active_ethernet_mac(mac);
+    if (result != ESP_OK)
+        return result;
+
+    char mac_text[18]{};
+    format_mac_address(mac, mac_text, sizeof(mac_text));
+    ESP_LOGI(TAG, "Active Ethernet MAC: %s", mac_text);
+    return ESP_OK;
+}
+
+static esp_err_t configure_mac_address()
+{
+    if (MACAddress[0] == '\0')
+        return ESP_OK;
+
+    uint8_t mac[6]{};
     if (!parse_mac_id_string(MACAddress, mac))
     {
-#if DEBUG_ENABLED
-        ESP_LOGE(TAG, "The MAC address in settings is invalid: %s - the MAC ID will not be changed", MACAddress);
-#endif
-        return std::string(real_mac_address_str);
+        ESP_LOGE(TAG, "The configured Ethernet MAC address is invalid: %s", MACAddress);
+        return ESP_ERR_INVALID_ARG;
     }
 
-    // Apply the new MAC
-    esp_err_t err = esp_base_mac_addr_set(mac);
-    if (err != ESP_OK)
+    if ((mac[0] & 0x01U) != 0 ||
+        (mac[0] | mac[1] | mac[2] | mac[3] | mac[4] | mac[5]) == 0)
     {
-#if DEBUG_ENABLED
-        ESP_LOGE(TAG, "Failed to set MAC address to %s: %s", MACAddress, esp_err_to_name(err));
-#endif
-        return std::string(real_mac_address_str);
+        ESP_LOGE(TAG, "The configured Ethernet MAC address must be a nonzero unicast address: %s", MACAddress);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const esp_err_t result = esp_iface_mac_addr_set(mac, ESP_MAC_ETH);
+    if (result != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to set Ethernet MAC to %s: %s", MACAddress, esp_err_to_name(result));
+        return result;
     }
 
 #if DEBUG_ENABLED
-    ESP_LOGI(TAG, "MAC address changed to: %s", MACAddress);
+    ESP_LOGI(TAG, "Configured Ethernet MAC override: %s", MACAddress);
 #endif
 
-    return std::string(MACAddress);
+    return ESP_OK;
 }
 
 void setup_ethernet_connection()
 {
-
-    // std::string MACToBeUsed = configure_mac_address();
-    MACToBeUsed = configure_mac_address();
-    ESP_LOGI(TAG, "The MAC address that will be used for this device is: %s", MACToBeUsed.c_str());
-
+    ESP_ERROR_CHECK(configure_mac_address());
     display_line(1, "Connecting Ethernet");
     display_line(2, "");
     setup_ethernet();
@@ -8684,7 +9745,7 @@ void setup_for_ote_updates()
 }
 
 // Reads the GNSS date and time together with the PPS edge it belongs to.
-// The candidate time is the UTC second of the PPS edge at pps_release_time_us. The label is taken only from data that
+// The candidate time is the TAI second of the PPS edge at pps_release_time_us. The UTC label is taken only from data that
 // was received after this edge and well before the next one, so it cannot belong to another second:
 //  - NMEA: the serial receive buffer is emptied right after the edge, then the first valid RMC sentence is used
 //    (the sentences of a second follow its time pulse; old sentences in the buffer could describe an earlier second)
@@ -8727,8 +9788,13 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
     if (!s_use_nmea_fallback)
     {
         // Drain pre-edge data before logging/display work can delay collection of the new solution.
-        (void)s_gnss.checkUblox();
-        s_gnss.flushPVT();
+        const gnss::Status drain_result = s_gnss.discard_pending_pvt();
+        if (drain_result != gnss::Status::ok)
+        {
+            TIMING_LOGE(TAG, "GNSS pre-PPS data drain failed: %s", gnss::status_name(drain_result));
+            candidate->failures.gnss_invalid = true;
+            return false;
+        }
     }
     TIMING_LOGI(TAG, "GNSS sync: PPS captured at %lld us; age %lld us.",
                 static_cast<long long>(edge_us),
@@ -8739,8 +9805,18 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
     if (s_use_nmea_fallback)
     {
         // Discard what was received before the edge
-        for (int discarded = 0; discarded < 4096 && s_gnss_serial.available() > 0; ++discarded)
-            (void)s_gnss_serial.read();
+        for (int discarded = 0; discarded < 4096; ++discarded)
+        {
+            uint8_t value = 0;
+            bool has_data = false;
+            if (!read_gnss_uart_byte(&value, &has_data))
+            {
+                candidate->failures.gnss_invalid = true;
+                return false;
+            }
+            if (!has_data)
+                break;
+        }
 
         nmea_rmc_time_t nmea_time{};
         const int64_t remaining_us = labelDeadlineUs - (esp_timer_get_time() - edge_us);
@@ -8754,12 +9830,22 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
             return false;
         }
 
-        candidate->candidate_time = epoch_from_utc(nmea_time.year, nmea_time.month, nmea_time.day, nmea_time.hour, nmea_time.minute, nmea_time.second);
+        const int64_t utc = epoch_from_utc(nmea_time.year, nmea_time.month, nmea_time.day,
+                                           nmea_time.hour, nmea_time.minute, nmea_time.second);
+        int64_t tai = 0;
+        if (!publish_leap_information(utc, nmea_time.second == 60) ||
+            !s_leap_state.read().from_utc(utc, nmea_time.second == 60, tai))
+        {
+            candidate->failures.gnss_invalid = true;
+            TIMING_LOGW(TAG, "NMEA UTC label has no qualified authoritative TAI/leap conversion.");
+            return false;
+        }
+        candidate->candidate_time = static_cast<time_t>(tai);
     }
     else
     {
         const int64_t pvt_started_us = esp_timer_get_time();
-        if (!wait_for_gnss_pvt(ubxPvtTimeoutMs) || s_gnss.packetUBXNAVPVT == nullptr)
+        if (!wait_for_gnss_pvt(ubxPvtTimeoutMs))
         {
             candidate->failures.gnss_invalid = true;
 #if DEBUG_ENABLED
@@ -8777,13 +9863,13 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
                     static_cast<long long>(esp_timer_get_time() - pvt_started_us),
                     static_cast<long long>(esp_timer_get_time() - edge_us));
 
-        const UBX_NAV_PVT_data_t pvt = s_gnss.packetUBXNAVPVT->data;
+        const gnss::TimeSolution pvt = s_gnss_time_solution;
         TIMING_LOGI(TAG, "GNSS sync: PVT iTOW=%lu ms, calendar second=%u, nano=%ld.",
-                    static_cast<unsigned long>(pvt.iTOW), static_cast<unsigned int>(pvt.sec),
+                    static_cast<unsigned long>(pvt.itow), static_cast<unsigned int>(pvt.second),
                     static_cast<long>(pvt.nano));
-        const uint8_t fix_type = pvt.fixType;
+        const uint8_t fix_type = pvt.fix_type;
         if ((fix_type != 3 && fix_type != 4 && fix_type != 5) ||
-            !pvt.flags.bits.gnssFixOK || !pvt.valid.bits.validDate || !pvt.valid.bits.validTime)
+            !pvt.fix_ok || !pvt.date_valid || !pvt.time_valid || !pvt.fully_resolved)
         {
             candidate->failures.gnss_invalid = true;
 #if DEBUG_ENABLED
@@ -8796,8 +9882,8 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
         int month = pvt.month;
         int day = pvt.day;
         int hour = pvt.hour;
-        int minute = pvt.min;
-        int second = pvt.sec;
+        int minute = pvt.minute;
+        int second = pvt.second;
 
         if (year <= 2025 || month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 60 ||
             pvt.nano < -1000000000 || pvt.nano > 1000000000)
@@ -8818,7 +9904,16 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
             return false;
         }
 
-        candidate->candidate_time = epoch_from_utc(year, month, day, hour, minute, second);
+        const time_t utc_second = epoch_from_utc(year, month, day, hour, minute, second);
+        int64_t tai_second = 0;
+        if (!refresh_leap_information(pvt) ||
+            !s_leap_state.read().from_utc(utc_second, second == 60, tai_second))
+        {
+            candidate->failures.gnss_invalid = true;
+            TIMING_LOGW(TAG, "GNSS UTC label has no qualified TAI/leap conversion.");
+            return false;
+        }
+        candidate->candidate_time = static_cast<time_t>(tai_second);
         // NAV-PVT UTC is the calendar second plus signed nano, which can straddle a second boundary.
         candidate->candidate_time += (pvt.nano > 500000000) - (pvt.nano < -500000000);
     }
@@ -8836,7 +9931,7 @@ static bool acquire_sync_candidate(sync_candidate_t *candidate)
     }
 
     candidate->used_nmea_fallback = s_use_nmea_fallback;
-    TIMING_LOGI(TAG, "GNSS sync: candidate UTC=%lld, PPS=%lld us, age=%lld us.",
+    TIMING_LOGI(TAG, "GNSS sync: candidate TAI=%lld, PPS=%lld us, age=%lld us.",
                 static_cast<long long>(candidate->candidate_time),
                 static_cast<long long>(candidate->pps_release_time_us),
                 static_cast<long long>(esp_timer_get_time() - edge_us));
@@ -9068,15 +10163,28 @@ static void gnss_time_sync_task(void *parameter)
         s_time_setting_in_progress.store(false);
         s_time_has_been_set.store(true);
         sync_state_note_success(update_delta);
+        s_timescale_requalification_required.store(false, std::memory_order_release);
 
 #if UBLOX_COMPLIANT_GNSS_RECEIVER_ENABLED
         if (first_sync)
         {
             // Keep UART access in this task while PPS discipline proceeds independently.
-            if (s_gnss.setDynamicModel(DYN_MODEL_STATIONARY, VAL_LAYER_RAM, 1500))
-                ESP_LOGI(TAG, "GNSS receiver placed in stationary mode");
+            const gnss::Status set_result = s_gnss.set_stationary_model(1500);
+            if (set_result != gnss::Status::ok)
+                ESP_LOGW(TAG, "GNSS receiver did not acknowledge the stationary-mode command: %s",
+                         gnss::status_name(set_result));
+
+            uint8_t dynamic_model = 0;
+            const gnss::Status read_result = s_gnss.read_dynamic_model(dynamic_model, 1500);
+            if (read_result != gnss::Status::ok)
+                ESP_LOGW(TAG, "GNSS receiver dynamic-model readback failed (%s); stationary mode is unconfirmed",
+                         gnss::status_name(read_result));
+            else if (dynamic_model == 2)
+                ESP_LOGI(TAG, "GNSS receiver stationary mode confirmed by RAM readback (dynamic model=%u)",
+                         static_cast<unsigned>(dynamic_model));
             else
-                ESP_LOGW(TAG, "GNSS receiver not placed in stationary mode");
+                ESP_LOGW(TAG, "GNSS receiver is not in stationary mode: RAM readback dynamic model=%u (expected %u)",
+                         static_cast<unsigned>(dynamic_model), 2U);
         }
 #endif
         first_sync = false;
@@ -9084,7 +10192,7 @@ static void gnss_time_sync_task(void *parameter)
 #if DEBUG_ENABLED
         char date_string[16] = "";
         char time_string[24] = "";
-        time_t now_utc = time(nullptr);
+        time_t now_utc = utc_now();
         format_local_date_time(now_utc, date_string, sizeof(date_string), time_string, sizeof(time_string));
 
         if (candidate.used_nmea_fallback)
@@ -9095,11 +10203,11 @@ static void gnss_time_sync_task(void *parameter)
                      step_clock ? "" : " (clock already correct, not stepped)");
 #endif
 
-        uint32_t refresh_start_ms = millis();
+        uint32_t refresh_start_ms = uptime_ms();
         uint32_t refresh_interval_ms = periodicGNSSRefreshEveryThisNumberOfMinutes * 60UL * 1000UL;
         int64_t invalid_started_us = 0;
 
-        while ((millis() - refresh_start_ms) < refresh_interval_ms)
+        while ((uptime_ms() - refresh_start_ms) < refresh_interval_ms)
         {
             bool gnss_valid = current_gnss_timing_is_valid();
 
@@ -9199,6 +10307,7 @@ void setup_the_gnss()
 
 // Serves standard IPv6 NTP client requests and returns the device’s current synchronized time.
 // Also servers IPv4 NTP client requests that the IPv4 NTP-related traffic the hardware interception path rejects
+#if NTP_SERVER_ENABLED
 static void ntp_server_task(void *parameter)
 {
     TaskHandle_t startup_task = static_cast<TaskHandle_t>(parameter);
@@ -9390,7 +10499,7 @@ static void ntp_server_task(void *parameter)
                 {
 #if MQTT_ENABLED
                     s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#if NTP_AUTHENTICATION_ENABLED
                     if (len > static_cast<int>(NTP_PACKET_SIZE) && ((request[0] >> 3) & 0x07) == 4)
                         s_ntp_authenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
                     else
@@ -9410,7 +10519,7 @@ static void ntp_server_task(void *parameter)
                 {
 #if MQTT_ENABLED
                     s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#if NTP_AUTHENTICATION_ENABLED
                     if (len > static_cast<int>(NTP_PACKET_SIZE) && ntp_version == 4)
                         s_ntp_authenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
                     else
@@ -9424,14 +10533,14 @@ static void ntp_server_task(void *parameter)
                     continue;
                 }
 
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#if NTP_AUTHENTICATION_ENABLED
                 uint32_t authentication_key_id = 0;
                 const ntp_auth_result_t authentication_result = ntp_auth_verify_request(request, static_cast<size_t>(len), ntp_version, &authentication_key_id);
                 if (authentication_result != ntp_auth_result_t::unauthenticated && authentication_result != ntp_auth_result_t::valid)
                 {
 #if MQTT_ENABLED
                     s_ntp_invalid_requests.fetch_add(1, std::memory_order_relaxed);
-                    if (ntp_version == 4)
+                    if (ntp_version == 4 && authentication_result != ntp_auth_result_t::authentication_required)
                         s_ntp_authenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
                     else
                         s_ntp_unauthenticated_invalid_requests.fetch_add(1, std::memory_order_relaxed);
@@ -9530,7 +10639,7 @@ static void ntp_server_task(void *parameter)
                 }
 
                 size_t reply_length = NTP_PACKET_SIZE;
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#if NTP_AUTHENTICATION_ENABLED
                 if (authenticated_request && !ntp_auth_append_response(reply, sizeof(reply), &reply_length, authentication_key_id))
                     continue;
 #endif
@@ -9578,358 +10687,47 @@ static void ntp_server_task(void *parameter)
 #endif
 }
 
-#if STARTUP_HEALTH_TEST_ENABLED
-static constexpr uint32_t Startup_Health_Test_Ready_Timeout_Ms = 30000;
-static constexpr uint32_t Startup_Health_Test_Response_Timeout_Ms = 1000;
-static constexpr uint32_t Startup_Health_Test_Standard_Retries = 3;
-static constexpr uint64_t Startup_Health_Test_interleaved_Tolerance = (1ULL << 32) * 5ULL / 1000ULL;
-static constexpr size_t Startup_Health_Test_Task_Stack_Size = 4096;
-
-struct startup_health_endpoint_results_t
-{
-    bool ntpv3_standard = false;
-    bool ntpv4_standard = false;
-    bool ntpv4_interleaved = false;
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
-    bool ntpv4_authenticated_standard = false;
-    bool ntpv4_authenticated_interleaved = false;
-    bool ntpv4_invalid_authentication_rejected = false;
-    bool ntpv4_unknown_key_rejected = false;
-    bool ntpv4_truncated_mac_rejected = false;
-    bool ntpv4_altered_response_rejected = false;
-#endif
-};
-
-struct startup_health_test_results_t
-{
-    bool prerequisites_ready = false;
-    startup_health_endpoint_results_t ipv4_loopback{};
-    startup_health_endpoint_results_t ipv4_assigned{};
-    startup_health_endpoint_results_t ipv6_loopback{};
-    startup_health_endpoint_results_t ipv6_assigned{};
-};
-
-struct startup_health_exchange_t
-{
-    uint64_t t1 = 0;
-    uint64_t t2 = 0;
-    uint64_t t3 = 0;
-    uint64_t t4 = 0;
-};
-
-static constexpr size_t Startup_Health_Test_Log_Capacity = 64;
-static constexpr size_t Startup_Health_Test_Log_Message_Size = 192;
-
-struct startup_health_log_entry_t
-{
-    esp_log_level_t level = ESP_LOG_INFO;
-    char message[Startup_Health_Test_Log_Message_Size] = "";
-};
-
-static startup_health_test_results_t s_startup_health_test_results{};
-static startup_health_log_entry_t *s_startup_health_test_log = nullptr;
-static size_t s_startup_health_test_log_count = 0;
-static uint32_t s_startup_health_test_number = 0;
-
-enum class startup_health_mqtt_metrics_result_t : uint8_t
-{
-    passed,
-    failed,
-    could_not_determine,
-};
-
-static void queue_startup_health_log(esp_log_level_t level, const char *format, ...)
-{
-    if (s_startup_health_test_log == nullptr || s_startup_health_test_log_count >= Startup_Health_Test_Log_Capacity)
-        return;
-
-    startup_health_log_entry_t &entry = s_startup_health_test_log[s_startup_health_test_log_count++];
-    entry.level = level;
-    va_list arguments;
-    va_start(arguments, format);
-    vsnprintf(entry.message, sizeof(entry.message), format, arguments);
-    va_end(arguments);
-}
-
-static void queue_startup_health_test_result(const char *endpoint, const char *test_name, bool passed)
-{
-    ++s_startup_health_test_number;
-    queue_startup_health_log(passed ? ESP_LOG_INFO : ESP_LOG_WARN,
-                             "Health Check %02lu - %s: %s - %s",
-                             static_cast<unsigned long>(s_startup_health_test_number), endpoint, test_name,
-                             passed ? "Passed" : "Failed");
-}
-
-static void flush_startup_health_log()
-{
-    for (size_t index = 0; index < s_startup_health_test_log_count; ++index)
-        ESP_LOG_LEVEL(s_startup_health_test_log[index].level, TAG, "%s", s_startup_health_test_log[index].message);
-    s_startup_health_test_log_count = 0;
-}
-
-static bool receive_startup_health_response(int socket_fd, uint8_t *reply, size_t reply_capacity, size_t *reply_length, uint64_t *arrival_time)
-{
-    fd_set read_fds;
-    FD_ZERO(&read_fds);
-    FD_SET(socket_fd, &read_fds);
-    struct timeval timeout{};
-    timeout.tv_sec = Startup_Health_Test_Response_Timeout_Ms / 1000;
-    timeout.tv_usec = static_cast<suseconds_t>(Startup_Health_Test_Response_Timeout_Ms % 1000) * 1000;
-    if (select(socket_fd + 1, &read_fds, nullptr, nullptr, &timeout) != 1)
-        return false;
-
-    int received_length = recvfrom(socket_fd, reply, reply_capacity, 0, nullptr, nullptr);
-    if (received_length < 0)
-        return false;
-
-    *reply_length = static_cast<size_t>(received_length);
-    *arrival_time = get_current_time_in_ntp64_format();
-    return true;
-}
-
-static bool run_standard_startup_health_test(int socket_fd, const struct sockaddr *destination, socklen_t destination_length,
-                                             uint8_t version, startup_health_exchange_t *exchange)
-{
-    uint8_t request[NTP_PACKET_SIZE] = {};
-    uint8_t reply[NTP_PACKET_SIZE] = {};
-    exchange->t1 = get_current_time_in_ntp64_format();
-    request[0] = static_cast<uint8_t>(version << 3) | 3;
-    write_ntp_timestamp(request, 40, exchange->t1);
-
-    for (uint32_t attempt = 0; attempt < Startup_Health_Test_Standard_Retries; ++attempt)
-    {
-        if (sendto(socket_fd, request, sizeof(request), 0, destination, destination_length) != static_cast<int>(sizeof(request)))
-            continue;
-
-        size_t reply_length = 0;
-        if (!receive_startup_health_response(socket_fd, reply, sizeof(reply), &reply_length, &exchange->t4) || reply_length != sizeof(reply))
-            continue;
-
-        if (((reply[0] >> 3) & 0x07) != version || (reply[0] & 0x07) != 4 || read_ntp_timestamp(reply, 24) != exchange->t1)
-            continue;
-
-        exchange->t2 = read_ntp_timestamp(reply, 32);
-        exchange->t3 = read_ntp_timestamp(reply, 40);
-        return exchange->t2 != 0 && exchange->t3 != 0;
-    }
-
-    return false;
-}
-
-static bool run_interleaved_startup_health_test(int socket_fd, const struct sockaddr *destination, socklen_t destination_length,
-                                                uint8_t version, const startup_health_exchange_t &previous_exchange)
-{
-    uint8_t request[NTP_PACKET_SIZE] = {};
-    uint8_t reply[NTP_PACKET_SIZE] = {};
-    size_t reply_length = 0;
-    uint64_t arrival_time = 0;
-    request[0] = static_cast<uint8_t>(version << 3) | 3;
-    write_ntp_timestamp(request, 24, previous_exchange.t2);
-    write_ntp_timestamp(request, 32, previous_exchange.t4);
-    write_ntp_timestamp(request, 40, previous_exchange.t1);
-
-    if (sendto(socket_fd, request, sizeof(request), 0, destination, destination_length) != static_cast<int>(sizeof(request)) ||
-        !receive_startup_health_response(socket_fd, reply, sizeof(reply), &reply_length, &arrival_time) || reply_length != sizeof(reply))
-        return false;
-
-    const uint64_t reply_transmit_time = read_ntp_timestamp(reply, 40);
-    const uint64_t transmit_difference = reply_transmit_time >= previous_exchange.t3
-                                             ? reply_transmit_time - previous_exchange.t3
-                                             : previous_exchange.t3 - reply_transmit_time;
-    return ((reply[0] >> 3) & 0x07) == version && (reply[0] & 0x07) == 4 &&
-           read_ntp_timestamp(reply, 24) == previous_exchange.t4 &&
-           transmit_difference <= Startup_Health_Test_interleaved_Tolerance;
-}
-
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
-static bool run_authenticated_startup_health_test(int socket_fd, const struct sockaddr *destination, socklen_t destination_length,
-                                                  startup_health_exchange_t *exchange, bool *altered_response_rejected)
-{
-    uint8_t request[NTP_MAX_PACKET_SIZE] = {};
-    uint8_t reply[NTP_MAX_PACKET_SIZE] = {};
-    size_t request_length = NTP_PACKET_SIZE;
-    exchange->t1 = get_current_time_in_ntp64_format();
-    request[0] = static_cast<uint8_t>(4U << 3) | 3U;
-    write_ntp_timestamp(request, 40, exchange->t1);
-    if (!ntp_auth_append_response(request, sizeof(request), &request_length, ntp_auth_default_key_id()))
-        return false;
-
-    for (uint32_t attempt = 0; attempt < Startup_Health_Test_Standard_Retries; ++attempt)
-    {
-        if (sendto(socket_fd, request, request_length, 0, destination, destination_length) != static_cast<int>(request_length))
-            continue;
-        size_t reply_length = 0;
-        if (!receive_startup_health_response(socket_fd, reply, sizeof(reply), &reply_length, &exchange->t4) ||
-            ntp_auth_verify_request(reply, reply_length, 4, nullptr) != ntp_auth_result_t::valid)
-            continue;
-        if (((reply[0] >> 3) & 0x07) != 4 || (reply[0] & 0x07) != 4 || read_ntp_timestamp(reply, 24) != exchange->t1)
-            continue;
-        reply[40] ^= 0x01;
-        *altered_response_rejected = ntp_auth_verify_request(reply, reply_length, 4, nullptr) == ntp_auth_result_t::invalid_mac;
-        reply[40] ^= 0x01;
-        exchange->t2 = read_ntp_timestamp(reply, 32);
-        exchange->t3 = read_ntp_timestamp(reply, 40);
-        return exchange->t2 != 0 && exchange->t3 != 0;
-    }
-    return false;
-}
-
-enum class startup_health_invalid_auth_t : uint8_t
-{
-    wrong_mac,
-    unknown_key,
-    truncated_mac,
-};
-
-static bool run_invalid_authenticated_startup_health_test(int socket_fd, const struct sockaddr *destination, socklen_t destination_length,
-                                                          startup_health_invalid_auth_t invalid_auth)
-{
-    uint8_t request[NTP_MAX_PACKET_SIZE] = {};
-    size_t request_length = NTP_PACKET_SIZE;
-    request[0] = static_cast<uint8_t>(4U << 3) | 3U;
-    write_ntp_timestamp(request, 40, get_current_time_in_ntp64_format());
-    if (!ntp_auth_append_response(request, sizeof(request), &request_length, ntp_auth_default_key_id()))
-        return false;
-    switch (invalid_auth)
-    {
-    case startup_health_invalid_auth_t::wrong_mac:
-        request[request_length - 1] ^= 0x01;
-        break;
-    case startup_health_invalid_auth_t::unknown_key:
-        memset(request + NTP_PACKET_SIZE, 0, NTP_AUTH_KEY_ID_SIZE);
-        break;
-    case startup_health_invalid_auth_t::truncated_mac:
-        --request_length;
-        break;
-    }
-    if (sendto(socket_fd, request, request_length, 0, destination, destination_length) != static_cast<int>(request_length))
-        return false;
-
-    fd_set read_fds;
-    FD_ZERO(&read_fds);
-    FD_SET(socket_fd, &read_fds);
-    struct timeval timeout{};
-    timeout.tv_sec = Startup_Health_Test_Response_Timeout_Ms / 1000;
-    timeout.tv_usec = static_cast<suseconds_t>(Startup_Health_Test_Response_Timeout_Ms % 1000) * 1000;
-    return select(socket_fd + 1, &read_fds, nullptr, nullptr, &timeout) == 0;
-}
-
-static bool run_authenticated_interleaved_startup_health_test(int socket_fd, const struct sockaddr *destination, socklen_t destination_length,
-                                                              const startup_health_exchange_t &previous_exchange)
-{
-    uint8_t request[NTP_MAX_PACKET_SIZE] = {};
-    uint8_t reply[NTP_MAX_PACKET_SIZE] = {};
-    size_t request_length = NTP_PACKET_SIZE;
-    uint64_t arrival_time = 0;
-    request[0] = static_cast<uint8_t>(4U << 3) | 3U;
-    write_ntp_timestamp(request, 24, previous_exchange.t2);
-    write_ntp_timestamp(request, 32, previous_exchange.t4);
-    write_ntp_timestamp(request, 40, previous_exchange.t1);
-    if (!ntp_auth_append_response(request, sizeof(request), &request_length, ntp_auth_default_key_id()) ||
-        sendto(socket_fd, request, request_length, 0, destination, destination_length) != static_cast<int>(request_length))
-        return false;
-    size_t reply_length = 0;
-    if (!receive_startup_health_response(socket_fd, reply, sizeof(reply), &reply_length, &arrival_time) ||
-        ntp_auth_verify_request(reply, reply_length, 4, nullptr) != ntp_auth_result_t::valid)
-        return false;
-    const uint64_t reply_transmit_time = read_ntp_timestamp(reply, 40);
-    const uint64_t transmit_difference = reply_transmit_time >= previous_exchange.t3
-                                             ? reply_transmit_time - previous_exchange.t3
-                                             : previous_exchange.t3 - reply_transmit_time;
-    return (reply[0] & 0x07) == 4 && read_ntp_timestamp(reply, 24) == previous_exchange.t4 &&
-           transmit_difference <= Startup_Health_Test_interleaved_Tolerance;
-}
 #endif
 
-static startup_health_mqtt_metrics_result_t check_startup_health_mqtt_metrics(const startup_health_test_results_t &results)
-{
+#if STARTUP_HEALTH_TEST_ENABLED && NTP_SERVER_ENABLED
+const startup_health_context_t s_startup_health_context{
+    get_current_time_in_ntp64_format,
+    read_ntp_timestamp,
+    write_ntp_timestamp,
+    []()
+    {
+        const network_address_snapshot_t addresses = get_network_address_snapshot();
+        startup_health_addresses_t result{};
+        memcpy(result.ipv4, addresses.ipv4, sizeof(result.ipv4));
+        memcpy(result.ipv6, addresses.ipv6, sizeof(result.ipv6));
+        return result;
+    },
+    []()
+    {
+        const EventBits_t ready = xEventGroupGetBits(s_net_event_group);
+        return (ready & ETH_CONNECTED_BIT) != 0 && has_usable_network_address(ready);
+    },
+    []()
+    {
+        return s_time_has_been_set.load(std::memory_order_acquire) &&
+               s_pps_discipline_active.load(std::memory_order_acquire);
+    },
+    []()
+    { return esp_netif_get_netif_impl_index(s_eth_netif); },
 #if MQTT_ENABLED && MQTT_CLIENT_REPORTING_ENABLED
-    if (s_mqtt_ntp_event_queue == nullptr || s_mqtt_stats_mutex == nullptr)
-        return startup_health_mqtt_metrics_result_t::could_not_determine;
-
-    uint32_t expected_authenticated_valid = 0;
-    uint32_t expected_unauthenticated_valid = 0;
-    uint32_t expected_authenticated_invalid = 0;
-    bool indeterminate = false;
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
-    const bool authentication_available = ntp_auth_available();
-#endif
-    const auto count_endpoint = [&](const startup_health_endpoint_results_t &endpoint)
-    {
-        const bool unauthenticated_valid = endpoint.ntpv3_standard && endpoint.ntpv4_standard && endpoint.ntpv4_interleaved;
-        if (unauthenticated_valid)
-            expected_unauthenticated_valid += 3;
-        else
-            indeterminate = true;
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
-        if (authentication_available)
-        {
-            const bool authenticated_valid = endpoint.ntpv4_authenticated_standard && endpoint.ntpv4_authenticated_interleaved;
-            if (authenticated_valid)
-                expected_authenticated_valid += 2;
-            else
-                indeterminate = true;
-
-            const bool authenticated_invalid = endpoint.ntpv4_invalid_authentication_rejected && endpoint.ntpv4_unknown_key_rejected &&
-                                               endpoint.ntpv4_truncated_mac_rejected;
-            if (authenticated_invalid)
-                expected_authenticated_invalid += 3;
-            else
-                indeterminate = true;
-        }
-#endif
-    };
-
-    const network_address_snapshot_t addresses = get_network_address_snapshot();
-    if (results.prerequisites_ready)
-    {
-        if (IPV4_ENABLED && addresses.ipv4[0] != '\0')
-        {
-            count_endpoint(results.ipv4_loopback);
-            count_endpoint(results.ipv4_assigned);
-        }
-        if (IPV6_ENABLED && addresses.ipv6[0] != '\0')
-        {
-            count_endpoint(results.ipv6_loopback);
-            count_endpoint(results.ipv6_assigned);
-        }
-    }
-
-    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(MQTT_QUEUED_PUBLISH_DELAY_MS * 2U);
-    while (uxQueueMessagesWaiting(s_mqtt_ntp_event_queue) != 0 && xTaskGetTickCount() < deadline)
-        vTaskDelay(pdMS_TO_TICKS(1));
-
-    if (uxQueueMessagesWaiting(s_mqtt_ntp_event_queue) != 0 || s_ntp_telemetry_events_dropped.load(std::memory_order_relaxed) != 0 ||
-        s_mqtt_client_table_overflown.load(std::memory_order_relaxed))
-        return startup_health_mqtt_metrics_result_t::could_not_determine;
-
-    if (indeterminate || !results.prerequisites_ready)
-        return startup_health_mqtt_metrics_result_t::could_not_determine;
-
-    const uint32_t expected_valid = expected_authenticated_valid + expected_unauthenticated_valid;
-    if (s_ntp_authenticated_valid_requests.load(std::memory_order_relaxed) < expected_authenticated_valid ||
-        s_ntp_unauthenticated_valid_requests.load(std::memory_order_relaxed) < expected_unauthenticated_valid ||
-        s_ntp_authenticated_invalid_requests.load(std::memory_order_relaxed) < expected_authenticated_invalid ||
-        s_ntp_valid_requests.load(std::memory_order_relaxed) < expected_valid ||
-        s_ntp_invalid_requests.load(std::memory_order_relaxed) < expected_authenticated_invalid ||
-        s_ntp_responses_synchronized_and_disciplined.load(std::memory_order_relaxed) < expected_valid ||
-        s_ntp_responses.load(std::memory_order_relaxed) < expected_valid)
-        return startup_health_mqtt_metrics_result_t::failed;
-
-    const auto endpoint_expected_valid_requests = [
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
-                                                      authentication_available
-#endif
-    ](const startup_health_endpoint_results_t &endpoint)
-    {
-        uint32_t expected_requests = endpoint.ntpv3_standard && endpoint.ntpv4_standard && endpoint.ntpv4_interleaved ? 3U : 0U;
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
-        if (authentication_available && endpoint.ntpv4_authenticated_standard && endpoint.ntpv4_authenticated_interleaved)
-            expected_requests += 2;
-#endif
-        return expected_requests;
-    };
-    const auto has_expected_client_requests = [](const char *address_text, sa_family_t address_family, uint32_t expected_requests)
+    s_mqtt_ntp_event_queue,
+    s_mqtt_stats_mutex,
+    MQTT_QUEUED_PUBLISH_DELAY_MS,
+    s_ntp_telemetry_events_dropped,
+    s_mqtt_client_table_overflown,
+    s_ntp_authenticated_valid_requests,
+    s_ntp_unauthenticated_valid_requests,
+    s_ntp_authenticated_invalid_requests,
+    s_ntp_valid_requests,
+    s_ntp_invalid_requests,
+    s_ntp_responses_synchronized_and_disciplined,
+    s_ntp_responses,
+    [](const char *address_text, sa_family_t address_family, uint32_t expected_requests)
     {
         if (expected_requests == 0)
             return true;
@@ -9944,189 +10742,9 @@ static startup_health_mqtt_metrics_result_t check_startup_health_mqtt_metrics(co
                 return s_mqtt_clients[index].requests >= expected_requests;
         }
         return false;
-    };
-
-    if (xSemaphoreTake(s_mqtt_stats_mutex, portMAX_DELAY) != pdTRUE)
-        return startup_health_mqtt_metrics_result_t::could_not_determine;
-    const bool clients_match = (!IPV4_ENABLED ||
-                                (has_expected_client_requests("127.0.0.1", AF_INET, endpoint_expected_valid_requests(results.ipv4_loopback)) &&
-                                 has_expected_client_requests(addresses.ipv4, AF_INET, endpoint_expected_valid_requests(results.ipv4_assigned)))) &&
-                               (!IPV6_ENABLED ||
-                                (has_expected_client_requests("::1", AF_INET6, endpoint_expected_valid_requests(results.ipv6_loopback)) &&
-                                 has_expected_client_requests(addresses.ipv6, AF_INET6, endpoint_expected_valid_requests(results.ipv6_assigned))));
-    xSemaphoreGive(s_mqtt_stats_mutex);
-    return clients_match ? startup_health_mqtt_metrics_result_t::passed : startup_health_mqtt_metrics_result_t::failed;
-#else
-    (void)results;
-    return startup_health_mqtt_metrics_result_t::could_not_determine;
+    },
 #endif
-}
-
-static startup_health_endpoint_results_t run_startup_health_endpoint_test(const char *name, const struct sockaddr *destination,
-                                                                          socklen_t destination_length, sa_family_t family)
-{
-    startup_health_endpoint_results_t results{};
-    int socket_fd = socket(family, SOCK_DGRAM, IPPROTO_UDP);
-    if (socket_fd < 0)
-    {
-        queue_startup_health_log(ESP_LOG_WARN, "Health Check %s: unable to create socket: errno %d", name, errno);
-        queue_startup_health_test_result(name, "NTPv3 standard     ", false);
-        queue_startup_health_test_result(name, "NTPv4 standard     ", false);
-        queue_startup_health_test_result(name, "NTPv4 interleaved  ", false);
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
-        if (ntp_auth_available())
-        {
-            queue_startup_health_test_result(name, "NTPv4 auth standard", false);
-            queue_startup_health_test_result(name, "NTPv4 auth interlv ", false);
-            queue_startup_health_test_result(name, "NTPv4 invalid auth ", false);
-            queue_startup_health_test_result(name, "NTPv4 unknown key  ", false);
-            queue_startup_health_test_result(name, "NTPv4 truncated MAC", false);
-            queue_startup_health_test_result(name, "NTPv4 altered reply", false);
-        }
-#endif
-        return results;
-    }
-
-    startup_health_exchange_t ntpv3_exchange{};
-    startup_health_exchange_t ntpv4_exchange{};
-    results.ntpv3_standard = run_standard_startup_health_test(socket_fd, destination, destination_length, 3, &ntpv3_exchange);
-    results.ntpv4_standard = run_standard_startup_health_test(socket_fd, destination, destination_length, 4, &ntpv4_exchange);
-    if (results.ntpv4_standard)
-        results.ntpv4_interleaved = run_interleaved_startup_health_test(socket_fd, destination, destination_length, 4, ntpv4_exchange);
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
-    if (ntp_auth_available())
-    {
-        startup_health_exchange_t authenticated_exchange{};
-        results.ntpv4_authenticated_standard = run_authenticated_startup_health_test(socket_fd, destination, destination_length, &authenticated_exchange,
-                                                                                     &results.ntpv4_altered_response_rejected);
-        if (results.ntpv4_authenticated_standard)
-            results.ntpv4_authenticated_interleaved = run_authenticated_interleaved_startup_health_test(socket_fd, destination, destination_length, authenticated_exchange);
-        results.ntpv4_invalid_authentication_rejected = run_invalid_authenticated_startup_health_test(socket_fd, destination, destination_length,
-                                                                                                      startup_health_invalid_auth_t::wrong_mac);
-        results.ntpv4_unknown_key_rejected = run_invalid_authenticated_startup_health_test(socket_fd, destination, destination_length,
-                                                                                           startup_health_invalid_auth_t::unknown_key);
-        results.ntpv4_truncated_mac_rejected = run_invalid_authenticated_startup_health_test(socket_fd, destination, destination_length,
-                                                                                             startup_health_invalid_auth_t::truncated_mac);
-    }
-#endif
-
-    closesocket(socket_fd);
-    queue_startup_health_test_result(name, "NTPv3 standard     ", results.ntpv3_standard);
-    queue_startup_health_test_result(name, "NTPv4 standard     ", results.ntpv4_standard);
-    queue_startup_health_test_result(name, "NTPv4 interleaved  ", results.ntpv4_interleaved);
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
-    if (ntp_auth_available())
-    {
-        queue_startup_health_test_result(name, "NTPv4 auth standard", results.ntpv4_authenticated_standard);
-        queue_startup_health_test_result(name, "NTPv4 auth interlv ", results.ntpv4_authenticated_interleaved);
-        queue_startup_health_test_result(name, "NTPv4 invalid auth ", results.ntpv4_invalid_authentication_rejected);
-        queue_startup_health_test_result(name, "NTPv4 unknown key  ", results.ntpv4_unknown_key_rejected);
-        queue_startup_health_test_result(name, "NTPv4 truncated MAC", results.ntpv4_truncated_mac_rejected);
-        queue_startup_health_test_result(name, "NTPv4 altered reply", results.ntpv4_altered_response_rejected);
-    }
-#endif
-    return results;
-}
-
-static startup_health_test_results_t run_startup_health_tests()
-{
-    startup_health_test_results_t results{};
-    const int64_t deadline_us = esp_timer_get_time() + static_cast<int64_t>(Startup_Health_Test_Ready_Timeout_Ms) * 1000;
-    EventBits_t ready = 0;
-    do
-    {
-        ready = xEventGroupGetBits(s_net_event_group);
-        const bool required_ip_available = PreferIPvX == 1   ? (ready & ETH_GOT_IP_BIT) != 0
-                                           : PreferIPvX == 2 ? (ready & ETH_GOT_ROUTABLE_IP6_BIT) != 0
-                                                             : (ready & (ETH_GOT_IP_BIT | ETH_GOT_ROUTABLE_IP6_BIT)) != 0;
-        if ((ready & ETH_CONNECTED_BIT) != 0 && required_ip_available)
-            break;
-        vTaskDelay(pdMS_TO_TICKS(100));
-    } while (esp_timer_get_time() < deadline_us);
-
-    const bool required_ip_available = PreferIPvX == 1   ? (ready & ETH_GOT_IP_BIT) != 0
-                                       : PreferIPvX == 2 ? (ready & ETH_GOT_ROUTABLE_IP6_BIT) != 0
-                                                         : (ready & (ETH_GOT_IP_BIT | ETH_GOT_ROUTABLE_IP6_BIT)) != 0;
-    if ((ready & ETH_CONNECTED_BIT) == 0 || !required_ip_available || !s_time_has_been_set.load(std::memory_order_acquire) ||
-        !s_pps_discipline_active.load(std::memory_order_acquire))
-    {
-        queue_startup_health_log(ESP_LOG_ERROR, "Health Check prerequisites were not ready before timeout");
-        return results;
-    }
-
-    results.prerequisites_ready = true;
-    const network_address_snapshot_t addresses = get_network_address_snapshot();
-    if (IPV4_ENABLED && addresses.ipv4[0] != '\0')
-    {
-        struct sockaddr_in ipv4_loopback{};
-        ipv4_loopback.sin_family = AF_INET;
-        ipv4_loopback.sin_port = htons(NTP_PORT);
-        ipv4_loopback.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        results.ipv4_loopback = run_startup_health_endpoint_test("IPv4 loopback", reinterpret_cast<const struct sockaddr *>(&ipv4_loopback), sizeof(ipv4_loopback), AF_INET);
-
-        struct sockaddr_in ipv4_assigned{};
-        ipv4_assigned.sin_family = AF_INET;
-        ipv4_assigned.sin_port = htons(NTP_PORT);
-        if (inet_pton(AF_INET, addresses.ipv4, &ipv4_assigned.sin_addr) == 1)
-            results.ipv4_assigned = run_startup_health_endpoint_test("IPv4 assigned", reinterpret_cast<const struct sockaddr *>(&ipv4_assigned), sizeof(ipv4_assigned), AF_INET);
-        else
-            queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv4 assigned: invalid address");
-    }
-
-    if (IPV6_ENABLED && addresses.ipv6[0] != '\0')
-    {
-        struct sockaddr_in6 ipv6_loopback{};
-        ipv6_loopback.sin6_family = AF_INET6;
-        ipv6_loopback.sin6_port = htons(NTP_PORT);
-        if (inet_pton(AF_INET6, "::1", &ipv6_loopback.sin6_addr) != 1)
-        {
-            queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv6 loopback: unable to initialize address");
-            return results;
-        }
-        results.ipv6_loopback = run_startup_health_endpoint_test("IPv6 loopback", reinterpret_cast<const struct sockaddr *>(&ipv6_loopback), sizeof(ipv6_loopback), AF_INET6);
-
-        struct sockaddr_in6 ipv6_assigned{};
-        ipv6_assigned.sin6_family = AF_INET6;
-        ipv6_assigned.sin6_port = htons(NTP_PORT);
-        ipv6_assigned.sin6_scope_id = esp_netif_get_netif_impl_index(s_eth_netif);
-        if (inet_pton(AF_INET6, addresses.ipv6, &ipv6_assigned.sin6_addr) == 1)
-            results.ipv6_assigned = run_startup_health_endpoint_test("IPv6 assigned", reinterpret_cast<const struct sockaddr *>(&ipv6_assigned), sizeof(ipv6_assigned), AF_INET6);
-        else
-            queue_startup_health_log(ESP_LOG_ERROR, "Health Check IPv6 assigned: invalid address");
-    }
-
-    return results;
-}
-
-static void startup_health_test_task(void *parameter)
-{
-    s_startup_health_test_log = static_cast<startup_health_log_entry_t *>(calloc(Startup_Health_Test_Log_Capacity, sizeof(startup_health_log_entry_t)));
-    if (s_startup_health_test_log == nullptr)
-    {
-        ESP_LOGE(TAG, "Health Check could not allocate its log buffer");
-        xTaskNotifyGive(static_cast<TaskHandle_t>(parameter));
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    queue_startup_health_log(ESP_LOG_INFO, "Health Check started");
-    s_startup_health_test_results = run_startup_health_tests();
-    const startup_health_mqtt_metrics_result_t mqtt_metrics_result = check_startup_health_mqtt_metrics(s_startup_health_test_results);
-    ++s_startup_health_test_number;
-    const char *mqtt_metrics_status = mqtt_metrics_result == startup_health_mqtt_metrics_result_t::passed
-                                          ? "Passed"
-                                      : mqtt_metrics_result == startup_health_mqtt_metrics_result_t::failed ? "Failed"
-                                                                                                            : "Could not determine";
-    queue_startup_health_log(mqtt_metrics_result == startup_health_mqtt_metrics_result_t::passed ? ESP_LOG_INFO : ESP_LOG_WARN,
-                             "Health Check %02lu - MQTT metrics                       - %s", static_cast<unsigned long>(s_startup_health_test_number),
-                             mqtt_metrics_status);
-    queue_startup_health_log(ESP_LOG_INFO, "Health Check %s", s_startup_health_test_results.prerequisites_ready ? "completed" : "failed before testing");
-    flush_startup_health_log();
-    free(s_startup_health_test_log);
-    s_startup_health_test_log = nullptr;
-    xTaskNotifyGive(static_cast<TaskHandle_t>(parameter));
-    vTaskDelete(nullptr);
-}
+};
 #endif
 
 static int get_required_top_line_message()
@@ -10143,10 +10761,12 @@ static int get_required_top_line_message()
 
     if (!s_ethernet_connected.load())
         required_top_line_message = 1;
-    else if (s_ntp_external_responses_enabled.load() && s_net_event_group != nullptr &&
+    else if (NTP_SERVER_ENABLED && s_ntp_external_responses_enabled.load() && s_net_event_group != nullptr &&
              !has_usable_network_address(xEventGroupGetBits(s_net_event_group)))
         required_top_line_message = 13;
 #if MQTT_ENABLED
+    else if (s_mqtt_queue_fallback_status.load() != 0)
+        required_top_line_message = s_mqtt_queue_fallback_status.load();
     else if (s_mqtt_queued_messages_count.load() > 0)
         required_top_line_message = 3;
     else if (s_mqtt_setup_failed.load())
@@ -10211,6 +10831,10 @@ static void control_RGB_LED(RGB_LED_Colour Colour, bool enabled)
             red_duty = 255;
             green_duty = 192;
             blue_duty = 203;
+            break;
+        case RGB_LED_Colour::teal:
+            green_duty = 128;
+            blue_duty = 128;
             break;
         case RGB_LED_Colour::off:
             break;
@@ -10301,6 +10925,13 @@ static void update_RGB_LED()
             Colour = LED_alert;
             break;
 
+        case 17:
+            flashing = true;
+            [[fallthrough]];
+        case 16:
+            Colour = RGB_LED_Colour::teal;
+            break;
+
         case 98: // The server is setting its time
             Colour = LED_sync;
             break;
@@ -10347,7 +10978,7 @@ static void update_LED_LCD_Button_task(void *parameter)
         }
 #endif
 
-        time_t now_utc = time(nullptr);
+        time_t now_utc = utc_now();
         struct tm utc_tm{};
         gmtime_r(&now_utc, &utc_tm);
 
@@ -10389,6 +11020,8 @@ static void update_LED_LCD_Button_task(void *parameter)
             |         |                      |                 |                                                                    |
             |   13    | ESP32 Time Server[I] | Orange          | No usable IP address                                               |
             |   12    | ESP32 Time Server[+] | Orange flashing | Load shedding active                                               |
+            |   16    | ESP32 Time Server[Q] | Teal            | TF queue failed; RAM fallback active                               |
+            |   17    | ESP32 Time Server[q] | Teal flashing   | TF queue failed; RAM fallback allocation failed                    |
             |   98    | ESP32 Time Server[*] | White           | The server is setting its time                                     |
             |   99    | ESP32 Time Server's  | Pink            | The button is being pressed                                        |
 
@@ -10410,7 +11043,12 @@ static void update_LED_LCD_Button_task(void *parameter)
                 char top_line_message[21]; // 20 chars + null
                 snprintf(top_line_message, sizeof(top_line_message), "%-20s", lcdTopLineTitle);
 
-                if (required_top_line_message == 15)
+                if (required_top_line_message == 16 || required_top_line_message == 17)
+                {
+                    snprintf(top_line_message, sizeof(top_line_message), "%-20s",
+                             required_top_line_message == 16 ? "ESP32 Time Server[Q]" : "ESP32 Time Server[q]");
+                }
+                else if (required_top_line_message == 15)
                 {
                     snprintf(top_line_message, sizeof(top_line_message), "%-20s", "ESP32 Time Server[H]");
                 }
@@ -10513,25 +11151,55 @@ void start_RGB_LED_LCD_and_Button_refresh()
     xTaskCreatePinnedToCore(update_LED_LCD_Button_task, "LED_LCD_Button_service", LED_LCD_Button_Task_Stack_Size, nullptr, 10, nullptr, tskNO_AFFINITY);
 }
 
-void setup_symmetric_key_authentication()
+void setup_NTP_symmetric_key_authentication()
 {
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+
+#if NTP_SERVER_ENABLED && NTP_AUTHENTICATION_ENABLED
     if (ntp_auth_initialize())
         ESP_LOGI(TAG, "NTP symmetric-key authentication is available");
     else
-        ESP_LOGW(TAG, "NTP symmetric-key authentication is unavailable");
+    {
+        if (NTP_AUTHENTICATION_REQUIRED)
+            ESP_LOGE(TAG, "NTP authentication is unavailable: authenticated-only policy rejects all requests");
+        else
+            ESP_LOGW(TAG, "NTP symmetric-key authentication is unavailable");
+    }
+    ESP_LOGI(TAG, "NTP authentication policy: %s", NTP_AUTHENTICATION_REQUIRED ? "authenticated-only" : "mixed");
 #endif
 }
+
+#if NTP_SERVER_ENABLED
+static bool ntp_threshold_for_chip(const esp_chip_info_t &chip_info, uint32_t &threshold)
+{
+    if (chip_info.model == CHIP_ESP32P4)
+    {
+        threshold = chip_info.revision <= 103
+                        ? NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32P4_ChipVersion1_3
+                        : NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32P4_ChipVersion_above_1_3;
+        return true;
+    }
+    if (chip_info.model == CHIP_ESP32S31)
+    {
+        threshold = NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32S31;
+        return true;
+    }
+    return false;
+}
+#endif
 
 void setup_ntp_server()
 {
 
-    // set the NTP load shedding threshold based on the ESP32-P4 chip version
+#if NTP_SERVER_ENABLED
+
+    setup_NTP_symmetric_key_authentication();
+
+    // Revision numbers are comparable only within the same chip family.
     esp_chip_info_t chip_info{};
     esp_chip_info(&chip_info);
-    NTP_Requests_Per_Second_Load_Shedding_Threshold = chip_info.revision <= 103
-                                                          ? NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32P4_ChipVersion1_3
-                                                          : NTP_Requests_Per_Second_Load_Shedding_Threshold_ESP32P4_ChipVersion_above_1_3;
+    ESP_ERROR_CHECK(ntp_threshold_for_chip(chip_info, NTP_Requests_Per_Second_Load_Shedding_Threshold)
+                        ? ESP_OK
+                        : ESP_ERR_NOT_SUPPORTED);
 
 #if DEBUG_ENABLED
     ESP_LOGI(TAG, "NTP load shedding threshold set to %u requests per second", NTP_Requests_Per_Second_Load_Shedding_Threshold);
@@ -10550,6 +11218,8 @@ void setup_ntp_server()
         ESP_LOGE(TAG, "NTP server did not become ready");
         return;
     }
+
+#endif
 }
 
 void setup_recovery_task()
@@ -10558,7 +11228,7 @@ void setup_recovery_task()
     if (xTaskCreatePinnedToCore(ethernet_transport_recovery_task, "eth_recovery", Ethernet_Transport_Recovery_Task_Stack_Size,
                                 nullptr, ETHERNET_RECOVERY_TASK_PRIORITY, nullptr, 0) != pdPASS)
     {
-        ESP_LOGE(TAG, "Unable to start NTP transport health monitoring");
+        ESP_LOGE(TAG, "Unable to start Ethernet transport health monitoring");
         controlled_restart("ethernet_monitor_start_failed");
     }
 }
@@ -10566,11 +11236,27 @@ void setup_recovery_task()
 void perform_health_check()
 {
 #if STARTUP_HEALTH_TEST_ENABLED
+    start_startup_health_check();
+#endif
+#if STARTUP_HEALTH_TEST_ENABLED && PTP_ENABLED
+    const bool ptp_ready = s_ptp_clock_ready.load(std::memory_order_acquire)
+#if PTP_L2_SERVER_ENABLED
+                           && s_ptp_l2_worker_ready.load(std::memory_order_acquire)
+#endif
+#if PTP_L3_SERVER_ENABLED
+                           && s_ptp_l3_udp_worker_ready.load(std::memory_order_acquire)
+#endif
+        ;
+    report_startup_health_ptp_readiness(ptp_ready);
+#endif
+#if STARTUP_HEALTH_TEST_ENABLED && NTP_SERVER_ENABLED
     if (xTaskCreatePinnedToCore(startup_health_test_task, "startup_health", Startup_Health_Test_Task_Stack_Size,
                                 xTaskGetCurrentTaskHandle(), 5, nullptr, tskNO_AFFINITY) != pdPASS)
         ESP_LOGE(TAG, "Health Check could not start");
     else
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+#elif STARTUP_HEALTH_TEST_ENABLED && PTP_ENABLED
+    ESP_LOGI(TAG, "Health Check completed");
 #endif
 }
 
@@ -10594,7 +11280,14 @@ void write_open_for_business_messages_to_the_console()
     //    If afterwards a Global Unicast Address (GUA) is acquired, it will be used as a more preferred address type over the LLA and ULA.
     //
 
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED && DEBUG_ENABLED
+    ESP_LOGI(TAG, " ");
+    ESP_LOGI(TAG, "Host name: %s", HostName);
+
+    ESP_LOGI(TAG, " ");
+    ESP_ERROR_CHECK(log_active_ethernet_mac());
+    ESP_LOGI(TAG, " ");
+
+#if NTP_SERVER_ENABLED && NTP_AUTHENTICATION_ENABLED && DEBUG_ENABLED
 
     // The secret keys are only printed with DEBUG_ENABLED (a serial log is easily copied or recorded).
     // For the client configuration the ASCII keys of ESP32TimeServerSettingsSecrets.h can be used directly,
@@ -10625,7 +11318,7 @@ void write_open_for_business_messages_to_the_console()
     refresh_network_ipv6_addresses();
     log_network_ipv6_addresses();
     const network_address_snapshot_t addresses = get_network_address_snapshot();
-    if (PreferIPvX != 2) // If not IPv6 only, report IPv4 connection status
+    if (IPV4_ENABLED)
     {
         if (addresses.ipv4[0] != '\0')
             ESP_LOGI(TAG, "The IPv4 connection is up ( %s )", addresses.ipv4);
@@ -10633,7 +11326,7 @@ void write_open_for_business_messages_to_the_console()
             ESP_LOGW(TAG, "The IPv4 connection is down");
     }
 
-    if (PreferIPvX != 1) // If not IPv4 only, report IPv6 connection status
+    if (IPV6_ENABLED)
     {
         if (addresses.ipv6[0] != '\0')
             ESP_LOGI(TAG, "The IPv6 connection is up ( %s )", addresses.ipv6);
@@ -10641,14 +11334,16 @@ void write_open_for_business_messages_to_the_console()
             ESP_LOGW(TAG, "The IPv6 connection is down");
     }
 
-    ESP_LOGI(TAG, " ");
-    ESP_LOGI(TAG, "MAC address: %s", MACToBeUsed.c_str());
+    if (L2_ONLY)
+        ESP_LOGI(TAG, "L2 Ethernet only; IPv4 and IPv6 disabled");
 
+#if NTP_SERVER_ENABLED
     s_ntp_external_responses_enabled.store(true, std::memory_order_release);
+#endif
 
     // Note: 'Open for business' message is purposefully not guarded by a DEBUG_ENABLE check - it should always be written to the console.
     char s_open_for_business_date_and_time[25] = "";
-    format_time_to_ISO8601(time(nullptr), s_open_for_business_date_and_time, sizeof(s_open_for_business_date_and_time));
+    format_time_to_ISO8601(utc_now(), s_open_for_business_date_and_time, sizeof(s_open_for_business_date_and_time));
     ESP_LOGI(TAG, " ");
     ESP_LOGI(TAG, "***********************************************");
     ESP_LOGI(TAG, "* Open for business: %s *", s_open_for_business_date_and_time);
@@ -10662,18 +11357,303 @@ void write_open_for_business_messages_to_the_console()
 #endif
 }
 
+void check_NTP_and_PTP_settings()
+{
+
+    // if these key settings don't make sense, stop the build with an error message
+
+#if (NTP_SERVER_ENABLED != 0 && NTP_SERVER_ENABLED != 1) || (PTP_L2_SERVER_ENABLED != 0 && PTP_L2_SERVER_ENABLED != 1) || \
+    (PTP_L3_SERVER_ENABLED != 0 && PTP_L3_SERVER_ENABLED != 1)
+#error "Time service enable settings must each be 0 or 1"
+#endif
+
+#if !NTP_SERVER_ENABLED && !PTP_L2_SERVER_ENABLED && !PTP_L3_SERVER_ENABLED
+#error "At least one time service (NTP or PTP) must be enabled"
+#endif
+
+#if PTP_L2_SERVER_ENABLED
+#if (PTP_L2_MASTER_SELECTION_ENABLED != 0 && PTP_L2_MASTER_SELECTION_ENABLED != 1) || \
+    PTP_L2_FOREIGN_MASTER_CAPACITY < 1 || PTP_L2_FOREIGN_MASTER_CAPACITY > 32
+#error "Invalid PTP master-selection settings"
+#endif
+#if PTP_L2_DOMAIN < 0 || PTP_L2_DOMAIN > 127 || PTP_L2_LOG_SYNC_INTERVAL < 0 || PTP_L2_LOG_SYNC_INTERVAL > 4 || \
+    PTP_L2_LOG_ANNOUNCE_INTERVAL < 0 || PTP_L2_LOG_ANNOUNCE_INTERVAL > 4 ||                                     \
+    PTP_L2_PRIORITY1 < 0 || PTP_L2_PRIORITY1 > 255 || PTP_L2_PRIORITY2 < 0 || PTP_L2_PRIORITY2 > 255 ||         \
+    PTP_L2_REQUEST_QUEUE_DEPTH < 1 || PTP_L2_REQUEST_QUEUE_DEPTH > 32 ||                                        \
+    PTP_L2_FOLLOWER_CAPACITY < 1 || PTP_L2_FOLLOWER_CAPACITY > 256 ||                                           \
+    PTP_L2_FOLLOWER_TIMEOUT_SECONDS < 1 || PTP_L2_FOLLOWER_TIMEOUT_SECONDS > 3600 ||                            \
+    PTP_L2_FOREIGN_ANNOUNCE_TIMEOUT_SECONDS < 1 || PTP_L2_FOREIGN_ANNOUNCE_TIMEOUT_SECONDS > 3600
+#error "Invalid PTP domain, interval, priority, queue or follower limits"
+#endif
+#endif
+#if PTP_L3_SERVER_ENABLED
+#if (PTP_L3_UDP_MASTER_SELECTION_ENABLED != 0 && PTP_L3_UDP_MASTER_SELECTION_ENABLED != 1) ||                           \
+    PTP_L3_UDP_FOREIGN_MASTER_CAPACITY < 1 || PTP_L3_UDP_FOREIGN_MASTER_CAPACITY > 32 ||                                \
+    PTP_L3_UDP_DOMAIN < 0 || PTP_L3_UDP_DOMAIN > 127 ||                                                                 \
+    PTP_L3_UDP_LOG_SYNC_INTERVAL < 0 || PTP_L3_UDP_LOG_SYNC_INTERVAL > 4 ||                                             \
+    PTP_L3_UDP_LOG_ANNOUNCE_INTERVAL < 0 || PTP_L3_UDP_LOG_ANNOUNCE_INTERVAL > 4 ||                                     \
+    PTP_L3_UDP_PRIORITY1 < 0 || PTP_L3_UDP_PRIORITY1 > 255 || PTP_L3_UDP_PRIORITY2 < 0 || PTP_L3_UDP_PRIORITY2 > 255 || \
+    PTP_L3_UDP_REQUEST_QUEUE_DEPTH < 1 || PTP_L3_UDP_REQUEST_QUEUE_DEPTH > 32 ||                                        \
+    PTP_L3_UDP_FOLLOWER_CAPACITY < 1 || PTP_L3_UDP_FOLLOWER_CAPACITY > 256 ||                                           \
+    PTP_L3_UDP_FOLLOWER_TIMEOUT_SECONDS < 1 || PTP_L3_UDP_FOLLOWER_TIMEOUT_SECONDS > 3600 ||                            \
+    PTP_L3_UDP_FOREIGN_ANNOUNCE_TIMEOUT_SECONDS < 1 || PTP_L3_UDP_FOREIGN_ANNOUNCE_TIMEOUT_SECONDS > 3600
+#error "Invalid PTP L3 UDP settings"
+#endif
+#if !LWIP_IGMP || !LWIP_IPV6_MLD
+#error "PTP L3 UDP requires lwIP IGMP and IPv6 MLD multicast membership support"
+#endif
+#endif
+}
+
+static void initialize_delayed_psram()
+{
+#if CONFIG_SPIRAM && !CONFIG_SPIRAM_BOOT_INIT
+    if (!esp_psram_is_initialized())
+    {
+        const esp_err_t err = esp_psram_init();
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Unable to initialize PSRAM: %s", esp_err_to_name(err));
+            return;
+        }
+    }
+    if (!esp_psram_extram_test())
+    {
+        ESP_LOGE(TAG, "PSRAM memory test failed");
+        return;
+    }
+
+    const esp_err_t err = esp_psram_extram_add_to_heap_allocator();
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Unable to add PSRAM to the heap: %s", esp_err_to_name(err));
+        return;
+    }
+#if CONFIG_SPIRAM_USE_MALLOC
+    heap_caps_malloc_extmem_enable(CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL);
+#endif
+#endif
+}
+
+static void confirm_running_ota_image()
+{
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (running == nullptr)
+    {
+        ESP_LOGE(TAG, "Unable to identify the running OTA partition");
+        return;
+    }
+
+    esp_ota_img_states_t state;
+    esp_err_t err = esp_ota_get_state_partition(running, &state);
+    if (err == ESP_ERR_NOT_SUPPORTED)
+        return; // Factory images do not have an OTA state.
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Unable to read the running OTA image state: %s", esp_err_to_name(err));
+        return;
+    }
+    if (state == ESP_OTA_IMG_PENDING_VERIFY)
+    {
+        err = esp_ota_mark_app_valid_cancel_rollback();
+        if (err != ESP_OK)
+            ESP_LOGE(TAG, "Unable to confirm the running OTA image: %s", esp_err_to_name(err));
+    }
+#endif
+}
+
+struct board_pin_t
+{
+    const char *name;
+    int gpio;
+    bool output;
+    bool optional;
+};
+
+static constexpr board_pin_t s_board_pins[] = {
+    {"Ethernet MDC", EthernetMDCGPIO, true, false},
+    {"Ethernet MDIO", EthernetMDIOGPIO, true, false},
+    {"Ethernet PHY reset", EthernetPHYResetGPIO, true, false},
+#if CONFIG_IDF_TARGET_ESP32P4
+    {"RMII reference clock", EthernetRMIIClockGPIO, false, false},
+    {"RMII TX enable", EthernetRMIITXEnableGPIO, true, false},
+    {"RMII TX0", EthernetRMIITX0GPIO, true, false},
+    {"RMII TX1", EthernetRMIITX1GPIO, true, false},
+    {"RMII CRS/DV", EthernetRMIICRSDVGPIO, false, false},
+    {"RMII RX0", EthernetRMIIRX0GPIO, false, false},
+    {"RMII RX1", EthernetRMIIRX1GPIO, false, false},
+#if MQTT_ENABLED
+    {"TF command", MQTT_QOS > 0 ? TFCardCommandPin : -1, true, MQTT_QOS == 0},
+    {"TF clock", MQTT_QOS > 0 ? TFCardClockPin : -1, true, MQTT_QOS == 0},
+    {"TF data0", MQTT_QOS > 0 ? TFCardData0Pin : -1, true, MQTT_QOS == 0},
+    {"TF data1", MQTT_QOS > 0 ? TFCardData1Pin : -1, true, MQTT_QOS == 0},
+    {"TF data2", MQTT_QOS > 0 ? TFCardData2Pin : -1, true, MQTT_QOS == 0},
+    {"TF data3", MQTT_QOS > 0 ? TFCardData3Pin : -1, true, MQTT_QOS == 0},
+#endif
+#elif CONFIG_IDF_TARGET_ESP32S31
+    {"RGMII RX clock", EthernetRGMIIRXClockGPIO, false, false},
+    {"RGMII TX clock", EthernetRGMIITXClockGPIO, true, false},
+    {"RGMII PHY reference clock", EthernetRGMIIPHYRefClockGPIO, true, true},
+    {"RGMII TX control", EthernetRGMIITXControlGPIO, true, false},
+    {"RGMII TX0", EthernetRGMIITX0GPIO, true, false},
+    {"RGMII TX1", EthernetRGMIITX1GPIO, true, false},
+    {"RGMII TX2", EthernetRGMIITX2GPIO, true, false},
+    {"RGMII TX3", EthernetRGMIITX3GPIO, true, false},
+    {"RGMII RX control", EthernetRGMIIRXControlGPIO, false, false},
+    {"RGMII RX0", EthernetRGMIIRX0GPIO, false, false},
+    {"RGMII RX1", EthernetRGMIIRX1GPIO, false, false},
+    {"RGMII RX2", EthernetRGMIIRX2GPIO, false, false},
+    {"RGMII RX3", EthernetRGMIIRX3GPIO, false, false},
+#if MQTT_ENABLED && TIME_SERVER_BOARD_HAS_TF_CARD
+    {"TF CS", MQTT_QOS > 0 ? TFCardChipSelectPin : -1, true, MQTT_QOS == 0},
+    {"TF MOSI", MQTT_QOS > 0 ? TFCardMOSIPin : -1, true, MQTT_QOS == 0},
+    {"TF clock", MQTT_QOS > 0 ? TFCardClockPin : -1, true, MQTT_QOS == 0},
+    {"TF MISO", MQTT_QOS > 0 ? TFCardMISOPin : -1, false, MQTT_QOS == 0},
+#endif
+#endif
+    {"GNSS TX", TXPin, true, false},
+    {"GNSS RX", RXPin, false, false},
+    {"GNSS PPS", PPSPin, false, false},
+#if PTP_FREE_RUNNING
+    {"PTP PPS loopback", PTPPPSLoopbackPin, true, true},
+#endif
+#if LIQUID_CRYSTAL_DISPLAY_ENABLED
+    {"LCD SDA", LCDI2CSDAPin, true, false},
+    {"LCD SCL", LCDI2CSCLPin, true, false},
+#endif
+#if UPTIME_RESTART_BUTTON_ENABLED
+    {"Uptime button", upTimeRestartPin, false, false},
+#endif
+#if RBG_LED_KY_016_MODULE_ENABLED
+    {"LED blue", LEDBluePin, true, false},
+    {"LED green", LEDGreenPin, true, false},
+    {"LED red", LEDRedPin, true, false},
+#endif
+#if RBG_LED_WS2812_MODULE_ENABLED
+    {"WS2812", WS2812DataPin, true, false},
+#endif
+};
+
+template <size_t N>
+static constexpr bool distinct_board_gpios(const board_pin_t (&pins)[N])
+{
+    for (size_t i = 0; i < N; ++i)
+    {
+        if (pins[i].gpio < -1)
+            return false;
+        for (size_t j = i + 1; pins[i].gpio >= 0 && j < N; ++j)
+            if (pins[i].gpio == pins[j].gpio)
+                return false;
+    }
+    return true;
+}
+
+static_assert(distinct_board_gpios(s_board_pins), "Enabled board GPIO assignments must be distinct and >= -1");
+
+static esp_err_t validate_board_pins(const board_pin_t *pins, size_t count)
+{
+    for (size_t i = 0; i < count; ++i)
+    {
+        const board_pin_t &pin = pins[i];
+        if (pin.gpio == -1 && pin.optional)
+            continue;
+        if (!GPIO_IS_VALID_GPIO(pin.gpio) || (pin.output && !GPIO_IS_VALID_OUTPUT_GPIO(pin.gpio)))
+        {
+            ESP_LOGE(TAG, "Invalid GPIO %d for %s", pin.gpio, pin.name);
+            return ESP_ERR_INVALID_ARG;
+        }
+        for (size_t j = 0; j < i; ++j)
+            if (pins[j].gpio == pin.gpio)
+            {
+                ESP_LOGE(TAG, "GPIO %d is shared by %s and %s", pin.gpio, pins[j].name, pin.name);
+                return ESP_ERR_INVALID_ARG;
+            }
+    }
+    return ESP_OK;
+}
+
+static esp_err_t validate_chip_configuration(const esp_chip_info_t &chip_info)
+{
+#if CONFIG_IDF_TARGET_ESP32P4
+    constexpr esp_chip_model_t expected_chip = CHIP_ESP32P4;
+#ifdef CONFIG_ESP32P4_REV_MIN_FULL
+    constexpr int revision_min = CONFIG_ESP32P4_REV_MIN_FULL;
+#else
+    constexpr int revision_min = 0;
+#endif
+#ifdef CONFIG_ESP32P4_REV_MAX_FULL
+    constexpr int revision_max = CONFIG_ESP32P4_REV_MAX_FULL;
+#else
+    constexpr int revision_max = INT_MAX;
+#endif
+    constexpr int phy_address_min = 0;
+#elif CONFIG_IDF_TARGET_ESP32S31
+    constexpr esp_chip_model_t expected_chip = CHIP_ESP32S31;
+#ifdef CONFIG_ESP32S31_REV_MIN_FULL
+    constexpr int revision_min = CONFIG_ESP32S31_REV_MIN_FULL;
+#else
+    constexpr int revision_min = 0;
+#endif
+#ifdef CONFIG_ESP32S31_REV_MAX_FULL
+    constexpr int revision_max = CONFIG_ESP32S31_REV_MAX_FULL;
+#else
+    constexpr int revision_max = INT_MAX;
+#endif
+    constexpr int phy_address_min = -1;
+#endif
+    if (chip_info.model != expected_chip)
+    {
+        ESP_LOGE(TAG, "Chip model %d does not match the ESP32-%s build target", static_cast<int>(chip_info.model), ESP32_CHIP_TYPE);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    const int revision = static_cast<int>(chip_info.revision);
+    if (revision < revision_min || revision > revision_max)
+    {
+        ESP_LOGE(TAG, "ESP32-%s revision %u.%u is outside the build's supported range",
+                 ESP32_CHIP_TYPE, static_cast<unsigned>(chip_info.revision / 100),
+                 static_cast<unsigned>(chip_info.revision % 100));
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (EthernetPHYAddress < phy_address_min || EthernetPHYAddress > 31)
+    {
+        ESP_LOGE(TAG, "Invalid Ethernet PHY address %d", EthernetPHYAddress);
+        return ESP_ERR_INVALID_ARG;
+    }
+    ESP_LOGI(TAG, "ESP32-%s revision %u.%u", ESP32_CHIP_TYPE,
+             static_cast<unsigned>(chip_info.revision / 100),
+             static_cast<unsigned>(chip_info.revision % 100));
+    return ESP_OK;
+}
+
+static void validate_board_configuration()
+{
+    esp_chip_info_t chip_info{};
+    esp_chip_info(&chip_info);
+    ESP_ERROR_CHECK(validate_chip_configuration(chip_info));
+    ESP_ERROR_CHECK(validate_board_pins(s_board_pins, sizeof(s_board_pins) / sizeof(s_board_pins[0])));
+}
+
 extern "C" void app_main()
 {
 
-    setup_pps_input(); // (keep this at the very beginning of the setup sequence)
+    check_NTP_and_PTP_settings();
 
-    initArduino();
+    validate_board_configuration();
+
+    setup_pps_input(); // (keep this near the very beginning of the setup sequence)
+
+    initialize_delayed_psram();
+
+    confirm_running_ota_image();
+
+    const bool nvs_initialized = initialize_nvs_storage();
+
+    setup_mqtt_tf_queue(); // this is done early to allow the TF card reader status to be shown in the opening messages
 
     write_opening_messages_to_the_console();
 
-    setup_mqtt_tf_queue();
-
-    setup_NVS_storage();
+    setup_NVS_storage(nvs_initialized);
 
     setup_mutexes_and_semaphores();
 
@@ -10685,7 +11665,7 @@ extern "C" void app_main()
 
     start_RGB_LED_LCD_and_Button_refresh();
 
-    const bool ethernet_setup_started = start_ethernet_setup_task(xTaskGetCurrentTaskHandle());
+    const bool ethernet_setup_started = start_ethernet_setup_task(xTaskGetCurrentTaskHandle()); // also starts the PTP server if enabled
 
     setup_the_gnss();
 
@@ -10695,8 +11675,6 @@ extern "C" void app_main()
     setup_for_ote_updates();
 
     setup_mqtt();
-
-    setup_symmetric_key_authentication();
 
     setup_ntp_server();
 

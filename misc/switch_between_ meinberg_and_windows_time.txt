@@ -1,0 +1,43 @@
+Here is the updated guide to seamlessly switch back and forth between the native Windows Time service and Meinberg NTP without uninstalling either program. 
+
+This relies entirely on changing service startup types so your chosen configuration safely survives system reboots.
+
+Phase 1: Switch to Windows Time (Meinberg Disabled)
+
+Follow these steps to turn off Meinberg and restore Windows Time.
+
+1. Open an Elevated Command Prompt:
+	• Press Win + X and select Terminal (Admin) or Command Prompt (Administrator).
+	
+2. Stop and Disable Meinberg NTP:
+	• Run the following commands to instantly stop Meinberg and stop it from starting when your PC boots:cmd
+net stop NTP
+sc config NTP start= disabled
+ 
+3. Enable and Start Windows Time (w32time):
+	• Run these commands to set Windows Time to start automatically on boot and start the service immediately:cmd
+sc config w32time start= auto
+net start w32time
+ 
+4. Force a Windows Time Sync:
+	• Tell Windows to immediately sync its clock with ://windows.com:cmd
+w32tm /resync
+
+(do not unistall Meinberg)
+
+Phase 2: Switch Back to Meinberg Later (Windows Time Disabled)
+
+If you ever want to flip back to Meinberg NTP in the future, open an Administrator Command Prompt again and run these commands:
+1. Stop and Disable Windows Time:
+	• This ensures Windows won't conflict with Meinberg or override your time settings on reboot:cmd
+net stop w32time
+sc config w32time start= disabled
+ .
+2. Enable and Start Meinberg NTP:
+	• This changes Meinberg back to automatic startup and turns it back on right away:cmd
+sc config NTP start= auto
+net start NTP
+ 
+
+Both configurations are now fully toggleable. Whichever service is set to start= auto will be the one that survives a system reboot.
+Did the w32tm /resync command finish successfully, or did you encounter any error messages regarding service permissions?

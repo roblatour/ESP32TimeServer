@@ -13,11 +13,15 @@ on:
       - '**/CMakeLists.txt'
       - 'sdkconfig'
       - 'sdkconfig.*'
-      - 'main/idf_component.yml'
+      - 'config/**'
+      - 'components/**'
+      - '**/idf_component.yml'
+      - 'partitions.csv'
+      - 'tools/build.py'
+      - 'testing/firmware_regression/check_build_graph.js'
+      - 'testing/firmware_regression/check_build_graph_test.js'
       - 'dependencies.lock'
-      - '.github/workflows/build-idf-v6-1.yml'
-      - '.github/workflows/build-idf-v6-0-2.yml'
-      - '.github/workflows/build-idf-v5-5-5.yml'
+      - '.github/workflows/build-idf-v6-1-0.yml'
   pull_request:
     branches: [ main ]
     paths:
@@ -30,43 +34,70 @@ on:
       - '**/CMakeLists.txt'
       - 'sdkconfig'
       - 'sdkconfig.*'
-      - 'main/idf_component.yml'
+      - 'config/**'
+      - 'components/**'
+      - '**/idf_component.yml'
+      - 'partitions.csv'
+      - 'tools/build.py'
+      - 'testing/firmware_regression/check_build_graph.js'
+      - 'testing/firmware_regression/check_build_graph_test.js'
       - 'dependencies.lock'
-      - '.github/workflows/build-idf-v6-1.yml'
-      - '.github/workflows/build-idf-v6-0-2.yml'
-      - '.github/workflows/build-idf-v5-5-5.yml'
+      - '.github/workflows/build-idf-v6-1-0.yml'
   workflow_dispatch:
 
 jobs:
   build-v61:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: pre_v3
+            target: esp32p4
+          - profile: v3_0
+            target: esp32p4
+          - profile: v3_1
+            target: esp32p4
+          - profile: s31
+            target: esp32s31
 
     steps:
     - name: Checkout Repository From Scratch
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
-        submodules: 'recursive'
+        submodules: false
+
+    - name: Use shareable build settings
+      run: |
+        grep -Fx '#include "ESP32TimeServerSettingsSecrets.h"' main/ESP32TimeServerSettings.h > /dev/null
+        cp testing/firmware_regression/build_variants_secrets.h main/ESP32TimeServerSettingsSecrets.h
+
+    - name: Prepare compiler cache directory
+      run: mkdir -p .ccache
 
     - name: Setup Compiler Cache (ccache)
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: .ccache
-        key: esp32p4-v6.1-ccache-${{ github.run_id }}
+        key: ${{ matrix.target }}-${{ matrix.profile }}-v6.1-ccache-${{ hashFiles('sdkconfig.defaults*', 'config/**', '**/idf_component.yml', '**/CMakeLists.txt') }}
         restore-keys: |
-          esp32p4-v6.1-ccache-
+          ${{ matrix.target }}-${{ matrix.profile }}-v6.1-ccache-
 
     - name: Clean Compile with ESP-IDF v6.1
       uses: espressif/esp-idf-ci-action@v1
-      env:
-        CCACHE_DIR: ${{ github.workspace }}/.ccache
       with:
         esp_idf_version: v6.1
-        target: esp32p4
-        command: |
-          idf.py --ccache build
+        target: ${{ matrix.target }}
+        extra_docker_args: -v "${{ github.workspace }}/.ccache:/root/.ccache" -e CCACHE_DIR=/root/.ccache -e IDF_CCACHE_ENABLE=1
+        command: python tools/build.py --profile ${{ matrix.profile }}
+
+    - name: Verify native dependency graph and image layout
+      run: |
+        node testing/firmware_regression/check_build_graph_test.js
+        node testing/firmware_regression/check_build_graph.js build_${{ matrix.profile }} ${{ matrix.profile }}
 
     # - name: Upload Binary Artifact
     #   uses: actions/upload-artifact@v4
     #   with:
-    #     name: ESP32TimeServer_ESP-IDF-v6.1.bin
-    #     path: build/ESP32TimeServer.bin
+    #     name: ESP32TimeServer_ESP-IDF-v6.1_${{ matrix.profile }}.bin
+    #     path: build_${{ matrix.profile }}/ESP32TimeServer.bin

@@ -1,11 +1,17 @@
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/ESP32TimeServerSettings.h")
 file(READ "${CMAKE_CURRENT_LIST_DIR}/ESP32TimeServerSettings.h" TIME_SERVER_SETTINGS)
-string(REGEX MATCH "#define[ \t]+SYMMETRIC_KEY_AUTHENTICATION_ENABLED[ \t]+1" NTP_AUTH_ENABLED "${TIME_SERVER_SETTINGS}")
-string(REGEX MATCH "#define[ \t]+RBG_LED_WS2812_MODULE_ENABLED[ \t]+1" WS2812_ENABLED "${TIME_SERVER_SETTINGS}")
+string(REGEX MATCH "#define[ \t]+NTP_SERVER_ENABLED[ \t]+1" NTP_SERVER_ENABLED "${TIME_SERVER_SETTINGS}")
+string(REGEX MATCH "#define[ \t]+PTP_L2_SERVER_ENABLED[ \t]+1" PTP_L2_SERVER_ENABLED "${TIME_SERVER_SETTINGS}")
+string(REGEX MATCH "#define[ \t]+PTP_L2_AUTHENTICATION_ENABLED[ \t]+1" PTP_L2_AUTH_ENABLED "${TIME_SERVER_SETTINGS}")
+string(REGEX MATCH "#define[ \t]+NTP_AUTHENTICATION_ENABLED[ \t]+1" NTP_AUTH_ENABLED "${TIME_SERVER_SETTINGS}")
 
 set(MAIN_SOURCES
         "main.cpp"
         "custom/app_metadata.cpp"
-        "custom/ntp_cache.c"
+        "custom/health_check.cpp"
+        "custom/determine_stack_sizes.cpp"
+        "custom/gnss_receiver.cpp"
+        "custom/gnss_uart.cpp"
 )
 
 set(MAIN_REQUIRES
@@ -17,29 +23,38 @@ set(MAIN_REQUIRES
         bootloader_support
         mdns
         esp_hw_support
+        esp_psram
         esp_timer
         nvs_flash
         driver
         esp_driver_mcpwm
+        esp_driver_gpio
+        esp_driver_uart
+        esp_driver_ledc
+        led_strip
         lwip
         mqtt
-        fatfs
-        sdmmc
-        hd44780
-        pcf8574
-        arduino-esp32
-        SparkFun_u-blox_GNSS_v3
 )
+
+if(IDF_TARGET STREQUAL "esp32p4")
+    list(APPEND MAIN_REQUIRES fatfs sdmmc hd44780 pcf8574)
+elseif(IDF_TARGET STREQUAL "esp32s31")
+    list(APPEND MAIN_REQUIRES jef-sure__hd44780 fatfs sdmmc esp_driver_sdspi esp_driver_spi)
+endif()
 
 list(APPEND MAIN_SOURCES "custom/native_ote.cpp")
 
-if(NTP_AUTH_ENABLED)
-    list(APPEND MAIN_SOURCES "custom/ntp_auth.cpp")
-    list(APPEND MAIN_REQUIRES mbedtls)
+if(NTP_SERVER_ENABLED)
+    list(APPEND MAIN_SOURCES "custom/ntp_cache.c")
+    if(NTP_AUTH_ENABLED)
+        list(APPEND MAIN_SOURCES "custom/ntp_auth.cpp")
+        list(APPEND MAIN_REQUIRES mbedtls)
+    endif()
 endif()
 
-if(WS2812_ENABLED)
-    list(APPEND MAIN_REQUIRES led_strip)
+if(PTP_L2_SERVER_ENABLED AND PTP_L2_AUTH_ENABLED)
+    list(APPEND MAIN_SOURCES "custom/ptp_l2_auth.cpp")
+    list(APPEND MAIN_REQUIRES mbedtls)
 endif()
 
 idf_component_register(

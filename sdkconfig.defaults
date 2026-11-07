@@ -1,18 +1,9 @@
 # Required to build on ESP-IDF v5.5.3+
 CONFIG_FREERTOS_HZ=1000
 
-CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
-CONFIG_ESPTOOLPY_FLASHSIZE="32MB"
-
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
-CONFIG_BOOTLOADER_SIZE_IN_BYTES=0x7000
-
-CONFIG_IDF_TARGET="esp32p4"
-CONFIG_IDF_TARGET_ESP32P4=y
-
-CONFIG_ARDUINO_VARIANT="esp32p4"
 
 # Required to build on ESP-IDF v6.0.2+
 CONFIG_LIBC_NEWLIB=y
@@ -20,21 +11,14 @@ CONFIG_LIBC_NEWLIB=y
 # ==============================================================================
 # COMPILER WARNING CONFIGURATION
 # ==============================================================================
-# CONFIG_COMPILER_DISABLE_DEFAULT_ERRORS=y is required to ensure compatibility
-# with ESP-IDF v5.5.5+ and v6.0.2 when building the 'arduino-esp32' managed
-# component framework layer.
-#
-# The upstream third-party 'arduino-esp32' code contains legacy structural 
-# properties that trigger strict compiler warnings.Leaving this flag disabled
-# forces the build toolchain to treat these non-fatal vendor library warnings
-# as breaking compilation errors, halting the firmware build pipeline. Leaving
-# this set to 'y' safely isolates our core project logic from external library
-# framework maintenance updates.
+# Keep ESP-IDF's -Werror=all policy; the root CMake file selectively relaxes
+# optimization-sensitive diagnostics for third-party components only.
 # ============================================================================
 CONFIG_COMPILER_DISABLE_DEFAULT_ERRORS=y
 
 # allows up to 64 NTP requests to be serviced concurrently
 CONFIG_LWIP_UDP_RECVMBOX_SIZE=64
+CONFIG_LWIP_MAX_SOCKETS=16
 CONFIG_ETH_TRANSMIT_MUTEX=y
 CONFIG_ETH_DMA_RX_BUFFER_NUM=30
 CONFIG_ETH_DMA_TX_BUFFER_NUM=30

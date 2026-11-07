@@ -89,7 +89,7 @@ bool ntp_auth_initialize()
 
     s_initialized = true;
 
-#if SYMMETRIC_KEY_AUTHENTICATION_ENABLED
+#if NTP_AUTHENTICATION_ENABLED
 
     if (number_of_symmetric_keys < 1 || number_of_symmetric_keys > NTP_AUTH_MAX_KEYS)
     {
@@ -212,7 +212,7 @@ ntp_auth_result_t ntp_auth_verify_request(const uint8_t *packet, size_t packet_l
     if (packet == nullptr || packet_length < 48)
         return ntp_auth_result_t::malformed;
     if (packet_length == 48)
-        return ntp_auth_result_t::unauthenticated;
+        return NTP_AUTHENTICATION_REQUIRED ? ntp_auth_result_t::authentication_required : ntp_auth_result_t::unauthenticated;
     if (version != 4 || packet_length != 48 + NTP_AUTH_TRAILER_SIZE)
         return ntp_auth_result_t::malformed;
     if (!s_available)

@@ -47,6 +47,46 @@ JSON payload that the ESP32 Time Server publishes to the
 Choose **one** of the three options below based on your current setup. After
 completing this step, proceed to the matching option in Step 3.
 
+The PTP sensors below combine
+[Layer 2 and multicast UDP PTP](../misc/PTP_transports.md).
+They require firmware with both MQTT reporting and at least one PTP service
+enabled. Host checks validate generated reports; physical broker delivery and
+on-device synchronization remain pending validation.
+They count distinct recently active E2E requesters observed through accepted
+`Delay_Req`, not selected/servo-locked followers or passive multicast listeners.
+Identities use transport, domain, `clockIdentity`, and `portNumber`; defaults
+are 32 identities per enabled transport and 30 seconds of inactivity. The
+same requester over IPv4 and IPv6 counts twice; its source MAC is listed once.
+A full table
+ignores new identities; `this_period.ptp.follower_overflow_drops` reports
+undercount risk. See the [JSON contract](../misc/esp32timeserver_json_doc.md)
+for lifecycle, extrema, and frozen queued-report semantics.
+
+NTP client details now live at `this_period.ntp.clients` and
+`this_period.ntp.clients_overflown`; update existing templates that used
+`this_period.clients` or `this_period.clients_overflown`.
+PTP reports also include `this_period.ptp.clients`, independently of the NTP
+client-reporting switch. Each record contains the actual Ethernet source `mac`
+(for example `00:f1:b2:d2:ca:9a`) and `active_entire_period`. The latter is
+true only if that MAC remained tracked continuously across the entire period;
+new arrivals, departures, and rejoins are false. Multiple PTP identities with
+the same MAC produce one record. At most `MQTT_PTP_CLIENT_REPORT_LIMIT` unique
+MACs (default 96) are reported: all entire-period MACs (at most 96 with all
+three PTP transports enabled),
+followed by available first-come-first-served entries. Overflow of this
+reporting list does not affect service. NTP client lists are likewise capped by
+`MQTT_NTP_CLIENT_REPORT_LIMIT` (default 256). These are observed-request
+activity records, not proof of clock lock. The JSON contract describes expiry
+and queued-report semantics.
+
+NTP-only or older reports omit PTP data; absent/null fields make these sensors
+unavailable, not zero. A genuine zero remains available. In a PTP-only setup,
+omit NTP request/response/client sensors and their derived template sensors and
+dashboard entries; the PTP templates need no `ntp` object. Shared GNSS/PPS
+indicators are not a PTP readiness or clock-lock measurement: NTP can remain in
+holdover while PTP withdraws. Examples retain the default
+`ESP32TimeServer/report` topic; change every topic consistently if customized.
+
 ### A — Create a new mqtt.yaml file
 
 Use this option if you do **not** already have an `mqtt.yaml` file.
@@ -223,21 +263,60 @@ Use this option if you do **not** already have an `mqtt.yaml` file.
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.responses.pps_undisciplined }}"
 
+    - name: "PTP Followers Current"
+      unique_id: "esp32_time_server_ptp_followers_current"
+      state_topic: "ESP32TimeServer/report"
+      availability_topic: "ESP32TimeServer/report"
+      availability_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ 'online' if followers.get('current') is number else 'offline' }}
+      value_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ followers.get('current', none) }}
+
+    - name: "PTP Followers Min"
+      unique_id: "esp32_time_server_ptp_followers_min"
+      state_topic: "ESP32TimeServer/report"
+      availability_topic: "ESP32TimeServer/report"
+      availability_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ 'online' if followers.get('min') is number else 'offline' }}
+      value_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ followers.get('min', none) }}
+
+    - name: "PTP Followers Max"
+      unique_id: "esp32_time_server_ptp_followers_max"
+      state_topic: "ESP32TimeServer/report"
+      availability_topic: "ESP32TimeServer/report"
+      availability_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ 'online' if followers.get('max') is number else 'offline' }}
+      value_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ followers.get('max', none) }}
+
     # ============================
     # CLIENTS
     # ============================
     - name: "Clients Overflown"
       state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.this_period.clients_overflown }}"
+      value_template: "{{ value_json.this_period.ntp.clients_overflown }}"
 
     # Example for client 0 (you can add more if desired)
     - name: "Client 0 Address"
       state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.this_period.clients[0].address }}"
+      value_template: "{{ value_json.this_period.ntp.clients[0].address }}"
 
     - name: "Client 0 Requests"
       state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.this_period.clients[0].requests }}"
+      value_template: "{{ value_json.this_period.ntp.clients[0].requests }}"
 
     # ============================
     # HISTORICAL
@@ -440,21 +519,60 @@ Use this option if you already have an `mqtt.yaml` file that contains a
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.responses.pps_undisciplined }}"
 
+    - name: "PTP Followers Current"
+      unique_id: "esp32_time_server_ptp_followers_current"
+      state_topic: "ESP32TimeServer/report"
+      availability_topic: "ESP32TimeServer/report"
+      availability_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ 'online' if followers.get('current') is number else 'offline' }}
+      value_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ followers.get('current', none) }}
+
+    - name: "PTP Followers Min"
+      unique_id: "esp32_time_server_ptp_followers_min"
+      state_topic: "ESP32TimeServer/report"
+      availability_topic: "ESP32TimeServer/report"
+      availability_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ 'online' if followers.get('min') is number else 'offline' }}
+      value_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ followers.get('min', none) }}
+
+    - name: "PTP Followers Max"
+      unique_id: "esp32_time_server_ptp_followers_max"
+      state_topic: "ESP32TimeServer/report"
+      availability_topic: "ESP32TimeServer/report"
+      availability_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ 'online' if followers.get('max') is number else 'offline' }}
+      value_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ followers.get('max', none) }}
+
     # ============================
     # CLIENTS
     # ============================
     - name: "Clients Overflown"
       state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.clients_overflown }}"
+      value_template: "{{ value_json.this_period.ntp.clients_overflown }}"
 
     # Example for client 0 (you can add more if desired)
     - name: "Client 0 Address"
       state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.clients[0].address }}"
+      value_template: "{{ value_json.this_period.ntp.clients[0].address }}"
 
     - name: "Client 0 Requests"
       state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.clients[0].requests }}"
+      value_template: "{{ value_json.this_period.ntp.clients[0].requests }}"
 
     # ============================
     # HISTORICAL
@@ -660,21 +778,60 @@ lists (no top-level `sensor:` key).
       state_topic: "ESP32TimeServer/report"
       value_template: "{{ value_json.this_period.ntp.responses.pps_undisciplined }}"
 
+    - name: "PTP Followers Current"
+      unique_id: "esp32_time_server_ptp_followers_current"
+      state_topic: "ESP32TimeServer/report"
+      availability_topic: "ESP32TimeServer/report"
+      availability_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ 'online' if followers.get('current') is number else 'offline' }}
+      value_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ followers.get('current', none) }}
+
+    - name: "PTP Followers Min"
+      unique_id: "esp32_time_server_ptp_followers_min"
+      state_topic: "ESP32TimeServer/report"
+      availability_topic: "ESP32TimeServer/report"
+      availability_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ 'online' if followers.get('min') is number else 'offline' }}
+      value_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ followers.get('min', none) }}
+
+    - name: "PTP Followers Max"
+      unique_id: "esp32_time_server_ptp_followers_max"
+      state_topic: "ESP32TimeServer/report"
+      availability_topic: "ESP32TimeServer/report"
+      availability_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ 'online' if followers.get('max') is number else 'offline' }}
+      value_template: >-
+        {% set followers = ((value_json.get('this_period') or {}).get('ptp')
+          or {}).get('followers') or {} %}
+        {{ followers.get('max', none) }}
+
     # ============================
     # CLIENTS
     # ============================
     - name: "Clients Overflown"
       state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.this_period.clients_overflown }}"
+      value_template: "{{ value_json.this_period.ntp.clients_overflown }}"
 
     # Example for client 0 (you can add more if desired)
     - name: "Client 0 Address"
       state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.this_period.clients[0].address }}"
+      value_template: "{{ value_json.this_period.ntp.clients[0].address }}"
 
     - name: "Client 0 Requests"
       state_topic: "ESP32TimeServer/report"
-      value_template: "{{ value_json.this_period.clients[0].requests }}"
+      value_template: "{{ value_json.this_period.ntp.clients[0].requests }}"
 
     # ============================
     # HISTORICAL
@@ -864,6 +1021,32 @@ mqtt:
 Then add the template sensors into `configuration.yaml` exactly as described in
 [Option A above](#option-a--configurationyaml-with-a-new-mqttyaml).
 
+### PTP dashboard entries for all three options
+
+The three MQTT follower sensors need no additional template sensors. When
+assembling or updating the Step 5 card, insert these entries immediately after
+the NTP response entries in its `entities` list:
+
+```yaml
+  - entity: sensor.ptp_followers_current
+    name: PTP followers (current)
+    icon: mdi:account-multiple
+  - entity: sensor.ptp_followers_min
+    name: PTP followers (period minimum)
+    icon: mdi:account-arrow-down
+  - entity: sensor.ptp_followers_max
+    name: PTP followers (period maximum)
+    icon: mdi:account-arrow-up
+```
+
+Use the actual entity IDs assigned by Home Assistant if existing entities cause
+different IDs. Each setup alternative uses the same unique IDs; choose only
+one. For PTP-only firmware, omit NTP-specific entries and derived templates.
+Missing/null PTP fields make these entities unavailable, whereas measured zero
+counts stay available. These entities measure requester activity, not PTP
+readiness or synchronization accuracy. Queued reports retain their original
+period counts; reception time is not necessarily observation time.
+
 ---
 
 ## Step 4: Reload the Home Assistant YAML Configuration
@@ -933,7 +1116,7 @@ entities:
     icon: mdi:update
 ```
 
-**Note**: when SYMMETRIC_KEY_AUTHENTICATION_ENABLED and MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED are both enabled
+**Note**: when NTP_AUTHENTICATION_ENABLED and MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED are both enabled
 replace the following from above:
 ```
   - entity: sensor.ntp_requests_valid
@@ -962,5 +1145,3 @@ with:
 
 4. Click **Save**. The card will appear on your dashboard displaying last
    published report from the ESP32 Time Server.
-
-

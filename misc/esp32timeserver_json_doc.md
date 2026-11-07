@@ -10,7 +10,26 @@ the reporting content as described in more detail below.
 Additionally, near the end of this document there is a description of 
 controlled restart events and an example of a MQTT message for one.
 
+### PTP retrofit scope
+
+The release baseline remains **3.0.5**. PTP additions below describe the
+[implemented 3.1-derived retrofit](ptp_retrofit.md). Generated reports have
+passed host checks across six protocol/detail combinations, including follower
+expiry, frozen snapshots, and overflow bounds. Physical broker/TF delivery and
+hardware accuracy remain unvalidated. Existing NTP/shared reporting and
+controlled restart meanings are retained.
+
+With the retrofit, MQTT-enabled NTP-only reports omit `this_period.ptp`;
+PTP-only reports omit `this_period.ntp` and the NTP-only client fields.
+Shared `current`, GNSS/PPS, memory, queue, and historical sections keep their
+existing enable conditions. NTP response counters are not combined NTP/PTP
+totals. GNSS/PPS indicators do not imply that the stricter PTP qualification
+passes: PTP withdraws on qualification loss even during permitted NTP holdover.
+
 ## Example report
+
+This illustrative combined report includes optional sections; it is not a
+capture from validated hardware.
 
 ```json
 {
@@ -64,23 +83,41 @@ controlled restart events and an example of a MQTT message for one.
                 "synchronized_and_disciplined": 4,
                 "gnss_unsynchronized": 0,
                 "pps_undisciplined": 0
-            }
+            },
+            "clients": [
+                {
+                    "address": "192.168.1.1",
+                    "requests": 2
+                },
+                {
+                    "address": "192.168.1.10",
+                    "requests": 1
+                },
+                {
+                    "address": "192.168.1.15",
+                    "requests": 1
+                }
+            ],
+            "clients_overflown": false
         },
-        "clients": [
-            {
-                "address": "192.168.1.1",
-                "requests": 2
+        "ptp": {
+            "followers": {
+                "current": 1,
+                "min": 0,
+                "max": 2
             },
-            {
-                "address": "192.168.1.10",
-                "requests": 1
-            },
-            {
-                "address": "192.168.1.15",
-                "requests": 1
-            }
-        ],
-        "clients_overflown": false
+            "clients": [
+                {
+                    "mac": "00:f1:b2:d2:ca:9a",
+                    "active_entire_period": true
+                },
+                {
+                    "mac": "00:f1:b2:d2:ca:9b",
+                    "active_entire_period": false
+                }
+            ],
+            "follower_overflow_drops": 0
+        }
     },
     "historical": {
         "gnss_receiver_last": {
@@ -155,7 +192,7 @@ Counters in this object are reset after they are included in a report.
   was full during a high request-rate burst. These requests were still received,
   processed, and replied to by the NTP server, and are included in
   `ntp.requests.valid`. Their source addresses and request counts are omitted
-  from `this_period.clients`. This field does not affect
+  from `this_period.ntp.clients`. This field does not affect
   `ntp.requests.max_per_second`, which is measured independently from the NTP
   request count at PPS intervals.
 - **`ntp.requests.max_per_second`**: Highest NTP request rate observed in one
@@ -170,6 +207,77 @@ Counters in this object are reset after they are included in a report.
 The following objects are included only when their corresponding compile-time
 setting is enabled.
 
+### `this_period.ptp.followers`
+
+Included when MQTT and either `PTP_L2_SERVER_ENABLED` or
+`PTP_L3_SERVER_ENABLED` are enabled. All enabled PTP transports contribute
+to this same object. Place `ptp` immediately after `ntp` in combined reports.
+PTP-only reports need no `ntp` object; disabling PTP
+omits the entire `ptp` object rather than supplying artificial zero counts.
+
+- **`current`**: Distinct recently active E2E requesters observed through
+  accepted `Delay_Req` messages at the report snapshot.
+- **`min`**: Minimum active observed requester count during the period.
+- **`max`**: Maximum active observed requester count during the period.
+
+An identity consists of transport, domain, `clockIdentity`, and `portNumber`.
+Layer 2, UDP/IPv4, and UDP/IPv6 are distinct transports; the same peer on
+multiple transports contributes multiple identities. Repeated
+requests refresh an identity without increasing its count. The bounded table
+defaults to 32 entries for Layer 2 (`PTP_L2_FOLLOWER_CAPACITY`) and 32 per
+enabled UDP family (`PTP_L3_UDP_FOLLOWER_CAPACITY`). Expiry defaults to 30
+seconds, selected by `PTP_L2_FOLLOWER_TIMEOUT_SECONDS` or
+`PTP_L3_UDP_FOLLOWER_TIMEOUT_SECONDS`. When full, refresh
+existing identities but ignore new ones. Passive multicast listeners are not
+visible; these counts do not prove master selection or clock synchronization.
+
+**`this_period.ptp.follower_overflow_drops`** counts accepted request
+observations unable to add a new identity during the period, saturating at
+4,294,967,295. It counts dropped observations, not distinct omitted identities.
+A nonzero value warns that the observed count may undercount requesters. Reset
+this diagnostic at report generation, not on each delivery retry.
+
+Unexpired identities persist across reporting boundaries; link loss, clock/
+qualification loss, service stop, and reboot clear affected identities.
+Transport-specific election or address loss does not clear other transports.
+Joins, expiry,
+and clears update extrema even between snapshots. Atomically snapshot the three
+values, maintaining `min <= current <= max`, then seed the next period's extrema
+with its starting active count. No observed identities throughout a period
+means genuine `0/0/0`, not unavailable data.
+
+Freeze these values in the generated report. Later delivery from RAM or TF
+queues must not substitute live counts, reset identities, or roll the reporting
+period again. Physical broker/TF delivery and retry remain validation gates.
+Detailed PTP request/reply totals are not included.
+
+### `this_period.ptp.clients`
+
+Included whenever MQTT and PTP are enabled, independently of
+`MQTT_CLIENT_REPORTING_ENABLED` (which controls NTP client details).
+
+- **`mac`**: The Ethernet source MAC from accepted follower requests, formatted
+  as six lowercase, zero-padded hexadecimal octets. This is not inferred from
+  the PTP clock identity. Multiple PTP identities using the same MAC produce
+  only one client record.
+- **`active_entire_period`**: `true` when the MAC had at least one tracked,
+  active identity continuously from the preceding report boundary through this
+  snapshot. A new arrival, expiry of its last active identity, or a table clear
+  makes it `false`; rejoining in the same period does not restore `true`.
+  Activity uses the same accepted-request and inactivity rules as the follower
+  counts; it does not establish servo lock.
+
+The array contains at most `MQTT_PTP_CLIENT_REPORT_LIMIT` unique MACs (default
+96, set in the settings file; it must cover the summed enabled Layer 2 and
+per-family UDP identity capacities). Every entire-period MAC is retained
+(at most 96 with all three default transports).
+Remaining entries are admitted in first-observed order; once full,
+additional MACs are omitted from reporting, without affecting PTP service.
+Departed MACs remain listed until the report boundary, and repeated
+departures/rejoins never duplicate a record. `follower_overflow_drops` concerns
+the active identity table, not this reporting limit. Client records are frozen
+with the rest of the report for queued delivery.
+
 ### `current.memory`
 
 Included when `MQTT_MEMORY_REPORTING_ENABLED` is `1` (Enabled).
@@ -182,23 +290,29 @@ since boot, and `largest_free_8bit_block` is the largest currently allocatable
 
 ### `queued_messages`
 
-Included when `MQTT_QOS` is set to `1` or `2`. It describes reports queued in
-volatile RAM while the MQTT broker was unavailable.
+Included when `MQTT_QOS` is set to `1` or `2`. It describes reports that could
+not be published while the MQTT broker was unavailable and are waiting to be
+sent: on the TF card when one is available, otherwise in a fixed-size volatile
+RAM queue (`MQTT_RAM_QUEUE_BYTES`, default 64 KB). Reports vary in size, so the
+number the RAM queue holds depends on how many clients each report lists.
 
 - **`held`**: Number of previously queued reports waiting when this report was
   created.
 
 - **`discarded`**: Number of queued reports discarded since the preceding report
-  because the queue reached its capacity. This counter is reset after reporting.
+  because the queue reached its capacity; the oldest reports are dropped first
+  to make room for the newest. This counter is reset after reporting.
 
 QoS `0` does not queue reports, so this object is omitted.
 
 Please see the ESP32 Time Server's settings file for more information on
 MQTT_QOS values and the limitations associated with queueing.
 
-### `this_period.clients` and `this_period.clients_overflown`
+### `this_period.ntp.clients` and `this_period.ntp.clients_overflown`
 
-Included when `MQTT_CLIENT_REPORTING_ENABLED` is `1` (Enabled).
+Included when NTP is enabled and `MQTT_CLIENT_REPORTING_ENABLED` is `1`
+(Enabled). These fields have moved inside `ntp`; consumers must update their
+previous `this_period.clients` and `this_period.clients_overflown` paths.
 
 - **`clients`**: An array of unique NTP client addresses observed during the
   reporting period. Each entry contains `address`, an IPv4 or IPv6 address, and
@@ -207,16 +321,13 @@ Included when `MQTT_CLIENT_REPORTING_ENABLED` is `1` (Enabled).
 - **`clients_overflown`**: This will be set to true when the internal client
   table could not hold every unique client observed during the reporting period.
 
-  Without a TF card installed in the ESP32-P4-ETCH only up to 50 client entries
-  that can be held for reporting at the end of the reporting period. Client
-  information is held and reported on a first come first serve basis. If more
-  than 50 unique clients are active in a reporting period, while their NTP
-  requests will be processed, they will not be reported in the MQTT message,
-  rather the overflow flag will be set to true and reported as such. This flag
-  will be reset after reporting for the next reporting period.
-
-  With a TF card installed the limit to how many client entries can be held for
-  reporting is set in the Settings file (with a default of 500).
+  At most `MQTT_NTP_CLIENT_REPORT_LIMIT` client entries (default 256, IPv4 and
+  IPv6 combined, set in the settings file) are held for reporting, with or
+  without a TF card. Client information is held and reported on a first come
+  first serve basis. If more unique clients are active in a reporting period,
+  their NTP requests are still processed and counted, but the additional
+  clients are not listed in the MQTT message; instead the overflow flag is set
+  to true. This flag is reset after reporting for the next reporting period.
 
 ### `historical`
 
@@ -237,7 +348,7 @@ available.
 
 ### `Symmetric key authentication details`
 
-When both SYMMETRIC_KEY_AUTHENTICATION_ENABLED **and** MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED are enabled then use:
+When both NTP_AUTHENTICATION_ENABLED **and** MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED are enabled then use:
  
 ```json
  "ntp": {
@@ -283,4 +394,3 @@ Controlled restarts are triggered in specific events:
     "reason": "manual_restart"
 }
 ```
-

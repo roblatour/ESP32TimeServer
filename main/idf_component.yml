@@ -1,8 +1,17 @@
 dependencies:
-  # Static dependencies required across all compilation target profiles
-  esp-idf-lib/hd44780: "^1.3.0"
-  esp-idf-lib/pcf8574: "^1.0.10"
-  espressif/arduino-esp32: "^3.3.10"
+  # The esp-idf-lib releases currently declare P4, but not S31, support.
+  esp-idf-lib/hd44780:
+    version: "^1.3.0"
+    rules:
+      - if: "target == esp32p4"
+  esp-idf-lib/pcf8574:
+    version: "^1.0.10"
+    rules:
+      - if: "target == esp32p4"
+  jef-sure/hd44780:
+    version: "^0.1.3"
+    rules:
+      - if: "target == esp32s31"
   espressif/mqtt: "^1.1.0"
   espressif/mdns: "^1.11.0"
   espressif/led_strip: "^3.0.3"

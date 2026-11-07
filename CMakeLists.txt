@@ -1,11 +1,26 @@
 cmake_minimum_required(VERSION 3.16)
 
+if(DEFINED IDF_TARGET AND NOT IDF_TARGET STREQUAL "" AND
+   NOT IDF_TARGET STREQUAL "esp32p4" AND NOT IDF_TARGET STREQUAL "esp32s31")
+    message(FATAL_ERROR "ESP32TimeServer supports only esp32p4 and esp32s31 targets")
+elseif(NOT DEFINED IDF_TARGET AND DEFINED ENV{IDF_TARGET} AND
+       NOT "$ENV{IDF_TARGET}" STREQUAL "" AND NOT "$ENV{IDF_TARGET}" STREQUAL "esp32p4" AND
+       NOT "$ENV{IDF_TARGET}" STREQUAL "esp32s31")
+    message(FATAL_ERROR "ESP32TimeServer supports only esp32p4 and esp32s31 targets")
+endif()
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+# Each build directory resolves its own target-specific component graph.
+idf_build_set_property(DEPENDENCIES_LOCK "${CMAKE_BINARY_DIR}/dependencies.lock")
 project(ESP32TimeServer
-        VERSION 3.0.5
+        VERSION 4.0.0
         SPDX_LICENSE MIT
-        DESCRIPTION "ESP32 NTP Stratum 1 Time Server for your home network"
+        DESCRIPTION "ESP32 NTP and PTP Stratum 1 Time Server for your home network"
 )
+
+if(NOT IDF_TARGET STREQUAL "esp32p4" AND NOT IDF_TARGET STREQUAL "esp32s31")
+    message(FATAL_ERROR "ESP32TimeServer supports only esp32p4 and esp32s31 targets")
+endif()
 
 # Require ESP-IDF 6.1 or newer
 if (IDF_VERSION_MAJOR LESS 6 OR
@@ -14,21 +29,10 @@ if (IDF_VERSION_MAJOR LESS 6 OR
 Current version: ${IDF_VERSION_MAJOR}.${IDF_VERSION_MINOR}.${IDF_VERSION_PATCH}")
 endif()
 
-# Workaround for Arduino-ESP32 hosted-mode bug
-if(TARGET espressif__arduino-esp32)
-    target_compile_definitions(espressif__arduino-esp32 PRIVATE
-        CONFIG_ESP_HOSTED_IDF_SLAVE_TARGET="esp32p4"
-    )
-endif()
-
 # Third-party components and -O2 (CONFIG_COMPILER_OPTIMIZATION_PERF)
 # ESP-IDF compiles every component with -Werror=all (CONFIG_COMPILER_DISABLE_DEFAULT_ERRORS only replaces -Werror by
-# -Werror=all), and esp-modbus even adds -Werror itself. With -O2 GCC runs additional flow analyses (uninitialized
-# variables, string and format length checks) that it does not run with -Og, and it reports such warnings in library
-# code this project does not maintain, e.g. -Wmaybe-uninitialized in SparkFun_u-blox_GNSS_v3 (3rdparty submodule) and
-# -Wstringop-truncation in esp-modbus (dependency of arduino-esp32, not used here). For the components in this project's
-# managed_components and components folders these warnings stay warnings instead of errors.
-# The project's own code (main) and the ESP-IDF components keep the strict setting.
+# -Werror=all). With -O2 GCC runs additional flow analyses which can warn in
+# third-party components. Project-owned code and ESP-IDF remain strict.
 set(third_party_relaxed_warnings
     -Wno-error=maybe-uninitialized
     -Wno-error=uninitialized

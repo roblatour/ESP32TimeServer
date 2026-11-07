@@ -12,7 +12,7 @@ to:
 
 In the examples below:
 
-- The device name, `ESP32TimeServer`, is set as `DeviceName` in
+- The device name, `ESP32TimeServer`, is set as `HostName` in
   `ESP32TimeServerSettings.h`.
 - `x.x.x.x` is the IP address of the ESP32-P4 running the ESP32 time server
   software.
@@ -27,28 +27,36 @@ For more information, please see the [README.md](/README.md) file, `Setup Step 3
 
 
 ```cmd
-python tools\ote_upload.py -i ESP32TimeServer.local -p 3232 -f build-esp32p4-rev-3-1\ESP32TimeServer.bin
+python tools\ote_upload.py -i ESP32TimeServer.local -p 3232 -f build_s31\ESP32TimeServer.bin
 ```
 
 or
 
 ```cmd
-python tools\ote_upload.py -i x.x.x.x -p 3232 -f build-esp32p4-rev-3-1\ESP32TimeServer.bin
+python tools\ote_upload.py -i x.x.x.x -p 3232 -f build_s31\ESP32TimeServer.bin
 ```
 
 Notes:
 
-1. These commands prompt for the running device's OTE password. Native updates
+1. build directories are:
+| Chip revision                  | Profile  | Build directory |
+| ------------------------------ | -------- | --------------- |
+| P4 before v3.0                 | `pre_v3` | `build_pre_v3`  |
+| P4 v3.0                        | `v3_0`   | `build_v3_0`    |
+| P4 v3.1 or later               | `v3_1`   | `build_v3_1`    |
+| ESP32-S31 Function CoreBoard 1 | `s31`    | `build_s31`     |
+
+2. These commands prompt for the running device's OTE password. Native updates
 use unencrypted HTTP on TCP port 3232; use a trusted LAN or VPN only.
 
-2. The OTE will appear to completed from the command line sooner than 
+3. The OTE will appear to completed from the command line sooner than 
 will be actually the case (despite the message that says
 'restarting in 5 seconds'). If you have an LCD on the ESP32TimeServer you will
 be able to see its progress as it continues the update process, if not the 
 update should complete within the next 30 seconds after which time the
 ESP32TimeServer will auto reboot. 
 
-3. For a device still running ArduinoOTA, use `tools\espota.py` once to install
+4. For a device still running ArduinoOTA, use `tools\espota.py` once to install
 the native firmware, or flash by USB. See [native OTE](native_ote.md) for the
 legacy migration command and IPv6 examples.
 

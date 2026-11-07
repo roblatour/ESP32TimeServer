@@ -1,0 +1,600 @@
+Firmware regression results
+Started: 2026-11-07T22:40:16.242Z
+Repository: E:\Documents\ESPIDF_Projects\ESP32TimeServer
+Node: v24.19.0
+SKIP: Firmware build variants (supply --build-dir after a successful ESP-IDF build).
+
+=== Full host regression ===
+["C:\\Program Files\\nodejs\\node.exe","E:\\Documents\\ESPIDF_Projects\\ESP32TimeServer\\testing\\firmware_regression\\run.js","C:\\Temp\\ESP32TimeServer-regression2\\host"]
+......
+----------------------------------------------------------------------
+Ran 6 tests in 0.151s
+
+OK
+PASS: isolated build profile helper
+PASS: portable native build-graph audit
+mac_address_test.cpp
+PASS: exact Ethernet-MAC override, unicast validation, six-byte active readback and MAC reporting
+board_support_test.cpp
+PASS: model/revision thresholds, board GPIOs and 16 MHz timebase
+PASS: target-specific Ethernet fields, checked PHY initialization and startup ordering
+board_support_test.cpp
+PASS: model/revision thresholds, board GPIOs and 16 MHz timebase
+PASS: target-specific Ethernet fields, checked PHY initialization and startup ordering
+board_support_test.cpp
+PASS: model/revision thresholds, board GPIOs and 16 MHz timebase
+PASS: target-specific Ethernet fields, checked PHY initialization and startup ordering
+board_support_test.cpp
+PASS: model/revision thresholds, board GPIOs and 16 MHz timebase
+PASS: target-specific Ethernet fields, checked PHY initialization and startup ordering
+board_support_test.cpp
+PASS: model/revision thresholds, board GPIOs and 16 MHz timebase
+PASS: target-specific Ethernet fields, checked PHY initialization and startup ordering
+board_support_test.cpp
+PASS: model/revision thresholds, board GPIOs and 16 MHz timebase
+PASS: target-specific Ethernet fields, checked PHY initialization and startup ordering
+board_support_test.cpp
+PASS: model/revision thresholds, board GPIOs and 16 MHz timebase
+PASS: target-specific Ethernet fields, checked PHY initialization and startup ordering
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+tf_card_test.cpp
+PASS: TF transport, QoS gating, FAT32/probe checks, cleanup, RAM fallback and backlog restoration
+mqtt_storage_test.cpp
+PASS: QoS 0 has no RAM allocation or queue I/O
+mqtt_storage_test.cpp
+PASS: QoS 0 has no RAM allocation or queue I/O
+mqtt_storage_test.cpp
+PASS: QoS 0 has no RAM allocation or queue I/O
+mqtt_storage_test.cpp
+PASS: QoS 0 has no RAM allocation or queue I/O
+mqtt_storage_test.cpp
+PASS: Q/q LCD and teal LED status; dynamic RAM queue, safe heap thresholds, TF write/read/scan failures, bounded FIFO eviction and one-shot fallback
+mqtt_storage_test.cpp
+PASS: Q/q LCD and teal LED status; dynamic RAM queue, safe heap thresholds, TF write/read/scan failures, bounded FIFO eviction and one-shot fallback
+mqtt_storage_test.cpp
+PASS: Q/q LCD and teal LED status; abort-on-OOM builds never risk optional queue allocation
+mqtt_storage_test.cpp
+PASS: Q/q LCD and teal LED status; abort-on-OOM builds never risk optional queue allocation
+mqtt_storage_test.cpp
+PASS: Q/q LCD and teal LED status; dynamic RAM queue, safe heap thresholds, TF write/read/scan failures, bounded FIFO eviction and one-shot fallback
+mqtt_storage_test.cpp
+PASS: Q/q LCD and teal LED status; dynamic RAM queue, safe heap thresholds, TF write/read/scan failures, bounded FIFO eviction and one-shot fallback
+mqtt_storage_test.cpp
+PASS: Q/q LCD and teal LED status; abort-on-OOM builds never risk optional queue allocation
+mqtt_storage_test.cpp
+PASS: Q/q LCD and teal LED status; abort-on-OOM builds never risk optional queue allocation
+s31_lcd_test.cpp
+PASS: S31 LCD address fallback, cached writes, failures and cleanup
+s31_lcd_test.cpp
+PASS: unsupported S31 LCD geometries are reported explicitly
+PASS: application Arduino/SparkFun API and dependency ownership scan
+gnss_receiver_test.cpp
+gnss_receiver.cpp
+Generating Code...
+PASS: application stationary-mode gating and production receiver readback
+PASS: native UBX configuration bytes, RAM/BBR layers, readback, ACK loss and NAK
+PASS: native UBX framing, resynchronization, fresh PVT, signed time and leap fields
+PASS: native receiver identity compatibility, bounded fields and transport errors
+gnss_receiver_test.cpp
+gnss_receiver.cpp
+Generating Code...
+PASS: application stationary-mode gating and production receiver readback
+PASS: native UBX configuration bytes, RAM/BBR layers, readback, ACK loss and NAK
+PASS: native UBX framing, resynchronization, fresh PVT, signed time and leap fields
+PASS: native receiver identity compatibility, bounded fields and transport errors
+gnss_uart_test.cpp
+gnss_uart.cpp
+gnss_receiver.cpp
+Generating Code...
+PASS: native UART ownership, 8N1 configuration, baud transitions, failure cleanup and reopen
+PASS: native UART peek/read/write, partial I/O, timeout and TX-only flush
+PASS: native application probe, NMEA fallback, transport errors and wraparound deadlines
+PASS: baud ACK loss, reconnect failure, saved-rate recovery and highest-working-rate discovery
+gnss_uart_test.cpp
+gnss_uart.cpp
+gnss_receiver.cpp
+Generating Code...
+PASS: native UART ownership, 8N1 configuration, baud transitions, failure cleanup and reopen
+PASS: native UART peek/read/write, partial I/O, timeout and TX-only flush
+PASS: native application probe, NMEA fallback, transport errors and wraparound deadlines
+PASS: baud ACK loss, reconnect failure, saved-rate recovery and highest-working-rate discovery
+native_startup_test.cpp
+PASS: explicit NVS initialization and non-destructive failure handling
+PASS: configured native console selection does not use GNSS UART1
+PASS: delayed PSRAM initialization and failure handling
+PASS: native OTA pending-image confirmation and explicit errors
+PASS: early PPS registration and NVS-before-user startup ordering
+native_startup_test.cpp
+PASS: explicit NVS initialization and non-destructive failure handling
+PASS: configured native console selection does not use GNSS UART1
+PASS: delayed PSRAM initialization and failure handling
+PASS: native OTA pending-image confirmation and explicit errors
+PASS: early PPS registration and NVS-before-user startup ordering
+native_startup_test.cpp
+PASS: explicit NVS initialization and non-destructive failure handling
+PASS: configured native console selection does not use GNSS UART1
+PASS: delayed PSRAM initialization and failure handling
+PASS: native OTA pending-image confirmation and explicit errors
+PASS: early PPS registration and NVS-before-user startup ordering
+native_startup_test.cpp
+PASS: explicit NVS initialization and non-destructive failure handling
+PASS: configured native console selection does not use GNSS UART1
+PASS: delayed PSRAM initialization and failure handling
+PASS: native OTA pending-image confirmation and explicit errors
+PASS: early PPS registration and NVS-before-user startup ordering
+native_startup_test.cpp
+PASS: explicit NVS initialization and non-destructive failure handling
+PASS: configured native console selection does not use GNSS UART1
+PASS: delayed PSRAM initialization and failure handling
+PASS: native OTA pending-image confirmation and explicit errors
+PASS: early PPS registration and NVS-before-user startup ordering
+native_startup_test.cpp
+PASS: explicit NVS initialization and non-destructive failure handling
+PASS: configured native console selection does not use GNSS UART1
+PASS: delayed PSRAM initialization and failure handling
+PASS: native OTA pending-image confirmation and explicit errors
+PASS: early PPS registration and NVS-before-user startup ordering
+native_startup_test.cpp
+PASS: explicit NVS initialization and non-destructive failure handling
+PASS: configured native console selection does not use GNSS UART1
+PASS: delayed PSRAM initialization and failure handling
+PASS: native OTA pending-image confirmation and explicit errors
+PASS: early PPS registration and NVS-before-user startup ordering
+PASS: delayed PSRAM without protection is rejected
+PASS: delayed PSRAM without boot-hardware is rejected
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: independent NTP required=0 / PTP required=0, HMAC vectors, all message types, key rotation, tampering and bounds
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: independent NTP required=0 / PTP required=1, HMAC vectors, all message types, key rotation, tampering and bounds
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: independent NTP required=1 / PTP required=0, HMAC vectors, all message types, key rotation, tampering and bounds
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: independent NTP required=1 / PTP required=1, HMAC vectors, all message types, key rotation, tampering and bounds
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: independent NTP required=0 / PTP required=0, HMAC vectors, all message types, key rotation, tampering and bounds
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: cached PTP policy readiness, one-time diagnostics, no unsigned crypto fallback and import cleanup
+auth_test.cpp
+ntp_auth_under_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: independent NTP required=0 / PTP required=1, HMAC vectors, all message types, key rotation, tampering and bounds
+ptp_host_tests.cpp
+PTP host tests passed
+ptp_master_selection_test.cpp
+PASS: GNSS-only ranking, startup, qualification, sequence wrap/replay, expiry, recovery, capacity and legacy mode
+ptp_service_test.cpp
+PASS: PTP wire headers, PPS/holdover qualification, shared TX and bounded recovery-aware ingress
+ptp_service_test.cpp
+PASS: PTP wire headers, PPS/holdover qualification, shared TX and bounded recovery-aware ingress
+ptp_service_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: PTP wire headers, PPS/holdover qualification, shared TX and bounded recovery-aware ingress
+ptp_service_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: PTP wire headers, PPS/holdover qualification, shared TX and bounded recovery-aware ingress
+ptp_service_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: PTP wire headers, PPS/holdover qualification, shared TX and bounded recovery-aware ingress
+ptp_service_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: PTP wire headers, PPS/holdover qualification, shared TX and bounded recovery-aware ingress
+ptp_service_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: PTP wire headers, PPS/holdover qualification, shared TX and bounded recovery-aware ingress
+ptp_service_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: PTP wire headers, PPS/holdover qualification, shared TX and bounded recovery-aware ingress
+ptp_service_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: failed authentication policy never publishes PTP or transmits unsigned
+ptp_service_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: failed authentication policy never publishes PTP or transmits unsigned
+ptp_service_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: failed authentication policy never publishes PTP or transmits unsigned
+ptp_service_test.cpp
+ptp_l2_auth_under_test.cpp
+Generating Code...
+PASS: failed authentication policy never publishes PTP or transmits unsigned
+ptp_l3_udp_test.cpp
+PASS: UDP multicast wire checks, dual sockets, E2E hardware timestamps, PHC epoch isolation, election, holdover rejection and socket cleanup
+leap_seconds_test.cpp
+PASS: leap transitions, bulletin expiry, 2027 continuous-UTC cutover, receiver precedence/conflicts, historical timestamps and atomic policy state
+pps_capture_test.cpp
+PASS: PPS model/profile gating, zero-resolution rejection, same-core registration and recovery
+pps_capture_test.cpp
+PASS: P4 pre-v3 build cannot activate loopback on a newer chip
+pps_capture_test.cpp
+PASS: PPS model/profile gating, zero-resolution rejection, same-core registration and recovery
+mqtt_queue_test.cpp
+PASS: MQTT report queue order, wrap, drop-oldest and oversize handling
+mqtt_report_test.cpp
+PASS: mqtt-1-0-0-0 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-1-0-0-1 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-0-1-0-0 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-0-1-0-1 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-0-0-1-0 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-0-0-1-1 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-1-1-0-0 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-1-1-0-1 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-1-0-1-0 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-1-0-1-1 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-0-1-1-0 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-0-1-1-1 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-1-1-1-0 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+mqtt_report_test.cpp
+PASS: mqtt-1-1-1-1 JSON shape, frozen snapshots, expiry, withdrawal and buffer bounds
+ntp_cache.c
+network_modes_test.cpp
+PASS: network mode 0, LCD width 20, health checks 1 (NTP=1, PTP=1)
+network_modes_test.cpp
+PASS: network mode 1, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 2, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 4, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 6, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 20, health checks 0 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 20, health checks 1 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 22, health checks 0 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 22, health checks 1 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 8, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 9, LCD width 20, health checks 1 (NTP=1, PTP=0)
+test.cpp
+PASS: cache/NAT/replay/expiry, holdover/boundary/dispersion, clocks, frames, NVS and DEBUG=0
+startup_test.cpp
+PASS: GNSS startup polling jitter, invalid timing, missing PPS, slow queries and LCD progress
+sync_test.cpp
+PASS: stationary-mode RAM readback, ACK-without-change, missing ACK, read failure and first-sync gating
+PASS: optional/incomplete TIMELS, no expiry after continuous UTC, unresolved PVT, sticky offset/event conflicts and recovery
+PASS: UBX and NMEA/PPS TAI acquisition, deadline/PPS failures, bulletin fallback and continuous-UTC qualification
+timestamp_test.cpp
+PASS: hardware timestamps, missing/stale timestamps, recovery signaling, no software downgrade
+timestamp_test.cpp
+PASS: hardware timestamps, missing/stale timestamps, recovery signaling, no software downgrade
+transport_test.cpp
+PASS: first failed attempt restarts immediately, no-MQTT/no-input detection, stale link, healthy shedding, cable loss
+ingress_test.cpp
+PASS: bounded ingress at 9k/10k/11k/13k/50k, timed 10k/s worker with no pool saturation, control frames and full queues
+load_test.cpp
+PASS: sustained 8,500/10,000 rates at 11k/13k/50k offered load, bounded bursts, no window refill and indication expiry
+recovery_test.cpp
+PASS: real RX required after restart; IPv6 link-local rejected; independent PHY checks; 45-second recovery supervision
+network_test.cpp
+PASS: native Ethernet events, static-IP ordering and optional primary/secondary DNS combinations
+PASS: IPv6 link-local creation follows netif link-up with DHCP, static IPv4 and reconnection
+PASS: L2 attaches only raw Ethernet input; no IP stack, DHCP, static IP, DNS or IPv6 link-local
+restart_test.cpp
+PASS: five-second restart deadline, independent reset callback, immediate reset on timer failure
+test.cpp
+PASS: cache/NAT/replay/expiry, holdover/boundary/dispersion, clocks, frames, NVS and DEBUG=1
+startup_test.cpp
+PASS: GNSS startup polling jitter, invalid timing, missing PPS, slow queries and LCD progress
+sync_test.cpp
+PASS: stationary-mode RAM readback, ACK-without-change, missing ACK, read failure and first-sync gating
+PASS: optional/incomplete TIMELS, no expiry after continuous UTC, unresolved PVT, sticky offset/event conflicts and recovery
+PASS: UBX and NMEA/PPS TAI acquisition, deadline/PPS failures, bulletin fallback and continuous-UTC qualification
+timestamp_test.cpp
+PASS: hardware timestamps, missing/stale timestamps, recovery signaling, no software downgrade
+timestamp_test.cpp
+PASS: hardware timestamps, missing/stale timestamps, recovery signaling, no software downgrade
+transport_test.cpp
+PASS: first failed attempt restarts immediately, no-MQTT/no-input detection, stale link, healthy shedding, cable loss
+ingress_test.cpp
+PASS: bounded ingress at 9k/10k/11k/13k/50k, timed 10k/s worker with no pool saturation, control frames and full queues
+load_test.cpp
+PASS: sustained 8,500/10,000 rates at 11k/13k/50k offered load, bounded bursts, no window refill and indication expiry
+recovery_test.cpp
+PASS: real RX required after restart; IPv6 link-local rejected; independent PHY checks; 45-second recovery supervision
+network_test.cpp
+PASS: native Ethernet events, static-IP ordering and optional primary/secondary DNS combinations
+PASS: IPv6 link-local creation follows netif link-up with DHCP, static IPv4 and reconnection
+PASS: L2 attaches only raw Ethernet input; no IP stack, DHCP, static IP, DNS or IPv6 link-local
+restart_test.cpp
+PASS: five-second restart deadline, independent reset callback, immediate reset on timer failure
+
+SUITE COMPLETED: Full host regression (167.8 seconds)
+
+=== Network regression in both debug modes ===
+["C:\\Program Files\\nodejs\\node.exe","E:\\Documents\\ESPIDF_Projects\\ESP32TimeServer\\testing\\firmware_regression\\run.js","C:\\Temp\\ESP32TimeServer-regression2\\host","--network-only"]
+network_test.cpp
+PASS: native Ethernet events, static-IP ordering and optional primary/secondary DNS combinations
+PASS: IPv6 link-local creation follows netif link-up with DHCP, static IPv4 and reconnection
+PASS: L2 attaches only raw Ethernet input; no IP stack, DHCP, static IP, DNS or IPv6 link-local
+network_modes_test.cpp
+PASS: network mode 0, LCD width 20, health checks 1 (NTP=1, PTP=1)
+network_modes_test.cpp
+PASS: network mode 1, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 2, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 4, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 6, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 20, health checks 0 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 20, health checks 1 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 22, health checks 0 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 22, health checks 1 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 8, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 9, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_test.cpp
+PASS: native Ethernet events, static-IP ordering and optional primary/secondary DNS combinations
+PASS: IPv6 link-local creation follows netif link-up with DHCP, static IPv4 and reconnection
+PASS: L2 attaches only raw Ethernet input; no IP stack, DHCP, static IP, DNS or IPv6 link-local
+network_modes_test.cpp
+PASS: network mode 0, LCD width 20, health checks 1 (NTP=1, PTP=1)
+network_modes_test.cpp
+PASS: network mode 1, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 2, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 4, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 6, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 20, health checks 0 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 20, health checks 1 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 22, health checks 0 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 7, LCD width 22, health checks 1 (NTP=0, PTP=1)
+network_modes_test.cpp
+PASS: network mode 8, LCD width 20, health checks 1 (NTP=1, PTP=0)
+network_modes_test.cpp
+PASS: network mode 9, LCD width 20, health checks 1 (NTP=1, PTP=0)
+
+SUITE COMPLETED: Network regression in both debug modes (13.6 seconds)
+
+Total passes: 256
+Total fails: 0
+Suites completed successfully: 2/2
+Finished: 2026-11-07T22:43:17.616Z

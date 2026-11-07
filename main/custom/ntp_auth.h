@@ -18,6 +18,7 @@ static constexpr size_t NTP_AUTH_MAX_KEY_SIZE = 64;
 enum class ntp_auth_result_t : uint8_t
 {
     unauthenticated,
+    authentication_required,
     valid,
     malformed,
     unavailable,

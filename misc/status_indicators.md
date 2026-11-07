@@ -22,11 +22,13 @@
 |                      |                 |                                                                    |
 | ESP32 Time Server[I] | Orange          | No usable IP address                                               |
 | ESP32 Time Server[+] | Orange flashing | Load shedding active                                               |
+| ESP32 Time Server[Q] | Teal            | TF Card reader is not working as expected, queuing to RAM instead  |
+| ESP32 Time Server[q] | Teal flashing   | TF Card reader is not working as expected, could not queue to RAM  |
 | ESP32 Time Server[*] | White           | The server is setting its time                                     |
 | ESP32 Time Server's  | Pink            | The button is being pressed                                        |
 
 
 >Note:
->In timekeeping terminology, holdover is the state where a time server continues providing time from its internal
->oscillator after losing its external reference. While in this mode ESP32TimeServer is no longer actively 
+>In timekeeping terminology, holdover is the state where a time server continues providing time from its 
+>own clock after losing its external reference. While in this mode ESP32TimeServer is no longer actively 
 >synchronized but is advertising root dispersion over elapsed time to reflect decreasing confidence. 
