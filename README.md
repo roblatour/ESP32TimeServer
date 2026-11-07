@@ -24,7 +24,7 @@ making it a true Stratum 1 server — meaning it gets its time directly from sat
 rather than from another server. Every device on your home network can then
 synchronize to it for highly accurate local time.
 
-ESP32TimeServer supports Waveshare ESP32-P4 Ethernet development boards and the 
+ESP32TimeServer supports Waveshare ESP32-P4 Ethernet dev boards and the 
 [ESP32-S31 Function CoreBoard 1](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s31/esp32-s31-function-coreboard-1/user_guide.html).
 
 ---
