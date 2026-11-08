@@ -51,8 +51,8 @@ ESP32-S31 Function CoreBoard-1.
   within the same interface. 
   3. Linux chrony implementations provides for NTP time and or 
   PTP L2 time with a fall back to NTP time.  Windows implementations
-  provide for either NTP time or PTP L3 UDP time but with not
-  PTP L3 UDP with NTP fallback.
+  provide for either NTP time or PTP L3 time but with not
+  PTP L3 with NTP fallback.
 - added/updated the following companion programs:
 
   (added) ESP32PTPL2Follower ( https://github.com/roblatour/ESP32PTPL2Follower )
@@ -60,7 +60,7 @@ ESP32-S31 Function CoreBoard-1.
   
   
   (added) ESP32PTPL3Follower ( https://github.com/roblatour/ESP32PTPL3Follower )
-  an example PTP L3 UDP Follower for the ESP32-P4 and ESP32-S31 platforms
+  an example PTP L3 Follower for the ESP32-P4 and ESP32-S31 platforms
   
   (added) tools\configTimeSettings.ps1 a python script to automate the setup of native
   Windows w32time client for use with ESP32TimeServer in either NTP or PTP L3 UDP modes
