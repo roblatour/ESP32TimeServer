@@ -15,7 +15,7 @@ Linux OS updates. Rather just set it up and let it do its job.
 More recently Precision Time Protocol (PTP) support has been added.
 
 ESP32TimeServer can serve NTP, PTP Layer 2 PTP, and PTP Layer 3
-UDP, individually or in any combination.
+UDP Multicast, individually or in any combination.
 
 ![ESP32 Time Server](./PCB/photo01.jpg)
 
