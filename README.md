@@ -37,7 +37,7 @@ ESP32-S31 Function CoreBoard-1.
   Performance of the ESP32-S31 (preview) chip surpasses  the ESP32-P4 rel 1.3 chip,
   but is below the ESP32-P4 rel 3.2 chip. 
 - Added Precision Time Protocol (PTP) support. The server can now operate
-  as an NTP, PTP Layer 2 (L2), PTP Layer 3 (L3) UDP, or any and all 
+  as an NTP, PTP Layer 2 (L2), PTP Layer 3 (L3) UDP Multicast, or any and all 
   combinations simultaneously.
 - Both the NTP and PTP L2 protocols support operation with or without 
   authentication. NTP and PTP L2 have independent mixed/authenticated-only 
@@ -60,13 +60,13 @@ ESP32-S31 Function CoreBoard-1.
   
   
   (added) ESP32PTPL3Follower ( https://github.com/roblatour/ESP32PTPL3Follower )
-  an example PTP L3 Follower for the ESP32-P4 and ESP32-S31 platforms
+  an example PTP L3 UDP Multicast Follower for the ESP32-P4 and ESP32-S31 platforms
   
   (added) tools\configTimeSettings.ps1 a python script to automate the setup of native
   Windows w32time client for use with ESP32TimeServer in either NTP or PTP L3 UDP modes
     
   (updated) ESP32TimeServerTester ( https://github.com/roblatour/ESP32TimeServerTester )
-  to test PTP L2 and L3 UDP servers 
+  to test PTP L2 and L3 UDP Multicast servers 
   
   
 - removed use of the Arduino Sparkfun GNSS library (adapting its needed code for use within 
