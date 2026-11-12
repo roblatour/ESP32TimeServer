@@ -105,7 +105,13 @@ built into the back.
 
 ## Group 2 - other user builds using various combinations of hardware
 
-2.1 with thanks to github and printables user Duglum:
+2.1 For Espressif ESP32-S1 Functional Coreboard-1 
+(LCD + Sparkfun GNSS Receiver, optional TF Card Reader)
+Case, brace, and back 
+<https://www.printables.com/model/1911154-esp32-s31-functional-coreboard-1-case-for-esp32tim>
+
+
+2.2 with thanks to github and printables user Duglum:
 
 Various case designs for use with the ESP32-P4-ETH and
 ESP32-P4-WIFI6-ETH dev boards (with and without the POE options)
