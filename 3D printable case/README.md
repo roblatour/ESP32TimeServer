@@ -50,14 +50,14 @@ The case (filename Case) is designed to accommodate the following:
 
   Olimex ESP32-ETH-POE (Revision B) (discontinued)
 
-- [Sparkfun Max-M10s GPS module](https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html)
+- [Sparkfun Max-M10s GPS module](https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html?affiliate_code=dW1O7LlPwh&referring_service=link)
 
 - [an LCD 2004 screen](https://www.aliexpress.com/item/1005006829045609.html)
 
-- [an optional USB C cable connector](https://www.aliexpress.com/item/1005006584965187.html)
+- [an optional USB C cable connector](https://s.click.aliexpress.com/e/_c4KkaeXv)
   (right angle connector)
 
-- [button](https://www.aliexpress.com/item/1005004066257419.html)
+- [button](https://s.click.aliexpress.com/e/_c4UbVuTN)
 
 ### Backing
 
