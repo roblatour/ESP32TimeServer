@@ -48,7 +48,7 @@ are included
 - **Companion projects** — companion Github projects include: an [ESP32-P4 hardware based NTP and PTP testing tool](https://github.com/roblatour/ESP32TimeServerTester), example ESP32-P4/S31 PTP Followers for
 [PTP L2](https://github.com/roblatour/ESP32PTPL2Follower) and 
 [PTP L3 UDP Multicast](https://github.com/roblatour/ESP32PTPL3Follower), and a
-[Windows based stress testing tool](https://github.com/roblatour/TimeServerStressTest)
+[Windows based NTP stress testing tool](https://github.com/roblatour/TimeServerStressTest)
 - **Open and maintainable** — all code for this project and the companion projects above are licensed as MIT.  The source for this project is written in C++ on ESP-IDF using FreeRTOS tasks (with no Arduino dependencies) and fully included in this repository 
 - **3D-printable files** - for a variety of cases configurations also included in this repository and/or linked 
 to at [printables.com](https://www.printables.com/@RobLatour_54648/models)
