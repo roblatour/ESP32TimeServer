@@ -291,18 +291,6 @@ Dependencies are resolved by the ESP-IDF Component Manager from
 - S31: `jef-sure/hd44780`, which supports the existing PCF8574 wiring.
 - Both: `espressif/mqtt`, `espressif/mdns`, and `espressif/led_strip`.
 
-The initial S31 build used ESP-IDF 6.1.0, `jef-sure/hd44780` 0.1.3,
-`espressif/mqtt` 1.1.0, `espressif/mdns` 1.14.1, and
-`espressif/led_strip` 3.1.1. Component versions are resolved independently for
-each build directory and may change within the declared version constraints.
-
-If PSRAM is enabled but boot initialization is disabled, set
-`CONFIG_SPIRAM_BOOT_HW_INIT=y` and
-`CONFIG_SPIRAM_PRE_CONFIGURE_MEMORY_PROTECTION=y` for delayed initialization.
-The native path follows `CONFIG_SPIRAM_USE_MALLOC` even if the former Arduino
-`CONFIG_ARDUINO_ISR_IRAM` option is enabled. This differs from Arduino's
-initializer; the optional path has not yet been validated on hardware.
-
 > **Note:** The ESP-IDF Component Manager resolves these dependencies
 > dynamically at build time. Each build directory has its own generated
 > `dependencies.lock`; it is not a shared cross-target lock.
@@ -354,12 +342,6 @@ selected as the console.
 > MQTT reporting, and Over the Ethernet Updates. Please also note, that if a
 > Liquid Crystal Display is **not** connected, `LIQUID_CRYSTAL_DISPLAY_ENABLED`
 > **must** be `0` (disabled) or a critical runtime error will occur.
-
-For a PTP-capable retrofit build, see the
-[PTP settings](misc/PTP_transports.md).
-These are compile-time choices, not MQTT commands. Keep your existing pins,
-GNSS, addressing, secrets, display, and native OTE configuration rather than
-copying the donor settings file.
 
 ### Setup Step 3 - Build
 
@@ -426,11 +408,6 @@ idf.py --preview -B .\build_s31 ^
   build
 ```
 
-Preserve existing customized configurations; defaults do not
-override options already selected in them. 
-Performance optimization must remain explicitly selected in an existing `sdkconfig`.
-
-
 ### Setup Step 4 - Flash
 
 In the same Command Prompt where ESP-IDF 6.1 was loaded:
@@ -449,12 +426,6 @@ idf.py --preview -B .\build_s31 -p COMx flash monitor
 >
 > Use the directory for the profile you built. Do not use `--force` to flash an
 > image to the wrong chip or an earlier ESP32-P4 revision.
-
-On S31, select the port for the board's USB Serial/JTAG or USB-to-UART
-connection. Keep programming pins separate from the GNSS UART pins. The
-application images are `build_<profile>\ESP32TimeServer.bin`; P4 and S31
-images, and images with different P4 revision requirements, are not
-interchangeable.
 
 ### Over The Ethernet (OTE) Updates
 
