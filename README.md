@@ -219,16 +219,11 @@ Insert the card before power-on; mounting is attempted once at startup.
 An absent, non-FAT32, or unusable card falls back to the existing RAM queue
 without formatting the card.
 
-**Power sharing:** J2 pins 35 and 36 are connections to the same 3.3 V rail,
-not two independent supplies and not GPIO signal pins. The LCD and TF reader
-can share one 3V3 header connection using a suitable power distribution
-connector, with common ground, provided the board regulator, supply, and wiring
-can handle the total load, including the GNSS and card write-current peaks.
-The number of power pins does not establish available current; check the
-reader/card and LCD specifications and the board's remaining current budget.
-A 100 nF ceramic capacitor plus a suitable bulk capacitor (for example 10–47 uF)
-near the reader can help with transients, but cannot compensate for an
-undersized supply.
+**Power sharing:** If you are designing a setup with an LCD and external
+TF card reader and only one 3V3 header pin is available, after using 
+the first for the GNSS receiver, then you can used a connecting 
+wire from the remaining 3v3 header pin that splits and goes to the 
+power in for both the LCD and TF card reader.
 
 **Do not connect a reader's 3.3V pin to 5V, directly or through a resistor or
 resistor divider.** 
