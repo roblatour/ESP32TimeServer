@@ -129,6 +129,6 @@ ESP32-P4-WIFI6-ETH dev boards** (with and without the POE options)
   
 - added compartment for a GT-U16 GNSS receiver
   
-- added wall mount holde
+- added wall mount holder
 
 <https://www.printables.com/model/1916146-waveshare-esp32-p4-wifi-poe-eth-case-optional-wall>
