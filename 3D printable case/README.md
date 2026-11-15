@@ -120,10 +120,15 @@ ESP32-P4-WIFI6-ETH dev boards** (with and without the POE options)
 <https://www.printables.com/model/1821834-case-for-waveshare-esp32-p4>
 
 2.3 remix of 2.2 above for the ESP32-P4-WIFI6-ETH (only)
-- taller case to accomodate W2812 RBG LED mount
+  
+- taller case to accomodate W2812 RGB LED mount
+  
 - added lid with W2812 RBG LED mount
+  
 - added solid lid (no W2812 LED mount or slashes)
+  
 - added compartment for a GT-U16 GNSS receiver
-- added wall mount holder
+  
+- added wall mount holde
 
 <https://www.printables.com/model/1916146-waveshare-esp32-p4-wifi-poe-eth-case-optional-wall>
