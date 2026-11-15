@@ -237,17 +237,15 @@ resistor divider.**
 
 ## 3D Printed Case
 
-A downloadable 3D printable enclosure designed for use the WaveShare
-ESP32-P4-ETH (with or without the POE hat) + Sparkfun GPS boards is included in
-the [`3D printable case/`](./3D%20printable%20case/) folder. Both `.stl`
-(print-ready) and `.f3z` (Fusion 360 editable source) files are provided so you
-can tweak the design to suit your needs.
+Various downloadable 3D printable enclosures, designed for use with either the 
+WaveShare ESP32-P4 series of boards (with our without a POE hat) or the Espressif
+ESP32-S31 Functional CoreBoard-1, are included in the
+[`3D printable case/`](./3D%20printable%20case/) folder.  Different models
+are designed to work with different hardware combinations. Additional user
+contributions are welcome.
 
 > **Note:** the 3D printable enclosure files also includes the needed models for
 > version 1 (used an Olimex ESP32-PoE-ISO Rev. B dev board).
-
-The existing PCB and cases were designed for the Waveshare boards; they are not
-claimed to fit the S31 Function CoreBoard.
 
 ---
 
