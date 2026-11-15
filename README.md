@@ -38,7 +38,7 @@ customized MAC address
 - **Monitoring and smart-home integration** — the program provides for MQTT reporting and the queuing of messages
 when the broker is down, with [Home Assistant setup instructions](./HomeAssistant/README.md) also available
 - **Over-the-Ethernet firmware updates** — program updates may be managed over your network so the hardware 
-can be deployed in hard to get at places
+can be easily deployed in hard to get at places
 - **Optional LCD, RGB LED, and button** — a 4×20 I²C LCD, WS2812/KY-016 RGB LED, and up time / reset button can, 
 but don't have to be, included in the hardware setup (in any combination)
 - **Extensive testing tools** - health check, firmware regression, memory leak, drift, jitter, server alignment,
