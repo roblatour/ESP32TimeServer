@@ -10,146 +10,50 @@ An ESP32 NTP and PTP Stratum 1 Time Server for home networks
 
 This project was born with a simple goal: create a low-budget, **Stratum 1
 Network Time Protocol (NTP) time server** with no need for periodic
-Linux OS updates. Rather just set it up and let it do its job.
-
-More recently Precision Time Protocol (PTP) support has been added.
-
-ESP32TimeServer can serve NTP, PTP Layer 2 PTP, and PTP Layer 3
-UDP Multicast, individually or in any combination.
+Linux OS updates. Rather just set it up and let it do its job.  Recently
+the project has been enhanced to additionally support 
+**L2 and L3 UDP Multicast Precision Time Protocol (PTP)** as well.
 
 ![ESP32 Time Server](./PCB/photo01.jpg)
 
-ESP32TimeServer uses a **GNSS (North America & Europe) receiver** as its time source, 
+---
+## Key Features
+
+- **Stratum 1 time source** — ESP32TimeServer uses a **GNSS (North America & Europe) receiver** as its time source, 
 making it a true Stratum 1 server — meaning it gets its time directly from satellites
 rather than from another server. Every device on your home network can then
 synchronize to it for highly accurate local time.
-
-ESP32TimeServer supports Waveshare ESP32-P4 Ethernet dev boards and the 
-ESP32-S31 Function CoreBoard-1.
-
----
-
-## What's New
-
-**Version 4** brings the following changes:
-
-- Support for the ESP32-S31 (preview) chip which provides for Gigabit Ethernet.
-  Performance of the ESP32-S31 (preview) chip surpasses  the ESP32-P4 rel 1.3 chip,
-  but is below the ESP32-P4 rel 3.2 chip. 
-- Added Precision Time Protocol (PTP) support. The server can now operate
-  as an NTP, PTP Layer 2 (L2), PTP Layer 3 (L3) UDP Multicast, or any and all 
-  combinations simultaneously.
-- Both the NTP and PTP L2 protocols support operation with or without 
-  authentication. NTP and PTP L2 have independent mixed/authenticated-only 
-  policy settings, each defaulting to mixed mode. 
-  Additional notes: 
-  1. PTP servers sync time with their clients with a degree of precision measured in 
-  Nanoseconds (ns) as opposed to a Network Time Protocol (NTP) server with a degree of
-  precision measured in Microseconds (µs) (1 second = 1 million µs = 1 billion ns).
-  2. PTP servers and their followers, will not work in virtual environments nor 
-  across router (OPNSense/pfSense) interfaces - they do however work
-  within the same interface. 
-  3. Linux chrony implementations provides for NTP time and or 
-  PTP L2 time with a fall back to NTP time.  Windows implementations
-  provide for either NTP time or PTP L3 time but with not
-  PTP L3 with NTP fallback.
-- added/updated the following companion programs:
-
-  (added) ESP32PTPL2Follower ( https://github.com/roblatour/ESP32PTPL2Follower )
-  an example PTP L2 Follower for the ESP32-P4 and ESP32-S31 platforms
+- **NTP and PTP in one server** — the program relays that time, individually or in any combination, using 
+Network Time, Precision Time Layer 2 (L2), and/or Precision Time Layer 3 (L3) UDP Multicast protocols
+- **Sub-millisecond accuracy** — Pulse per second hardware events are used to discipline the time reference 
+- **Hardware timestamping** - hardware time stamping is used to greatly improve precision reporting across a network
+- **Authentication support** — ESP32TimeServer supports NTPv4 symmetric-key and PTP L2 authentication - as 
+well as mixed modes (i.e. enforced or not)
+- **Modern hardware** — fully vetted on the ESP32-S31 Function CoreBoard-1 (preview) with Gigabit Ethernet, and on the 
+Waveshare ESP32-P4 Ethernet board series with 100 Megabit Ethernet
+- **Flexible GNSS module support** — it works best with the ublox MAX-M10S GNSS receiver, but also supports the non-ublox
+ GT-U16 GNSS receiver
+- **Easy network setup** — the program supports a DHCP-assigned or static IP address, and the default or 
+customized MAC address
+- **Monitoring and smart-home integration** — the program provides for MQTT reporting and the queuing of messages
+when the broker is down, with [Home Assistant setup instructions](./HomeAssistant/README.md) also available
+- **Over-the-Ethernet firmware updates** — program updates may be managed over your network so the hardware 
+can be deployed in hard to get at places
+- **Optional LCD, RGB LED, and button** — a 4×20 I²C LCD, WS2812/KY-016 RGB LED, and up time / reset button can, 
+but don't have to be, included in the hardware setup (in any combination)
+- **Extensive testing tools** - health check, firmware regression, memory leak, drift, jitter, server alignment,
+and RFC9769 compliance testing write-ups / tools are included  
+- **Companion tools** for configuring a Windows w32time client for NTP or PTP L3, and for Over the Ethernet updates
+are included 
+- **Companion projects** — companion Github projects include: an [ESP32-P4 hardware based NTP and PTP testing tool](https://github.com/roblatour/ESP32TimeServerTester), example ESP32-P4/S31 PTP Followers for
+[PTP L2](https://github.com/roblatour/ESP32PTPL2Follower) and 
+[PTP L3 UDP Multicast](https://github.com/roblatour/ESP32PTPL3Follower), and a
+[Windows based stress testing tool](https://github.com/roblatour/TimeServerStressTest)
+- **Open and maintainable** — all code for this project and the companion projects above are licensed as MIT.  The source for this project is written in C++ on ESP-IDF using FreeRTOS tasks (with no Arduino dependencies) and fully included in this repository 
+- **3D-printable files** - for a variety of cases configurations also included in this repository and/or linked 
+to at [printables.com](https://www.printables.com/@RobLatour_54648/models)
   
-  
-  (added) ESP32PTPL3Follower ( https://github.com/roblatour/ESP32PTPL3Follower )
-  an example PTP L3 UDP Multicast Follower for the ESP32-P4 and ESP32-S31 platforms
-  
-  (added) tools\configTimeSettings.ps1 a python script to automate the setup of native
-  Windows w32time client for use with ESP32TimeServer in either NTP or PTP L3 UDP modes
-    
-  (updated) ESP32TimeServerTester ( https://github.com/roblatour/ESP32TimeServerTester )
-  to test PTP L2 and L3 UDP Multicast servers 
-  
-  
-- removed use of the Arduino Sparkfun GNSS library (adapting its needed code for use within 
-  ESP-IDF) as well as the last vestiges of Arduino code.  This was done to support the
-  ESP32-S31 chip which while supported in the ESP-IDF environment is 
-  not supported in the Arduino environment (although may be in the future)
-- added automated regression testing 
-  for more information please see [here](./testing/README.md)
-- updates to MQTT messaging for new PTP reporting and to provide for, in most cases, more saved 
-  messages in memory when a TF card is not available
-- updates to Home Assistant configurations for new PTP reporting
-- added external TF card reader support for the ESP32-S31 as the Espressif Functional CoreBoard - 1
-  does not have a built in TF card reader
-- revised leap-second processing aligned to the CGPM's decision to do away with leap-second processing in May 2027 
-  for more information please see [here](./misc/leap_second_handling.md)
-- added read back confirmation of Ublox receiver going in to stationary mode 
-- several other updates and improvements
 
-**Version 3** further improvements:
-- **NTPv4 Symmetric-key authentication** added for Windows 
-  clients using Meinberg and Linux clients using chrony. 
-- **WS2182** RGB LED support added.
-- **Stationary GNSS mode** — with UBLOX compliant GNSS receivers the program enables
-  stationary-mode for improved time reporting. 
-- updated to use Espressif's Ethernet and OTE update (TCP 3232) processes in place of 
-  the Arduino Ethernet and OTE update (UDP 3232) processes
-- improved accuracy when using the ESP32-P4 release 3.0 or above chip
-
-**Version 2** was a ground-up rewrite which came with a faster, more capable board 
-support and a long list of accuracy, reliability, and convenience improvements over
-version 1, including:
-
-- **Higher accuracy, lower jitter** — full use of the GPS module's PPS
-  (Pulse Per Second) pin disciplines the clock for sub-millisecond accuracy,
-  with hardware time stamping and RFC 9769-compatible interleaved responses
-  further reducing jitter for both NTPv3 and NTPv4 requests.
-- **Faster, more modern hardware** — built around the WaveShare ESP32-P4-ETH
-  (or the newer ESP32-P4-WIFI6-ETH), a significant step up from the
-  ESP32-WROOM-32/32E used in v1.
-- **Broader GNSS module support** — still works great with the recommended
-  SparkFun MAX-M10S, but also supports lower-cost generic GNSS modules and now
-  has experimental support for the GT-U16, which offers better reception than
-  some competing receivers at the same or higher price points.
-- **Wired firmware updates** — Over-the-Ethernet updates let you push
-  new firmware directly from VS Code, with on-screen progress shown on the
-  LCD, so you rarely need to plug in a cable after the first flash.
-- **Handles more traffic** — greatly increased throughput and concurrent
-  request handling, so the server keeps up even on busy networks.
-- **IPv6 support** — the server now responds to NTP requests over IPv6 as
-  well as IPv4.
-- **Flexible networking** — set a custom MAC address or a static IP, instead
-  of always relying on the device's default address and DHCP.
-- **MAC address selection** — `MACAddress` is a base-MAC override and is applied
-  before Ethernet starts. For PTP master selection, use the active six-byte
-  address reported as `Active Ethernet MAC` at startup; the SDK may derive a
-  different Ethernet source MAC from the base address.
-- **Optional LCD support** — a 4x20 LCD screen was required in v1; 
-  in v2 it's entirely optional, along with an optional up time / reset button.
-- **Optional KY-016 RGB LED support added** — [here](misc/status_indicators.md)
-  is how that is used.
-- **Smart GNSS lock tracking** — improved satellite lock and PPS discipline
-  tracking, with results correctly reported as Stratum 16 (undefined) if lock
-  or discipline is temporarily lost, and automatic recovery once it's
-  restored.
-- **Quick restarts** — GPS module identity and baud rate are saved to
-  non-volatile storage, so the server starts up quickly after the initial
-  setup.
-- **MQTT publishing** — optionally publish time server stats to an MQTT
-  broker, with TF card support for queueing far more messages if the broker
-  connection drops.
-- **Home Assistant integration** — ready-made entity and dashboard setup
-  instructions for pulling time server stats into Home Assistant.
-- **Built-in self-test** — an optional startup health check lets the server
-  verify its own core functionality every time it boots.
-- **Testing tools and guidance** — instructions, tools, and links for
-  measuring jitter, drift, RFC 9769 compliance, memory usage, and server
-  performance under stress.
-- **Updated 3D printed case** — enclosure files refreshed for the new
-  WaveShare ESP32-P4-ETH board.
-
- **Version 1** described in detail [here](https://hackaday.io/project/189309-esp32-ntp-time-server-stratum-1) was built for Arduino / PlatformIO and remains available
- [here](https://github.com/roblatour/ESP32TimeServer/releases/tag/v1.0.0.0).
->
 ([Detailed release history](https://github.com/roblatour/ESP32TimeServer/releases))
 
 ---

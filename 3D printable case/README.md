@@ -107,9 +107,7 @@ built into the back.
 
 2.1 For Espressif ESP32-S1 Functional Coreboard-1 
 (LCD + Sparkfun GNSS Receiver, optional TF Card Reader)
-
-Solidraft [source file](./SolidCraft/ESP32TimeServer_S31_Case.sc) 
-
+Solidcraft [source file](./SolidCraft/ESP32TimeServer_S31_Case.sc) 
 <https://www.printables.com/model/1911154-esp32-s31-functional-coreboard-1-case-for-esp32tim>
 
 
