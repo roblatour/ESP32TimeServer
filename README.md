@@ -23,7 +23,7 @@ the project has been enhanced to additionally support
 making it a true Stratum 1 server — meaning it gets its time directly from satellites
 rather than from another server. Every device on your home network can then
 synchronize to it for highly accurate local time.
-- **NTP and PTP in one server** — the program relays that time, individually or in any combination, using 
+- **NTP and PTP in one server** — the program relays time, individually or in any combination, using 
 Network Time, Precision Time Layer 2 (L2), and/or Precision Time Layer 3 (L3) UDP Multicast protocols
 - **Sub-millisecond accuracy** — Pulse per second hardware events are used to discipline the time reference 
 - **Hardware timestamping** - hardware time stamping is used to greatly improve precision reporting across a network
