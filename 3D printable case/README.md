@@ -105,7 +105,7 @@ built into the back.
 
 ## Group 2 - other user builds using various combinations of hardware
 
-2.1 For Espressif ESP32-S1 Functional Coreboard-1 
+2.1 **For Espressif ESP32-S1 Functional Coreboard-1**
 (LCD + Sparkfun GNSS Receiver, optional TF Card Reader)
 Solidcraft [source file](./SolidCraft/ESP32TimeServer_S31_Case.sc) 
 <https://www.printables.com/model/1911154-esp32-s31-functional-coreboard-1-case-for-esp32tim>
@@ -113,14 +113,17 @@ Solidcraft [source file](./SolidCraft/ESP32TimeServer_S31_Case.sc)
 
 2.2 with thanks to github and printables user Duglum:
 
-Various case designs for use with the ESP32-P4-ETH and
-ESP32-P4-WIFI6-ETH dev boards (with and without the POE options)
+**Various case designs for use with the ESP32-P4-ETH and
+ESP32-P4-WIFI6-ETH dev boards** (with and without the POE options)
 (without an LCD or an uptime/Reset button)
 
 <https://www.printables.com/model/1821834-case-for-waveshare-esp32-p4>
 
 2.3 remix of 2.2 above for the ESP32-P4-WIFI6-ETH (only)
-Includes an optional wall mount and two additional lids - one solid, one for WS2818 RGB mount -
-with hight body to accomodate wiring for the W2818 RGB LED
+- taller case to accomodate W2812 RBG LED mount
+- added lid with W2812 RBG LED mount
+- added solid lid (no W2812 LED mount or slashes)
+- added compartment for a GT-U16 GNSS receiver
+- added wall mount holder
 
 <https://www.printables.com/model/1916146-waveshare-esp32-p4-wifi-poe-eth-case-optional-wall>
