@@ -118,3 +118,9 @@ ESP32-P4-WIFI6-ETH dev boards (with and without the POE options)
 (without an LCD or an uptime/Reset button)
 
 <https://www.printables.com/model/1821834-case-for-waveshare-esp32-p4>
+
+2.3 remix of 2.2 above for the ESP32-P4-WIFI6-ETH (only)
+Includes an optional wall mount and two additional lids - one solid, one for WS2818 RGB mount -
+with hight body to accomodate wiring for the W2818 RGB LED
+
+<https://www.printables.com/model/1916146-waveshare-esp32-p4-wifi-poe-eth-case-optional-wall>
