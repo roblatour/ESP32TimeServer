@@ -478,11 +478,6 @@ To make use of ESP32TimeServer on your network /systems please see [`here`](misc
 Once running, and with your Network and System changes setup, you can validate
 accuracy at [https://time.is](https://time.is).
 
-This is only a basic connectivity check. Native GNSS, S31 Ethernet and
-accessories, NTP/PTP hardware timestamps, and timing accuracy require the
-physical acceptance and load measurements listed in
-[the S31 plan](./adding_s31_support.md). They remain pending for Phase 2.
-
 You're also welcome to use this open source software (also developed by me) to
 stress test your time server:
 
