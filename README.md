@@ -210,6 +210,14 @@ LED options, Ethernet, and internal PPS loopback retain their existing pins.
 | MISO/MOSO  | GPIO3          |
 | GND        | GND            |
 
+**Only ever connect the Card Reader to a 3.3v power pin - never 5v.**
+
+**Power sharing:** If you are designing a setup with an LCD and external
+TF card reader and only one 3V3 header pin is available, after using 
+the first for the GNSS receiver, then you can used a connecting 
+wire from the remaining 3v3 header pin that splits and goes to the 
+power in for both the LCD and TF card reader.
+
 `MOSO` is sometimes a misprint for **MISO** (reader output, MCU input);
 confirm this in the reader's documentation. 
 
@@ -218,15 +226,6 @@ Keep the connecting wires to the TF Card reader short.
 Insert the card before power-on; mounting is attempted once at startup.
 An absent, non-FAT32, or unusable card falls back to the existing RAM queue
 without formatting the card.
-
-**Power sharing:** If you are designing a setup with an LCD and external
-TF card reader and only one 3V3 header pin is available, after using 
-the first for the GNSS receiver, then you can used a connecting 
-wire from the remaining 3v3 header pin that splits and goes to the 
-power in for both the LCD and TF card reader.
-
-**Do not connect a reader's 3.3V pin to 5V, directly or through a resistor or
-resistor divider.** 
 
 ---
 
