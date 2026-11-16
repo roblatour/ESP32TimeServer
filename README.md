@@ -27,8 +27,8 @@ synchronize to it for highly accurate local time.
 Network Time, Precision Time Layer 2 (L2), and/or Precision Time Layer 3 (L3) UDP Multicast protocols
 - **Sub-millisecond accuracy** — Pulse per second hardware events are used to discipline the time reference 
 - **Hardware timestamping** - hardware time stamping is used to greatly improve precision reporting across a network
-- **Authentication support** — ESP32TimeServer supports NTPv4 symmetric-key and PTP L2 authentication - as 
-well as mixed modes (i.e. enforced or not)
+- **Authentication support** — NTPv4 symmetric-key and PTP L2 authentication - as 
+well as mixed modes (i.e. enforced or not) - are supported
 - **Modern hardware** — fully vetted on the ESP32-S31 Function CoreBoard-1 (preview) with Gigabit Ethernet, and on the 
 Waveshare ESP32-P4 Ethernet board series with 100 Megabit Ethernet
 - **Flexible GNSS module support** — it works best with the ublox MAX-M10S GNSS receiver, but also supports the non-ublox
@@ -442,11 +442,6 @@ To make use of ESP32TimeServer on your network /systems please see [`here`](misc
 
 Once running, and with your Network and System changes setup, you can validate
 accuracy at [https://time.is](https://time.is).
-
-You're also welcome to use this open source software (also developed by me) to
-stress test your time server:
-
-<https://github.com/roblatour/TimeServerStressTest>
 
 ---
 
