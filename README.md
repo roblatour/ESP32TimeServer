@@ -26,7 +26,7 @@ synchronize to it for highly accurate local time.
 - **NTP and PTP** — the program relays time, individually or in any combination, using 
 Network Time, Precision Time Layer 2 (L2), and/or Precision Time Layer 3 (L3) UDP Multicast protocols
 - **Sub-millisecond accuracy** — Pulse per second hardware events are used to discipline the time reference 
-- **Hardware timestamping** - hardware time stamping is used to greatly improve precision reporting across a network
+- **Hardware timestamping** — hardware time stamping is used to greatly improve precision reporting across a network
 - **Authentication support** — NTPv4 symmetric-key and PTP L2 authentication - as 
 well as mixed modes (i.e. enforced or not) - are supported
 - **Modern hardware** — fully vetted on the ESP32-S31 Function CoreBoard-1 (preview) with Gigabit Ethernet, and on the 
