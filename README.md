@@ -10,9 +10,9 @@ An ESP32 NTP and PTP Stratum 1 Time Server for home networks
 
 This project was born with a simple goal: create a low-budget, **Stratum 1
 Network Time Protocol (NTP) time server** with no need for periodic
-Linux OS updates. Rather just set it up and let it do its job.  Recently
+OS updates. Rather just set it up and let it do its job.  Recently
 the project has been enhanced to additionally support 
-**L2 and L3 UDP Multicast Precision Time Protocol (PTP)** as well.
+**L2 and L3 UDP Multicast Precision Time Protocol (PTP)**.
 
 ![ESP32 Time Server](./PCB/photo01.jpg)
 
