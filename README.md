@@ -93,6 +93,15 @@ to work within this project's 3D printed enclosure is available in the
 [`PCB`](./PCB) folder. If your interested, please review the `Readme.md` file in
 that folder for more information.
 
+## 3D Printed Case
+
+Various downloadable 3D printable enclosures, designed for use with either the 
+WaveShare ESP32-P4 series of boards (with our without a POE hat) or the Espressif
+ESP32-S31 Functional CoreBoard-1, are included in the
+[`3D printable case/`](./3D%20printable%20case/) folder.  Different models
+are designed to work with different hardware combinations. Additional user
+contributions are welcome.
+
 ### Wiring
 
 #### GPS module → ESP32-P4-ETH _(mandatory)_
@@ -221,20 +230,6 @@ Keep the connecting wires to the TF Card reader short.
 Insert the card before power-on; mounting is attempted once at startup.
 An absent, non-FAT32, or unusable card falls back to the existing RAM queue
 without formatting the card.
-
----
-
-## 3D Printed Case
-
-Various downloadable 3D printable enclosures, designed for use with either the 
-WaveShare ESP32-P4 series of boards (with our without a POE hat) or the Espressif
-ESP32-S31 Functional CoreBoard-1, are included in the
-[`3D printable case/`](./3D%20printable%20case/) folder.  Different models
-are designed to work with different hardware combinations. Additional user
-contributions are welcome.
-
-> **Note:** the 3D printable enclosure files also includes the needed models for
-> version 1 (used an Olimex ESP32-PoE-ISO Rev. B dev board).
 
 ---
 
