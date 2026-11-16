@@ -102,7 +102,7 @@ ESP32-S31 Functional CoreBoard-1, are included in the
 are designed to work with different hardware combinations. Additional user
 contributions are welcome.
 
-### Wiring
+## Wiring
 
 #### GPS module → ESP32-P4-ETH _(mandatory)_
 
