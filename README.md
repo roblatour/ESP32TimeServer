@@ -19,7 +19,7 @@ the project has been enhanced to additionally support
 ---
 ## Key Features
 
-- **Stratum 1 time source** — ESP32TimeServer uses a **GNSS (North America & Europe) receiver** as its time source, 
+- **Stratum 1 Time Server** — ESP32TimeServer uses a **GNSS (North America & Europe) receiver** as its time source, 
 making it a true Stratum 1 server — meaning it gets its time directly from satellites
 rather than from another server. Every device on your home network can then
 synchronize to it for highly accurate local time.
