@@ -20,7 +20,7 @@ the project has been enhanced to additionally support
 ## Key Features
 
 - **Stratum 1 Time Server** — ESP32TimeServer uses a **GNSS (North America & Europe) receiver** as its time source, 
-making it a true Stratum 1 server — meaning it gets its time directly from satellites
+making it a true Stratum 1 server - meaning it gets its time directly from satellites
 rather than from another server. Every device on your home network can then
 synchronize to it for highly accurate local time.
 - **NTP and PTP** — the program relays time, individually or in any combination, using 
@@ -50,7 +50,7 @@ are included
 [PTP L3 UDP Multicast](https://github.com/roblatour/ESP32PTPL3Follower), and a
 [Windows based NTP stress testing tool](https://github.com/roblatour/TimeServerStressTest)
 - **Open and maintainable** — all code for this project and the companion projects above are licensed as MIT.  The source for this project is written in C++ on ESP-IDF using FreeRTOS tasks (with no Arduino dependencies) and fully included in this repository 
-- **3D-printable files** - for a variety of cases configurations also included in this repository and/or linked 
+- **3D-printable files** — for a variety of cases configurations also included in this repository and/or linked 
 to at [printables.com](https://www.printables.com/@RobLatour_54648/models)
   
 
