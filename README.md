@@ -90,7 +90,8 @@ to at [printables.com](https://www.printables.com/@RobLatour_54648/models)
 
 _(Also Optional)_ To cut down on wiring a PCB can be used. One designed
 to work within this project's 3D printed enclosure is available in the
-[`PCB`](./PCB) folder. If your interested, please review the `Readme.md` file in
+[`PCB`](./PCB) folder. If your interested, please review the 
+[Readme.md](./PCB/Readme.md) file in
 that folder for more information.
 
 ## 3D Printed Case
