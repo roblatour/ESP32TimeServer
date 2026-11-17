@@ -295,7 +295,7 @@ main/ESP32TimeServerSettings.h
 
 Edit this file to match your desired hardware setup before building. The
 ESP-IDF target selected by the build profile (more on this below) chooses 
-the pins to be used by the ESP32-P4 or ESP32-S31 GPIO automatically.
+the GPIO pins to be used by the ESP32 automatically.
 
 > **Note:** The settings file indicates whether certain features are enabled.
 > These include support for an Uptime/Restart Button, a Liquid Crystal Display,
