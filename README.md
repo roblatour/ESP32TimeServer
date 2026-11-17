@@ -151,8 +151,7 @@ For the ESP32-S31 Functional Coreboard-1 see **ESP32-S31 Functional Coreboard-1 
 | SLC/SCL | GPIO 7           |
 | SDA     | GPIO 8           |
 
-Please also see the section below entitled 
-
+Please also see the section below entitled: 
 **Considerations for ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1 wiring**
 
 ### ESP32-S31 Function CoreBoard 1 wiring
