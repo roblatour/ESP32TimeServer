@@ -142,7 +142,7 @@ An external WS2812 RGB LED may be used in place of the onboard WS2812 RGB LED.
 
 To do this change the pin definition from 60 to 61 and use a 
 470&Omega; resistor. For more information, please see the section 
-*Wiring for both the ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1*
+**Wiring for both the ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1**
 below.
  
 ####  _(optional)_ external SPI TF card reader (S31)
