@@ -173,8 +173,7 @@ The following are GPIO numbers and the board's corresponding J2 header pin numbe
 |  _(optional)_ KY-016 blue / green / red | 46 / 47 / 48 | 16 / 13 / 14 |
 
 
-#### *Important** for power, only conncet the GNSS receiver, LCD, and/or KY-016 to 3.3v, 
-never 5v
+#### *Important** for power, only conncet the GNSS receiver, LCD, and/or KY-016 to 3.3v, never 5v
 
 ####  all components above 
 Additionally require a connection to any GND pin on the ESP32-S31 Function CoreBoard 1
