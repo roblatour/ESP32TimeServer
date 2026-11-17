@@ -104,6 +104,10 @@ contributions are welcome.
 
 ## Wiring
 
+### ESP32-P4-ETH Series Wiring 
+
+For the ESP32-S31 Functional Coreboard-1 see **ESP32-S31 Functional Coreboard-1 Wiring** below
+
 #### GPS module → ESP32-P4-ETH _(mandatory)_
 
 | GPS pin | ESP32-P4-ETH pin |
@@ -114,39 +118,12 @@ contributions are welcome.
 | TXD     | GPIO 21 (RX)     |
 | RXD     | GPIO 22 (TX)     |
 
-**Pro Tip:** (Optionally) Adding a capacitor between the GNSS module's Vcc and GND power pins,
-placed as close as possible to those pins, can improve GNSS power supply stability. Use a
-100nf (aka 0.1μf, aka 104) ceramic capacitor, rated at least 50v, 
-such as [this one](https://www.aliexpress.com/item/1005004469852680.html).
-
-**Important:**
- 
-Some GNSS receivers and breakout boards provide a 3.3v PPS (Pulse-Per-Second) output pin
-while others provide a 5v PPS output pin.
-
-1. Only connect a 3.3v PPS pin to an ESP32 GPIO pin, never connect a 5v PPS pin to an ESP32 GPIO pin
-
-2. For the wire between the ESP32-P4's GPIO pin and the GNSS Receiver's PPS pin
-use as short and as well connect wire as possible; a standard copper Dupont wire
-will be fine assuming its gauge is between 24 AWG and 28 AWG
-
-3. The GNSS GND must be connected to the ESP32 GND
- 
- 
-Also of note, the above PPS, TX, and RX pin selections were changed in version 2.4 for better
-forward and backward compatibility between revisions of the ESP32-P4 chip.
-However, if an earlier version of the software has been working fine for you
-then you may be able to use the old pin specifications if you want to avoid
-rewiring your project. Please see the ESP32TimeServerSettings.h file for more
-information.
-
 #### Up time / Reset button → ESP32-P4-ETH _(optional)_
 
 | Button             | ESP32-P4-ETH pin |
 | ------------------ | ---------------- |
 | One terminal       | GND              |
 | The other terminal | GPIO 3           |
-
 
 #### WS2812 RGB LED _(optional)_
 
@@ -155,7 +132,6 @@ information.
 | GND     |                     | GND              |
 | DI      | 470&Omega; resistor | GPIO 4           |
 | 5v      |                     | V5 / VBUS        |
-> **Important** with the WS2812 a 470&Omega; resistor is require between the DI and GPIO 4 pin
 
 #### KY-016 RGB LED _(optional)_
 
@@ -175,10 +151,13 @@ information.
 | SLC/SCL | GPIO 7           |
 | SDA     | GPIO 8           |
 
-Refer to the pin definitions in
-[`main/ESP32TimeServerSettings.h`](./main/ESP32TimeServerSettings.h).
+Please also see the section below entitled 
 
-#### ESP32-S31 Function CoreBoard 1 wiring
+**Considerations for ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1 wiring**
+
+### ESP32-S31 Function CoreBoard 1 wiring
+
+(For the ESP32-P4-ETH Series see **ESP32-P4-ETH Series Wiring** above)
 
 The following are GPIO numbers and the board's corresponding J2 header pin numbers,
 **Note board silk screen numbering (J2 pins) do not correspond with the GPIO pin numbering**:
@@ -188,17 +167,20 @@ The following are GPIO numbers and the board's corresponding J2 header pin numbe
 | GNSS receiver RX (MCU TX)          | 22           | D2           |
 | GNSS receiver TX (MCU RX)          | 21           | D1           |
 | GNSS PPS input                     | 20           | D0           |
-| LCD SDA                            | 38           | 22           |
-| LCD SCL                            | 39           | 21           |
-| Uptime/reset button                | 40           | 19           |
-| Onboard addressable LED            | 60           | 6            |
-| Optional KY-016 blue / green / red | 46 / 47 / 48 | 16 / 13 / 14 |
+|  _(optional)_ LCD SDA                 | 38           | 22           |
+|  _(optional)_ LCD SCL                 | 39           | 21           |
+|  _(optional)_ Uptime/reset button     | 40           | 19           |
+|  _(optional)_ Onboard WS2812 RGB LED  | 60           | 6            |
+|  _(optional)_ KY-016 blue / green / red | 46 / 47 / 48 | 16 / 13 / 14 |
 
-Use a common ground and **3.3 V** GNSS UART and PPS signals. Keep the PPS wire
-short. 
-**Only ever connect the LCD to a 3.3v power pin - never 5v.**  
+####  _(optional)_ external WS2812 RGB LED
+An external WS2812 RGB LED may be used in place of the onboard WS2812 RGB LED.
+To do this change the pin definition from 60 to 61 in 
+[`main/ESP32TimeServerSettings.h`](./main/ESP32TimeServerSettings.h) and
+connect pin 61 to one side of a 470&Omega; resistor and other side of 
+the resistor to the DI pin of the WS2812.
 
-#### Optional external SPI TF card reader (S31)
+####  _(optional)_ external SPI TF card reader (S31)
 
 Use a reader designed for **3.3 V power and 3.3 V SPI signals**, with a FAT32
 microSD/TF card. This add-on provides the same persistent MQTT backlog as the
@@ -216,20 +198,44 @@ LED options, Ethernet, and internal PPS loopback retain their existing pins.
 
 **Only ever connect the Card Reader to a 3.3v power pin - never 5v.**
 
+`MOSO` is sometimes a misprint for **MISO** (reader output, MCU input);
+confirm this in the reader's documentation.
+
+Keep the connecting wires to the TF Card reader short.
+
 **Power sharing:** If you are designing a setup with an LCD and external
 TF card reader and only one 3V3 header pin is available, after using 
 the first for the GNSS receiver, then you can used a connecting 
 wire from the remaining 3v3 header pin that splits and goes to the 
 power in for both the LCD and TF card reader.
 
-`MOSO` is sometimes a misprint for **MISO** (reader output, MCU input);
-confirm this in the reader's documentation. 
+### Considerations for ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1 wiring 
 
-Keep the connecting wires to the TF Card reader short.
+1. The pin definitions above are set in
+[`main/ESP32TimeServerSettings.h`](./main/ESP32TimeServerSettings.h).
 
-Insert the card before power-on; mounting is attempted once at startup.
-An absent, non-FAT32, or unusable card falls back to the existing RAM queue
+2. **Important:**  Some GNSS receivers and breakout boards provide a 3.3v PPS
+(Pulse-Per-Second) output pin while others provide a 5v PPS output pin.
+
+2.1 Only connect a 3.3v PPS pin to an ESP32 GPIO pin, never connect a 5v PPS pin to an ESP32 GPIO pin
+
+2.2 For the wire between the ESP32-P4's GPIO pin and the GNSS Receiver's PPS pin
+use as short and as well connect wire as possible; a standard copper Dupont wire
+will be fine assuming its gauge is between 24 AWG and 28 AWG
+
+2.3 The GNSS GND must be connected to the ESP32's GND
+
+3. **Important** if using an external WS2812 RGB LED conncet a 470&Omega; resistor between it and 
+the ESP32's GPIO pin
+   
+4. If using the TF Card Reader, insert the card before power-on; mounting is attempted
+once at startup. An absent, non-FAT32, or unusable card falls back to the existing RAM queue
 without formatting the card.
+
+5. **Pro Tip:** (Optionally) Adding a capacitor between the GNSS module's 3.3v and GND power pins,
+placed as close as possible to those pins, can improve GNSS power supply stability. Use a
+100nf (aka 0.1μf, aka 104) ceramic capacitor, rated at least 50v, 
+such as [this one](https://www.aliexpress.com/item/1005004469852680.html).
 
 ---
 
