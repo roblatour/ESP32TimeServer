@@ -194,7 +194,7 @@ will be fine assuming its gauge is between 24 AWG and 28 AWG
 
 3. **Important** An external WS2812 connects to the ESP32's 5v power pin.
 Because of this it is **very important** to connect a 470&Omega; resistor
-between the ESP32's power pin and the DI pin of the WS2812.
+between the ESP32's GPIO pin and the DI pin of the WS2812.
 
 4. All components above require a connection to any GND pin on the ESP32
 
