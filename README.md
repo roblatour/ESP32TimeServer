@@ -294,11 +294,8 @@ main/ESP32TimeServerSettings.h
 ```
 
 Edit this file to match your desired hardware setup before building. The
-ESP-IDF target selected by the build profile chooses the P4 or S31 GPIO branch
-automatically; no separate board-name string selects the compiler target.
-For a UART console, `serialMonitorSpeed` sets its baud rate. USB Serial/JTAG
-does not use this value; UART1 is reserved for the GNSS receiver and cannot be
-selected as the console.
+ESP-IDF target selected by the build profile (more on this below) chooses 
+the pins to be used by the ESP32-P4 or ESP32-S31 GPIO automatically.
 
 > **Note:** The settings file indicates whether certain features are enabled.
 > These include support for an Uptime/Restart Button, a Liquid Crystal Display,
