@@ -163,9 +163,9 @@ The following are GPIO numbers and the board's corresponding J2 header pin numbe
 
 | Peripheral connection              | S31 GPIO     | J2 pin       |
 | ---------------------------------- | ------------ | ------------ |
-| GNSS receiver RX (MCU TX)          | 22           | D2           |
-| GNSS receiver TX (MCU RX)          | 21           | D1           |
-| GNSS PPS input                     | 20           | D0           |
+| GNSS receiver RX                   | 22           | D2           |
+| GNSS receiver TX                      | 21           | D1           |
+| GNSS PPS input                        | 20           | D0           |
 |  _(optional)_ LCD SDA                 | 38           | 22           |
 |  _(optional)_ LCD SCL                 | 39           | 21           |
 |  _(optional)_ Uptime/reset button     | 40           | 19           |
