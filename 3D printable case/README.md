@@ -121,7 +121,9 @@ ESP32-P4-WIFI6-ETH dev boards** (with and without the POE options)
 
 2.3 remix of 2.2 above for the ESP32-P4-WIFI6-ETH (only)
   
-- taller case to accomodate W2812 RGB LED mount
+- taller case to accommodate W2812 RGB LED mount
+
+- added accommodations for a TF Card
   
 - added lid with W2812 RBG LED mount
   

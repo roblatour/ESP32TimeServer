@@ -1,4 +1,4 @@
-# ESP32 NTP and PTP Stratum 1 Time Server (version 4.0)
+# ESP32 NTP and PTP Stratum 1 Time Server (version 4.0.1)
 
 An ESP32 NTP and PTP Stratum 1 Time Server for home networks
 
