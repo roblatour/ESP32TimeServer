@@ -189,22 +189,22 @@ will be fine assuming its gauge is between 24 AWG and 28 AWG
 
 >1.3 The GNSS GND must be connected to the ESP32's GND
 
-3. **Important** for power **only** connect the LCD and/or KY-016 to 3.3v, **never** 5v
+2. **Important** for power **only** connect the LCD and/or KY-016 to 3.3v, **never** 5v
 
-4. **Important** An external WS2812 connects to the ESP32's 5v power pin.
-Because of this it is ** very important** to connect a 470&Omega; resistor
+3. **Important** An external WS2812 connects to the ESP32's 5v power pin.
+Because of this it is **very important** to connect a 470&Omega; resistor
 between the ESP32's power pin and the DI pin of the WS2812.
 
-5. All components above require a connection to any GND pin on the ESP32
+4. All components above require a connection to any GND pin on the ESP32
 
-6. Pin definitions above are set in
+5. Pin definitions above are set in
 [`main/ESP32TimeServerSettings.h`](./main/ESP32TimeServerSettings.h).
    
-7. If using the TF Card Reader, insert the card before power-on; mounting is attempted
+6. If using the TF Card Reader, insert the card before power-on; mounting is attempted
 once at startup. An absent, non-FAT32, or unusable card falls back to the existing RAM queue
 without formatting the card.
 
-8. **Pro Tip:** (Optionally) Adding a capacitor between the GNSS module's 3.3v and GND power pins,
+7. **Pro Tip:** (Optionally) Adding a capacitor between the GNSS module's 3.3v and GND power pins,
 placed as close as possible to those pins, can improve GNSS power supply stability. Use a
 100nf (aka 0.1μf, aka 104) ceramic capacitor, rated at least 50v, 
 such as [this one](https://www.aliexpress.com/item/1005004469852680.html).
