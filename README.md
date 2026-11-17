@@ -177,17 +177,14 @@ power in for both the LCD and TF card reader.
 
 1. **Important:**  Some GNSS receivers and breakout boards provide a 3.3v PPS
 (Pulse-Per-Second) output pin while others provide a 5v PPS output pin.
-
 1.1 **Only** connect a 3.3v PPS pin to an ESP32 GPIO pin, **never** connect a 5v PPS 
 pin to an ESP32 GPIO pin
-
 1.2 For the wire between the ESP32-P4's GPIO pin and the GNSS Receiver's PPS pin
 use as short and as well connect wire as possible; a standard copper Dupont wire
 will be fine assuming its gauge is between 24 AWG and 28 AWG
-
 1.3 The GNSS GND must be connected to the ESP32's GND
 
-2. *Important** for power **only** connect the LCD and/or KY-016 to 3.3v, **never** 5v
+2. **Important** for power **only** connect the LCD and/or KY-016 to 3.3v, **never** 5v
 
 3. **Important** An external WS2812 connects to the ESP32's 5v power pin.
 Because of this it is ** very important** to connect a 470&Omega; resistor
