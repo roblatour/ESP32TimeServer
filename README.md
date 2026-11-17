@@ -121,14 +121,14 @@ contributions are welcome.
 Please also see the section below entitled: 
 **Wiring for both the ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1**.
 
-### ESP32-S31 Function CoreBoard 1 wiring
+### ESP32-S31 Function CoreBoard 1 Wiring
 
 The following are GPIO numbers and the board's corresponding J2 header pin numbers,
 **Note board silk screen numbering (J2 pins) do not correspond with the GPIO pin numbering**:
 
-| Peripheral connection              | S31 GPIO     | J2 pin       |
-| ---------------------------------- | ------------ | ------------ |
-| GNSS receiver RX                   | 22           | D2           |
+| Peripheral connection                 | S31 GPIO     | J2 pin       |
+| ------------------------------------- | ------------ | ------------ |
+| GNSS receiver RX                      | 22           | D2           |
 | GNSS receiver TX                      | 21           | D1           |
 | GNSS PPS input                        | 20           | D0           |
 |  _(optional)_ LCD SDA                 | 38           | 22           |
