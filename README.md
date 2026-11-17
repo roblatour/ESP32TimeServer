@@ -172,19 +172,35 @@ The following are GPIO numbers and the board's corresponding J2 header pin numbe
 |  _(optional)_ Onboard WS2812 RGB LED  | 60           | 6            |
 |  _(optional)_ KY-016 blue / green / red | 46 / 47 / 48 | 16 / 13 / 14 |
 
+
+#### *Important** for power, only conncet the GNSS receiver, LCD, and/or KY-016 to 3.3v, 
+never 5v
+
+####  all components above 
+Additionally require a connection to any GND pin on the ESP32-S31 Function CoreBoard 1
+
 ####  _(optional)_ external WS2812 RGB LED
+
 An external WS2812 RGB LED may be used in place of the onboard WS2812 RGB LED.
+
+
 To do this change the pin definition from 60 to 61 in 
-[`main/ESP32TimeServerSettings.h`](./main/ESP32TimeServerSettings.h) and
-connect pin 61 to one side of a 470&Omega; resistor and other side of 
-the resistor to the DI pin of the WS2812.
+[`main/ESP32TimeServerSettings.h`](./main/ESP32TimeServerSettings.h)
+
+
+**Important** The WS2812 connects to a ESP32-S31 Function CoreBoard 1 5v power pin.
+Because of this it is important to connect pin 61 to one side 
+of a 470&Omega; resistor and other side of the resistor to the DI pin of the WS2812.
+
 
 ####  _(optional)_ external SPI TF card reader (S31)
+
 
 Use a reader designed for **3.3 V power and 3.3 V SPI signals**, with a FAT32
 microSD/TF card. This add-on provides the same persistent MQTT backlog as the
 P4's onboard socket; it is not required for time serving. The GNSS, LCD, button,
 LED options, Ethernet, and internal PPS loopback retain their existing pins.
+
 
 | Reader pin | S31 connection |
 | ---------- | -------------- |
@@ -194,6 +210,7 @@ LED options, Ethernet, and internal PPS loopback retain their existing pins.
 | CLK        | GPIO2          |
 | MISO/MOSO  | GPIO3          |
 | GND        | GND            |
+
 
 **Only ever connect the Card Reader to a 3.3v power pin - never 5v.**
 
