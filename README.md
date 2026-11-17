@@ -118,7 +118,7 @@ contributions are welcome.
 |  _(optional)_ KY-016 blue / green / red |                     | 4 / 5 / 6   |
 
 Please also see the section below entitled: 
-**Wiring for both the ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1g**
+**Wiring for both the ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1** below.
 
 ### ESP32-S31 Function CoreBoard 1 wiring
 
