@@ -118,7 +118,7 @@ contributions are welcome.
 |  _(optional)_ KY-016 blue / green / red |                     | 4 / 5 / 6   |
 
 Please also see the section below entitled: 
-**Considerations for ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1 wiring**
+**Wiring for both the ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1g**
 
 ### ESP32-S31 Function CoreBoard 1 wiring
 
@@ -173,7 +173,7 @@ the first for the GNSS receiver, then you can used a connecting
 wire from the remaining 3v3 header pin that splits and goes to the 
 power in for both the LCD and TF card reader.
 
-### Considerations for ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1 wiring 
+### Wiring for both the ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1
 
 1. **Important:**  Some GNSS receivers and breakout boards provide a 3.3v PPS
 (Pulse-Per-Second) output pin while others provide a 5v PPS output pin.
