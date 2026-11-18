@@ -19,38 +19,25 @@ the project has been enhanced to additionally support
 ---
 ## Key Features
 
-- **Stratum 1 Time Server** — ESP32TimeServer uses a **GNSS (North America & Europe) receiver** as its time source, 
-making it a true Stratum 1 server - meaning it gets its time directly from satellites
-rather than from another server. Every device on your home network can then
-synchronize to it for highly accurate local time.
-- **NTP and PTP** — the program relays time, individually or in any combination, using 
-Network Time, Precision Time Layer 2 (L2), and/or Precision Time Layer 3 (L3) UDP Multicast protocols
-- **Sub-millisecond accuracy** — Pulse per second hardware events are used to discipline the time reference 
-- **Hardware timestamping** — hardware time stamping is used to greatly improve precision reporting across a network
-- **Authentication support** — NTPv4 symmetric-key and PTP L2 authentication - as 
-well as mixed modes (i.e. enforced or not) - are supported
-- **Modern hardware** — fully vetted on the ESP32-S31 Function CoreBoard-1 (preview) with Gigabit Ethernet, and on the 
-Waveshare ESP32-P4 Ethernet board series with 100 Megabit Ethernet
-- **Flexible GNSS module support** — it works best with the ublox MAX-M10S GNSS receiver, but also supports the non-ublox
- GT-U16 GNSS receiver
-- **Easy network setup** — the program supports a DHCP-assigned or static IP address, and the default or 
-customized MAC address
-- **Monitoring and smart-home integration** — the program provides for MQTT reporting and the queuing of messages
-when the broker is down, with [Home Assistant setup instructions](./HomeAssistant/README.md) also available
-- **Over-the-Ethernet firmware updates** — program updates may be managed over your network so the hardware 
-can be deployed in hard to get at places
-- **Optional LCD, RGB LED, and button** — a 4×20 I²C LCD, WS2812/KY-016 RGB LED, and up time / reset button can, 
-but don't have to be, included in the hardware setup (in any combination)
-- **Extensive testing tools** - health check, firmware regression, memory leak, drift, jitter, server alignment,
-and RFC9769 compliance testing write-ups / tools are included  
-- **Companion tools** for configuring a Windows w32time client for NTP or PTP L3, and for Over the Ethernet updates
-are included 
-- **Companion projects** — companion Github projects include: an [ESP32-P4 hardware based NTP and PTP testing tool](https://github.com/roblatour/ESP32TimeServerTester), example ESP32-P4/S31 PTP Followers for
-[PTP L2](https://github.com/roblatour/ESP32PTPL2Follower) and 
-[PTP L3 UDP Multicast](https://github.com/roblatour/ESP32PTPL3Follower), and a
+-	ESP32TimeServer is a **Stratum 1** time server that uses a GNSS receiver to pull precise time directly from **North American and European satellites**
+-	**Pulse per second** hardware events provide for ongoing sub-millisecond accuracy
+-	The program relays time to devices on your network using individually, or in any combination, **Network Time, Precision Time Layer 2 (L2), and/or Precision Time Layer 3 (L3) UDP Multicast protocols**
+-	**Hardware time stamping** greatly improves precision reporting across a network
+-	The program supports **NTPv4 symmetric-key and PTP L2 authentication** 
+-	**MQTT reporting** is provided along with the queuing of messages when the broker is down
+- **Home Assistant** [integration instructions](./HomeAssistant/README.md) also available
+-	It has been fully tested on **Espressif's ESP32-S31 Function CoreBoard-1** (Gigabit Ethernet) and **Waveshare's ESP32-P4 Ethernet series development boards** (100 Megabit Ethernet)
+-	It is designed to work best with the **ublox MAX-M10S GNSS receiver**, but  also supports **other ublox receivers**, **compatible ublox receivers**, and the (non-ublox compatible) **GT-U16 GNSS** receiver 
+-	Firmware updates may be managed over your network so the hardware can be deployed in hard to get at places and updated remotely
+-	A 4×20 I²C **Liquid Crystal Display** (LCD), WS2812/KY-016 **RGB LED**, and **up time / reset button** may also be included in the hardware setup
+-	The program supports a DHCP-assigned or static IP address, as well as a default or customized MAC address
+-	Extensive testing tools and documentation covering health checks, firmware regression, memory leak, drift, jitter, server alignment, and RFC9769 compliance testing are included
+-	Companion tools for configuring a Windows w32time client for NTP or PTP L3, and for Over the Ethernet updates are included
+- Companion Github projects include: example ESP32-P4/S31 PTP Followers for [PTP L2](https://github.com/roblatour/ESP32PTPL2Follower) and 
+[PTP L3 UDP Multicast](https://github.com/roblatour/ESP32PTPL3Follower), an [ESP32-P4 hardware based NTP and PTP testing tool](https://github.com/roblatour/ESP32TimeServerTester) and a 
 [Windows based NTP stress testing tool](https://github.com/roblatour/TimeServerStressTest)
-- **Open and maintainable** — all code for this project and the companion projects above are licensed as MIT.  The source for this project is written in C++ on ESP-IDF using FreeRTOS tasks (with no Arduino dependencies) and fully included in this repository 
-- **3D-printable files** — for a variety of cases configurations also included in this repository and/or linked 
+- All the code for this project and its companion projects (above) are licensed as MIT. The source for this project is written in C++ on ESP-IDF using FreeRTOS tasks (with no Arduino dependencies) and fully included in this repository
+- **3D-printable files** for a variety of cases configurations also included in this repository and/or linked 
 to at [printables.com](https://www.printables.com/@RobLatour_54648/models)
   
 
@@ -62,19 +49,19 @@ to at [printables.com](https://www.printables.com/@RobLatour_54648/models)
 
 
 
-| Qty | Item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **ESP32 Development Board:** WaveShare [ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm?sku=32086) or [ESP32-P4-WIFI6-ETH](https://www.waveshare.com/esp32-p4-wifi6-poe-eth.htm?sku=32832) (with or without optional PoE), or the [ESP32-S31 Function CoreBoard-1](https://www.aliexpress.com/item/1005013174212520.html).                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Qty | Item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **ESP32 Development Board:** WaveShare [ESP32-P4-ETH](https://www.waveshare.com/esp32-p4-eth.htm?sku=32086) or [ESP32-P4-WIFI6-ETH](https://www.waveshare.com/esp32-p4-wifi6-poe-eth.htm?sku=32832) (with or without optional PoE), or the [ESP32-S31 Function CoreBoard-1](https://www.aliexpress.com/item/1005013174212520.html).                                                                                                                                                                                                                                                                                                                                                                                                |
 | 1   | **GNSS module:** Recommended [SparkFun GNSS Receiver Breakout - MAX-M10S (Qwiic)](https://www.sparkfun.com/sparkfun-gnss-receiver-breakout-max-m10s-qwiic.html?affiliate_code=dW1O7LlPwh&referring_service=link) or the [MAX-M10N board](https://canada.newark.com/mikroelektronika/mikroe-6786/add-on-brd-microbus-compatible/dp/09AN2199).  Also supported is the [GT-U16](https://www.aliexpress.com/item/1005008288311771.html) which offers superior reception when coupled with the right antenna (see notes below) but does not support stationary mode (which provides for improved time accuracy).  Additionally, while some lower-cost generic UBlox-compliant receivers are supported, those without a PPS pin are not. |
-| 1   | **GNSS antenna with SMA connector:** Recommended ([SparkFun GPS/GNSS Magnetic Mount Antenna - 3m (SMA)](https://www.sparkfun.com/products/14986?affiliate_code=dW1O7LlPwh&referring_service=link)). Alternatively the GT-U16 with an L1/L5 antenna offers superior reception; the [3M SMA W70C](https://s.click.aliexpress.com/e/_c4C3ftJb) L1/L2/L5 antenna and [IPEX to SMA adapter](https://s.click.aliexpress.com/e/_c31hthKJ) provides very good results, and the antenna bundled with the GT-U16 (or sold seperately) provides good results.                                             |
-| 1   | _(Optional)_ **RGB LED:**  Recommeded: WS2812 ([AliExpress](https://s.click.aliexpress.com/e/_c3rjPVub)) with a 470&Omega; resistor and optional lens cap ([AliExpress](https://www.aliexpress.com/item/1005003854908953.html)) or the KY-016 ([AliExpress](https://s.click.aliexpress.com/e/_c3Jceyex))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 1   | _(Optional)_ 4×20 I²C LCD display with HD44780 controller with PCF8574 I²C backpack ([AliExpress](https://www.aliexpress.com/item/1005006829045609.html))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 1   | _(Optional)_ Momentary push button for displaying up time and triggering a reset ([AliExpress](https://s.click.aliexpress.com/e/_c4UbVuTN))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| 1   | _(Optional)_ USB C extension cable (with right angle end) ([AliExpress](https://s.click.aliexpress.com/e/_c3C5c6Kx))   + two M3*8                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 1   | _(Optional)_ TF Card Reader (only needed for the ESP32-S31 Functional Coreboard-1; the WaveShare ESP32-P4-ETH series boards have a built in TF Card Reader) ([AliExpress](https://s.click.aliexpress.com/e/_c34w6E9D))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 1   | _(Optional)_ TF Card, formatted as FAT32, if you're using MQTT and want a larger queue, kept through power loss, should broker communications be down                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| —   | Miscellaneous: Ethernet cable, [female Dupont connection wires](https://s.click.aliexpress.com/e/_c3UwFX2R), small 4" .1" zip ties, solder                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| —   | A PoE-capable switch, PoE injector, **or** USB-C power supply and USB-C cable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 1   | **GNSS antenna with SMA connector:** Recommended ([SparkFun GPS/GNSS Magnetic Mount Antenna - 3m (SMA)](https://www.sparkfun.com/products/14986?affiliate_code=dW1O7LlPwh&referring_service=link)). Alternatively the GT-U16 with an L1/L5 antenna offers superior reception; the [3M SMA W70C](https://s.click.aliexpress.com/e/_c4C3ftJb) L1/L2/L5 antenna and [IPEX to SMA adapter](https://s.click.aliexpress.com/e/_c31hthKJ) provides very good results, and the antenna bundled with the GT-U16 (or sold seperately) provides good results.                                                                                                                                                                                 |
+| 1   | _(Optional)_ **RGB LED:**  Recommeded: WS2812 ([AliExpress](https://s.click.aliexpress.com/e/_c3rjPVub)) with a 470&Omega; resistor and optional lens cap ([AliExpress](https://www.aliexpress.com/item/1005003854908953.html)) or the KY-016 ([AliExpress](https://s.click.aliexpress.com/e/_c3Jceyex))                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 1   | _(Optional)_ 4×20 I²C LCD display with HD44780 controller with PCF8574 I²C backpack ([AliExpress](https://www.aliexpress.com/item/1005006829045609.html))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 1   | _(Optional)_ Momentary push button for displaying up time and triggering a reset ([AliExpress](https://s.click.aliexpress.com/e/_c4UbVuTN))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1   | _(Optional)_ USB C extension cable (with right angle end) ([AliExpress](https://s.click.aliexpress.com/e/_c3C5c6Kx))   + two M3*8                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 1   | _(Optional)_ TF Card Reader (only needed for the ESP32-S31 Functional Coreboard-1; the WaveShare ESP32-P4-ETH series boards have a built in TF Card Reader) ([AliExpress](https://s.click.aliexpress.com/e/_c34w6E9D))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1   | _(Optional)_ TF Card, formatted as FAT32, if you're using MQTT and want a larger queue, kept through power loss, should broker communications be down                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| —   | Miscellaneous: Ethernet cable, [female Dupont connection wires](https://s.click.aliexpress.com/e/_c3UwFX2R), small 4" .1" zip ties, solder                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| —   | A PoE-capable switch, PoE injector, **or** USB-C power supply and USB-C cable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 
 
@@ -107,16 +94,16 @@ contributions are welcome.
 
 ### ESP32-P4-ETH Series Wiring 
 
-| Peripheral connection                   |                     | GPIO        | 
-| --------------------------------------- | ------------------  | ----------- | 
-| GNSS receiver RX                        |                     | 22          | 
-| GNSS receiver TX                        |                     | 21          | 
-| GNSS PPS input                          |                     | 20          | 
-|  _(optional)_ LCD SDA                   |                     | 8           |
-|  _(optional)_ LCD SCL/SLC               |                     | 7           | 
-|  _(optional)_ Uptime/reset button       |                     | 3           |         
-|  _(optional)_ Onboard WS2812 RGB LED    | 470&Omega; resistor | 4           | 
-|  _(optional)_ KY-016 blue / green / red |                     | 4 / 5 / 6   |
+| Peripheral connection                  |                     | GPIO      |
+| -------------------------------------- | ------------------- | --------- |
+| GNSS receiver RX                       |                     | 22        |
+| GNSS receiver TX                       |                     | 21        |
+| GNSS PPS input                         |                     | 20        |
+| _(optional)_ LCD SDA                   |                     | 8         |
+| _(optional)_ LCD SCL/SLC               |                     | 7         |
+| _(optional)_ Uptime/reset button       |                     | 3         |
+| _(optional)_ Onboard WS2812 RGB LED    | 470&Omega; resistor | 4         |
+| _(optional)_ KY-016 blue / green / red |                     | 4 / 5 / 6 |
 
 Please also see the section below entitled: 
 **Wiring for both the ESP32-P4-ETH Series and ESP32-S31 Function CoreBoard 1**.
@@ -126,16 +113,16 @@ Please also see the section below entitled:
 The following are GPIO numbers and the board's corresponding J2 header pin numbers,
 **Note board silk screen numbering (J2 pins) do not correspond with the GPIO pin numbering**:
 
-| Peripheral connection                 | S31 GPIO     | J2 pin       |
-| ------------------------------------- | ------------ | ------------ |
-| GNSS receiver RX                      | 22           | D2           |
-| GNSS receiver TX                      | 21           | D1           |
-| GNSS PPS input                        | 20           | D0           |
-|  _(optional)_ LCD SDA                 | 38           | 22           |
-|  _(optional)_ LCD SCL                 | 39           | 21           |
-|  _(optional)_ Uptime/reset button     | 40           | 19           |
-|  _(optional)_ Onboard WS2812 RGB LED  | 60           | 6            |
-|  _(optional)_ KY-016 blue / green / red | 46 / 47 / 48 | 16 / 13 / 14 |
+| Peripheral connection                  | S31 GPIO     | J2 pin       |
+| -------------------------------------- | ------------ | ------------ |
+| GNSS receiver RX                       | 22           | D2           |
+| GNSS receiver TX                       | 21           | D1           |
+| GNSS PPS input                         | 20           | D0           |
+| _(optional)_ LCD SDA                   | 38           | 22           |
+| _(optional)_ LCD SCL                   | 39           | 21           |
+| _(optional)_ Uptime/reset button       | 40           | 19           |
+| _(optional)_ Onboard WS2812 RGB LED    | 60           | 6            |
+| _(optional)_ KY-016 blue / green / red | 46 / 47 / 48 | 16 / 13 / 14 |
 
 ####  _(optional)_ external WS2812 RGB LED
 
