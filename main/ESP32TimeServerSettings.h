@@ -150,7 +150,7 @@ static constexpr unsigned int OTEMaxUploadTimeSeconds = 300;
 #define MQTT_CLIENT_REPORTING_ENABLED 1                    // 0 = Disabled; 1 = Enabled
 #define MQTT_MEMORY_REPORTING_ENABLED 1                    // 0 = Disabled; 1 = Enabled
 #define MQTT_HISTORICAL_REPORTING_ENABLED 1                // 0 = Disabled; 1 = Enabled
-#define MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED 0 // 0 = Disabled; 1 = Enabled
+#define MQTT_DISTINGUISH_AUTHENTICATED_REPORTING_ENABLED 1 // 0 = Disabled; 1 = Enabled
 
 static constexpr char MQTTServerIPAddress[] = ""; // For example 192.168.1.15
 static constexpr char MQTTTopic[] = "ESP32TimeServer";
