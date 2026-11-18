@@ -400,7 +400,7 @@ bypass those checks.
 
 ## Setting up your network / systems to make use of ESP32 Time Server
 
-To make use of ESP32TimeServer on your network /systems please see [`here`](misc/setup.md)
+To make use of ESP32TimeServer on your network /systems please see [`here`](misc/Setup.md)
 
 ---
 
