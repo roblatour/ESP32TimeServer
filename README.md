@@ -21,7 +21,7 @@ the project has been enhanced to additionally support
 
 -	ESP32TimeServer is a **Stratum 1** time server that uses a GNSS receiver to pull precise time directly from **North American and European satellites**
 -	**Pulse per second** hardware events provide for ongoing sub-millisecond accuracy
--	The program relays time to devices on your network using individually, or in any combination, **Network Time (NTP v3/4/Interleaved), Precision Time Layer 2 (L2), and/or Precision Time Layer 3 (L3) UDP Multicast protocols**
+-	The program relays time to devices on your network using individually, or in any combination, **Network Time (NTP v3/4/Interleaved), Precision Time Layer 2 (L2), or Precision Time Layer 3 (L3) UDP Multicast protocols**
 -	**Hardware time stamping** greatly improves precision reporting across a network
 -	The program supports **NTPv4 symmetric-key and PTP L2 authentication** 
 -	**MQTT reporting** is provided along with the queuing of messages when the broker is down
