@@ -22,15 +22,16 @@ the project has been enhanced to additionally support
 -	ESP32TimeServer is a **Stratum 1** time server that uses a GNSS receiver to pull precise time directly from **North American and European satellites**
 -	**Pulse per second** hardware events provide for ongoing sub-millisecond accuracy
 -	The program relays time to devices on your network using individually, or in any combination, **Network Time (NTP v3/4/Interleaved), Precision Time Layer 2 (L2), or Precision Time Layer 3 (L3) UDP Multicast protocols**
+-	It supports **NTPv4 symmetric-key and PTP L2 authentication**
 -	**Hardware time stamping** greatly improves precision reporting across a network
--	The program supports **NTPv4 symmetric-key and PTP L2 authentication** 
+-	IPv4, IPv6, dual stack, a DHCP-assigned or static IP address, and a default or customized MAC address are all supported
 -	**MQTT reporting** is provided along with the queuing of messages when the broker is down
 - **Home Assistant** [integration instructions](./HomeAssistant/README.md) also available
 -	It has been fully tested on **Espressif's ESP32-S31 Function CoreBoard-1** (Gigabit Ethernet) and **Waveshare's ESP32-P4 Ethernet series development boards** (100 Megabit Ethernet)
 -	It is designed to work best with the **ublox MAX-M10S GNSS receiver**, but  also supports **other ublox receivers**, **compatible ublox receivers**, and the (non-ublox compatible) **GT-U16 GNSS** receiver 
 -	Firmware updates may be managed over your network so the hardware can be deployed in hard to get at places and updated remotely
 -	A 4×20 I²C **Liquid Crystal Display** (LCD), WS2812/KY-016 **RGB LED**, and **up time / reset button** may also be included in the hardware setup
--	The program supports IPv4, IPv6, dual stack, a DHCP-assigned or static IP address, and a default or customized MAC address
+
 -	Extensive testing tools and documentation covering health checks, firmware regression, memory leak, drift, jitter, server alignment, and RFC9769 compliance testing are included
 -	Companion tools for configuring a Windows w32time client for NTP or PTP L3, and for Over the Ethernet updates are included
 - Companion Github projects include: example ESP32-P4/S31 PTP Followers for [PTP L2](https://github.com/roblatour/ESP32PTPL2Follower) and 
