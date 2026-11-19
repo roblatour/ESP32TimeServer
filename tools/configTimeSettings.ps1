@@ -1,10 +1,10 @@
-# configTimeSettings.ps1 v1.1 for ESP32 Time Server
+# configTimeSettings.ps1 v1.2 for ESP32 Time Server
 # Copyright Rob Latour, 2026
 # License: MIT
 # Website: https://github.com/roblatour/ESP32TimeServer
 
 $ErrorActionPreference = 'Stop'
-$script:Version = '1.1'
+$script:Version = '1.2'
 $script:LegacyBackupVersion = '1.0'
 $script:RegistryRoot = 'SYSTEM\CurrentControlSet\Services\W32Time'
 $script:OwnedRuleNames = @(
@@ -83,9 +83,8 @@ Usage:
   .\tools\configTimeSettings.ps1 -restore <filename>
   .\tools\configTimeSettings.ps1 -inventory <IPv4-server-address>
   .\tools\configTimeSettings.ps1 -readiness <IPv4-server-address>
-  .\tools\configTimeSettings.ps1 -set NTP -serveraddress1 <IPv4_or_IPv6_address>
-      [-serveraddress2 <IPv4_or_IPv6_address>] [-serveraddress3 <IPv4_or_IPv6_address>]
-      [-serveraddress4 <IPv4_or_IPv6_address>]
+  .\tools\configTimeSettings.ps1 -set NTP <IPv4_or_IPv6_address>
+      [<IPv4_or_IPv6_address>] [<IPv4_or_IPv6_address>] [<IPv4_or_IPv6_address>]
   .\tools\configTimeSettings.ps1 -set PTP <IPv4-server-address>
   .\tools\configTimeSettings.ps1 -help
   .\tools\configTimeSettings.ps1 -?
@@ -108,7 +107,8 @@ they can contain network details.
 
 Native W32Time NTP always uses UDP port 123; no port argument is accepted.
 Inventory, readiness, and PTP require a literal IPv4 unicast server address.
-NTP accepts literal IPv4 or IPv6 unicast peers, without brackets or ports;
+NTP accepts one to four literal IPv4 or IPv6 unicast peers immediately after
+NTP, without parameter names, brackets, or ports;
 DNS names are not accepted. IPv6 link-local peers require a local scope, e.g.
 fe80::1234%23. Adapter names are also accepted as scopes and converted to
 numeric interface IDs for probes and W32Time. Mixed IPv4/IPv6 NTP lists are
@@ -197,8 +197,8 @@ the observation period; 7 rollback failure or unknown configuration state.
 Examples:
   .\tools\configTimeSettings.ps1 -inventory 192.168.1.24
   .\tools\configTimeSettings.ps1 -readiness 192.168.1.24
-  .\tools\configTimeSettings.ps1 -set NTP -serveraddress1 192.168.1.24
-  .\tools\configTimeSettings.ps1 -set NTP -serveraddress1 2001:db8::24
+  .\tools\configTimeSettings.ps1 -set NTP 192.168.1.24
+  .\tools\configTimeSettings.ps1 -set NTP 192.168.7.24 2001:db8::24
   .\tools\configTimeSettings.ps1 -set PTP 192.168.1.24
   .\tools\configTimeSettings.ps1 -restore ".\configtimebackup_2026_11_05_11_20_30.bak"
 
@@ -217,8 +217,7 @@ function Stop-Config([int]$Code, [string]$Message) {
 function Parse-Arguments([string[]]$Tokens) {
     $result = [ordered]@{}
     $allowed = @(
-        'backup','restore','inventory','readiness','set','serveraddress1',
-        'serveraddress2','serveraddress3','serveraddress4','help','?'
+        'backup','restore','inventory','readiness','set','help','?'
     )
     for ($i = 0; $i -lt $Tokens.Count; $i++) {
         $token = [string]$Tokens[$i]
@@ -250,6 +249,20 @@ function Parse-Arguments([string[]]$Tokens) {
             Stop-Config 1 "parameter '-$name' requires a non-empty value"
         }
         $result[$logical] = $value
+        if ($logical -eq 'set' -and $value -ieq 'NTP') {
+            $peerCount = 0
+            while (($i + 1) -lt $Tokens.Count -and -not ([string]$Tokens[$i + 1]).StartsWith('-')) {
+                $i++
+                if ([string]::IsNullOrWhiteSpace([string]$Tokens[$i])) {
+                    Stop-Config 1 '-set NTP requires non-empty server addresses'
+                }
+                $peerCount++
+                if ($peerCount -gt 4) {
+                    Stop-Config 1 '-set NTP accepts at most four server addresses'
+                }
+                $result["serveraddress$peerCount"] = [string]$Tokens[$i]
+            }
+        }
         if ($logical -eq 'set' -and $value -ieq 'PTP') {
             if (($i + 1) -ge $Tokens.Count -or ([string]$Tokens[$i + 1]).StartsWith('-') -or
                 [string]::IsNullOrWhiteSpace([string]$Tokens[$i + 1])) {
@@ -296,15 +309,8 @@ function Parse-Arguments([string[]]$Tokens) {
         if ($protocol -notin @('NTP','PTP')) { Stop-Config 1 "-set value '$($result['set'])' must be NTP or PTP" }
         $result['set'] = $protocol
         if ($protocol -eq 'NTP') {
-            if (-not $result.Contains('serveraddress1')) { Stop-Config 1 '-serveraddress1 is required for NTP' }
-            for ($n = 2; $n -le 4; $n++) {
-                if ($result.Contains("serveraddress$n") -and -not $result.Contains("serveraddress$($n - 1)")) {
-                    Stop-Config 1 "-serveraddress$n requires -serveraddress$($n - 1)"
-                }
-            }
-        } else {
-            if ($result.Keys | Where-Object { $_ -match '^serveraddress[1-4]$' }) {
-                Stop-Config 1 'NTP peer parameters cannot be combined with PTP'
+            if (-not $result.Contains('serveraddress1')) {
+                Stop-Config 1 '-set NTP requires one to four IPv4 or IPv6 server addresses immediately after NTP'
             }
         }
     }
@@ -1953,7 +1959,7 @@ function Set-NtpConfiguration([System.Collections.IDictionary]$Arguments) {
             if (-not $Arguments.Contains("serveraddress$n")) { continue }
             $address = Test-Address ([string]$Arguments["serveraddress$n"])
             if ($null -eq $address) {
-                Stop-Config 1 "-serveraddress$n '$($Arguments["serveraddress$n"])' is not an allowed literal unicast address"
+                Stop-Config 1 "NTP peer $n '$($Arguments["serveraddress$n"])' is not an allowed literal unicast address"
             }
             if ($peers.Normalized -contains $address.Normalized) {
                 Stop-Config 1 "duplicate NTP peer '$($Arguments["serveraddress$n"])' after address normalization"

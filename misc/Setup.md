@@ -29,7 +29,11 @@ addresses and interface names with your own.
     - [Layer 2 PTP server and LinuxPTP client](#layer-2-ptp-server-and-linuxptp-client)
   - [Validation and troubleshooting](#validation-and-troubleshooting)
   - [Further reading](#further-reading)
-  - [Appendix 1 - Third Party Firewall Rules for Windows](#appendix-1---third-party-firewall-rules-for-windows)
+  - [Appendix 1 - Installing and using the Meinberg NTP service for Windows](#appendix-1---installing-and-using-the-meinberg-ntp-service-for-windows)
+    - [Download and install](#download-and-install)
+    - [Configure and verify Meinberg](#configure-and-verify-meinberg)
+    - [Switch between Meinberg and Windows Time](#switch-between-meinberg-and-windows-time)
+  - [Appendix 2 - Third Party Firewall Rules for Windows](#appendix-2---third-party-firewall-rules-for-windows)
     - [Windows NTP: W32Time or Meinberg](#windows-ntp-w32time-or-meinberg)
     - [Windows Layer 3 UDP PTP: W32Time](#windows-layer-3-udp-ptp-w32time)
     - [Bitdefender example for UDP PTP](#bitdefender-example-for-udp-ptp)
@@ -465,25 +469,53 @@ loss separately, then check boot persistence.
 ## Windows: NTP
 
 **NTP is the safer default on Windows**, especially if additional NTP servers
-are needed for resilience. Native W32Time can use unsigned NTP; it cannot use
-this project's symmetric-key NTP authentication. The repository's
+are needed for resilience. 
+
+For this you can either use Windows' native W32Time service or 
+the free third party Meinberg NTP service for Windows:
+
+1. W32Time only supports unauthenticated NTP;  it does not support the use
+this project's symmetric-key NTP authentication,
+
+2. Meinberg can use unauthenticated NTP and/or this project's symmetric-key NTP 
+authentication.  Also, in testing, Meinberg has consistently proven to 
+deliever beter results. 
+
+
+**Of the two options, the Meinberg NTP service for Windows is recommended.**
+
+Regardless, the remainder of this section will discuss how to use the native
+Windows service, simply because it is Windows' native service.  
+
+
+However, to use the Meinberg service, or to switch back and forth between it and the native Windows
+service, please see **Appendix 1 - Installing and using the Meinberg NTP service for Windows**.
+
+ The repository's
 [`configTimeSettings.ps1`](../tools/configTimeSettings.ps1) can configure
 W32Time NTP from **Windows PowerShell as Administrator**, using literal IPv4 or
 IPv6 addresses:
 
+
+
+Appendix 1 - Installing and using the Meinberg NTP service for Windows
+
+
+
 ```powershell
-.\configTimeSettings.ps1 -set NTP -serveraddress1 192.168.1.24
+.\configTimeSettings.ps1 -set NTP 192.168.7.24 2001:db8::24
 w32tm /query /peers
 w32tm /query /status /verbose
 ```
 
 Run the script from the repository's `tools` directory; use `-help` for its
-backup, other peers, and restore options. Server 1 is required; optional servers
-2–4 must be supplied without gaps. For link-local IPv6 supply an interface scope
+backup and restore options. Supply one to four server addresses directly after
+`NTP`, without parameter names. IPv4 and IPv6 addresses can
+be mixed. For link-local IPv6 supply an interface scope
 (for example `%23`, using the adapter's `ifIndex`). The script's second NTP peer
 may be fallback-only; this is **NTP peer fallback**, not PTP-to-NTP failover.
 For restrictive or third-party firewall policy, see
-[Appendix 1: Windows NTP rules](#windows-ntp-w32time-or-meinberg).
+[Appendix 2: Windows NTP rules](#windows-ntp-w32time-or-meinberg).
 
 For authenticated NTPv4 or a full `ntpd` implementation, install the
 [Meinberg NTP package](https://www.meinbergglobal.com/english/sw/ntp.htm#ntp_stable)
@@ -537,7 +569,7 @@ applies a higher-accuracy clock-discipline profile, installs **Windows Defender
 Firewall** rules for wired adapters/UDP 319–320, restarts Windows Time if
 requested, and waits for fresh synchronization. **Keep the backup**; the script
 does not configure third-party firewalls. Follow
-[Appendix 1: Windows UDP PTP rules](#windows-layer-3-udp-ptp-w32time) for the
+[Appendix 2: Windows UDP PTP rules](#windows-layer-3-udp-ptp-w32time) for the
 needed inbound/outbound traffic and a tested Bitdefender example. Do not use
 `ping 224.0.1.129` as a PTP test: multicast peers normally do not answer it.
 
@@ -572,7 +604,7 @@ To return to your prior configuration, run as Administrator:
 .\configTimeSettings.ps1 -restore "<path printed by -set PTP>"
 ```
 
-Alternatively use `-set NTP -serveraddress1 192.168.1.24` as above. A manual
+Alternatively use `-set NTP 192.168.1.24` as above. A manual
 return is necessary after PTP loss; the firmware has no PTP holdover. The
 script's restore does not undo third-party firewall changes.
 
@@ -767,7 +799,111 @@ trusted timing segment.
 - [Meinberg NTP authentication instructions](https://kb.meinbergglobal.com/kb/time_sync/ntp/configuration/ntp_authentication)
 - [Apple AVB device browser (not system-clock PTP)](https://support.apple.com/guide/audio-midi-setup/browse-your-network-for-an-avb-device-amsavb001/mac)
 
-## Appendix 1 - Third Party Firewall Rules for Windows
+## Appendix 1 - Installing and using the Meinberg NTP service for Windows
+
+Meinberg's Windows NTP package installs `ntpd` as the **NTP Daemon** service.
+Use it instead of **Windows Time** (`w32time`) to discipline the PC clock; do
+not run both services as clock controllers. The example below points it at the
+ESP32TimeServer on `192.168.1.24`. Replace that address with your server's stable
+IP address.
+
+### Download and install
+
+1. Download the **current stable NTP package for Windows with IPv6 support** from
+   [Meinberg's official NTP downloads](https://www.meinbergglobal.com/english/sw/ntp.htm).
+   Choose the current Windows installer, not the older Windows NT/2000 IPv4-only
+   package. Check the published SHA-256 checksum before running the installer.
+2. Open **Command Prompt as Administrator** and stop Windows Time so it cannot
+   compete with Meinberg, including after a reboot:
+
+   ```cmd
+   net stop w32time
+   sc config w32time start= disabled
+   ```
+
+   If Windows Time is already stopped, the stop command may report that it is
+   not running. Do not disable it on a domain-managed PC without checking your
+   organization's time policy.
+3. Run the downloaded Meinberg installer as Administrator. Choose the NTP
+   components and, when prompted for an initial configuration, enter the
+   ESP32TimeServer IP as an external NTP server (or choose manual configuration
+   and edit `ntp.conf` afterward). Select the recommended **Use System Account**
+   service setting. Note the installation folder: it is commonly
+   `C:\Program Files (x86)\NTP` or `C:\Program Files\NTP`. Confirm that the
+   **NTP Daemon** service appears in Windows Services.
+
+### Configure and verify Meinberg
+
+1. Back up the installed `etc\ntp.conf`, then edit it as Administrator (for
+   example, `C:\Program Files (x86)\NTP\etc\ntp.conf`, or the corresponding path
+   under `C:\Program Files\NTP`). Keep other working NTP sources if fallback is
+   desired, but remove or replace conflicting `server` and `pool` entries and
+   avoid listing the ESP32 twice. Ensure it contains:
+
+   ```text
+   server 192.168.1.24 iburst prefer
+   ```
+
+2. In an elevated Command Prompt, set Meinberg to start on boot and restart it
+   to load the edited configuration:
+
+   ```cmd
+   sc config NTP start= auto
+   net stop NTP
+   net start NTP
+   ```
+
+   On a first installation the service may not yet be running, so `net stop NTP`
+   may report that it is stopped. The service name in these commands is `NTP`;
+   its display name is **NTP Daemon**.
+3. Run `ntpq -p` from the installed NTP `bin` directory (or use the full path to
+   `ntpq.exe`). Allow a few polling cycles for `reach` to become nonzero and for
+   the ESP32 source to show `*` (selected) with stratum `1`. If it remains
+   unreachable, confirm the address, that the ESP32 has qualified GNSS/PPS,
+   and that NTP traffic can pass. For third-party firewall configuration, see
+   [Appendix 2: Windows NTP rules](#windows-ntp-w32time-or-meinberg); do not add
+   broad firewall exceptions here. If symmetric-key authentication is needed,
+   follow the [NTP authentication steps](#ntp-server-and-authenticated-clients).
+
+### Switch between Meinberg and Windows Time
+
+Keep both installed and change **service startup types**, not just the current
+running state, so the choice survives a reboot. Run each sequence in **Command
+Prompt as Administrator**. If a service is already stopped, its `net stop`
+command may report that it is not running; continue with the startup-type
+change. Windows Time resumes using its previously configured sources, which may
+be controlled by domain policy.
+
+**Use Windows Time instead of Meinberg:**
+
+```cmd
+net stop NTP
+sc config NTP start= disabled
+sc config w32time start= auto
+net start w32time
+w32tm /resync
+w32tm /query /source
+w32tm /query /status /verbose
+```
+
+`w32tm /resync` requests a sync from the **configured Windows Time source**; it
+does not select a new server. If Windows Time has no suitable source, configure
+one before expecting a successful resync.
+
+**Switch back to Meinberg:**
+
+```cmd
+net stop w32time
+sc config w32time start= disabled
+sc config NTP start= auto
+net start NTP
+```
+
+Check `ntpq -p` again after a few polling cycles. Only one of `NTP` and
+`w32time` should be enabled and controlling the clock at a time. Neither switch
+requires uninstalling Meinberg or deleting its `ntp.conf`.
+
+## Appendix 2 - Third Party Firewall Rules for Windows
 
 A third-party firewall such as Bitdefender may enforce its own rules even when
 Windows Defender Firewall rules exist. The repository's `configTimeSettings.ps1`
