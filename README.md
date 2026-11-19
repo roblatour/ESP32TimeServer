@@ -27,9 +27,9 @@ the project has been enhanced to additionally support
 -	IPv4, IPv6, dual stack, a DHCP-assigned or static IP address, and a default or customized MAC address are all supported
 -	**MQTT reporting** is provided along with the queuing of messages when the broker is down
 - **Home Assistant** [integration instructions](./HomeAssistant/README.md) also available
+-	Firmware updates may be managed over your network so the hardware can be deployed in hard to get at places and updated remotely
 -	It has been fully tested on **Espressif's ESP32-S31 Function CoreBoard-1** (Gigabit Ethernet) and **Waveshare's ESP32-P4 Ethernet series development boards** (100 Megabit Ethernet)
 -	It is designed to work best with the **ublox MAX-M10S GNSS receiver**, but  also supports **other ublox receivers**, **compatible ublox receivers**, and the (non-ublox compatible) **GT-U16 GNSS** receiver 
--	Firmware updates may be managed over your network so the hardware can be deployed in hard to get at places and updated remotely
 -	A 4×20 I²C **Liquid Crystal Display** (LCD), WS2812/KY-016 **RGB LED**, and **up time / reset button** may also be included in the hardware setup
 -	Extensive testing tools and documentation covering health checks, firmware regression, memory leak, drift, jitter, server alignment, and RFC9769 compliance testing are included
 -	Companion tools for configuring a Windows w32time client for NTP or PTP L3, and for Over the Ethernet updates are included
